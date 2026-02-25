@@ -1,0 +1,375 @@
+{
+  "event": {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "name": "Duke Clinical Trial Expo 2026",
+    "slug": "duke-expo-2026",
+    "access_code": "DUKE2026",
+    "max_active_quorums": 5,
+    "created_by": "seed-architect",
+    "created_at": "2026-02-25T10:00:00Z"
+  },
+  "quorums": [
+    {
+      "id": "00000000-0000-0000-0000-000000000010",
+      "event_id": "00000000-0000-0000-0000-000000000001",
+      "title": "Phase III Trial NCT-2026-FAKE-001 — Site Enrollment Rescue",
+      "description": "Multi-site Phase III cardiovascular outcomes trial (BEACON-CV) has stalled at 47% enrollment across 12 sites after 18 months. Three sites are below 20% target. Protocol amendment under consideration. IRB approval needed for revised consent language. Sponsor threatening to pull two underperforming sites.",
+      "status": "active",
+      "heat_score": 35,
+      "dashboard_types": ["quorum_health_chart", "authority_cascade_tree", "decision_waterfall"],
+      "carousel_mode": "multi-view",
+      "roles": [
+        {
+          "id": "00000000-0000-0000-0000-000000000101",
+          "name": "Site Coordinator",
+          "capacity": "unlimited",
+          "authority_rank": 2,
+          "prompt_template": [
+            { "field_name": "enrollment_barriers", "prompt": "What are the top barriers to enrollment at your site?" },
+            { "field_name": "patient_feedback", "prompt": "What feedback are patients giving about the trial?" },
+            { "field_name": "resource_needs", "prompt": "What resources would help improve enrollment?" }
+          ],
+          "fallback_chain": [],
+          "color": "#059669"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000102",
+          "name": "IRB Officer",
+          "capacity": 1,
+          "authority_rank": 4,
+          "prompt_template": [
+            { "field_name": "regulatory_concerns", "prompt": "What regulatory or ethical concerns exist with the proposed changes?" },
+            { "field_name": "consent_assessment", "prompt": "Does the revised consent language meet requirements?" },
+            { "field_name": "conditional_approval", "prompt": "Under what conditions would you approve the amendment?" }
+          ],
+          "fallback_chain": [],
+          "color": "#DC2626"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000105",
+          "name": "Patient Advocate",
+          "capacity": "unlimited",
+          "authority_rank": 1,
+          "prompt_template": [
+            { "field_name": "patient_concerns", "prompt": "What are the main patient concerns about this trial?" },
+            { "field_name": "accessibility_issues", "prompt": "Are there accessibility or equity barriers to participation?" },
+            { "field_name": "communication_gaps", "prompt": "How could patient communication be improved?" }
+          ],
+          "fallback_chain": [],
+          "color": "#D97706"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000103",
+          "name": "Safety Monitor",
+          "capacity": 1,
+          "authority_rank": 3,
+          "prompt_template": [
+            { "field_name": "risk_assessment", "prompt": "What is the sponsor risk assessment for continued enrollment?" },
+            { "field_name": "resource_commitment", "prompt": "What resources can the sponsor commit to rescue?" },
+            { "field_name": "timeline_constraint", "prompt": "What is the hard deadline for enrollment recovery?" }
+          ],
+          "fallback_chain": [],
+          "color": "#7C3AED"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000104",
+          "name": "Sponsor",
+          "capacity": 1,
+          "authority_rank": 5,
+          "prompt_template": [
+            { "field_name": "clinical_assessment", "prompt": "What is your clinical assessment of the enrollment barrier?" },
+            { "field_name": "protocol_recommendation", "prompt": "What protocol amendments do you recommend?" },
+            { "field_name": "site_strategy", "prompt": "How should underperforming sites be managed?" }
+          ],
+          "fallback_chain": ["00000000-0000-0000-0000-000000000103"],
+          "color": "#2563EB"
+        }
+      ],
+      "contributions": [
+        {
+          "id": "c0000000-0000-0000-0000-000000000001",
+          "role_id": "00000000-0000-0000-0000-000000000101",
+          "user_token": "seed-coord-durham",
+          "content": "Durham site at 62% enrollment. Main barrier is visit burden — patients dropping out after visit 6. Transportation is an issue for the elderly population. Would benefit greatly from telehealth option.",
+          "structured_fields": {
+            "enrollment_barriers": "12 in-person visits over 18 months. Elderly patients (median age 71) struggle with transportation. Competing trial at UNC offering fewer visits.",
+            "patient_feedback": "Patients love the care team but say the visit schedule is unsustainable. Three patients cited parking costs.",
+            "resource_needs": "Telehealth capability for follow-up visits, patient transportation stipend, and one additional CRC for evening/weekend slots."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-02-25T10:15:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000000002",
+          "role_id": "00000000-0000-0000-0000-000000000101",
+          "user_token": "seed-coord-atlanta",
+          "content": "Atlanta site at 31% enrollment. eGFR criterion is the primary barrier — large underserved population has higher rates of CKD. Relaxing threshold would immediately unlock ~40 pre-screened patients.",
+          "structured_fields": {
+            "enrollment_barriers": "eGFR >60 excludes most of our patient population. Also, consent document is 22 pages — patients are intimidated. No evening clinic hours.",
+            "patient_feedback": "Patients willing to participate but fail screening. Community health workers report strong interest if criteria change.",
+            "resource_needs": "Revised eGFR criteria, simplified consent summary sheet (plain language), evening clinic hours 2x/week."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-02-25T10:20:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000000003",
+          "role_id": "00000000-0000-0000-0000-000000000102",
+          "user_token": "seed-irb-001",
+          "content": "eGFR relaxation requires updated risk-benefit analysis. Telehealth visits need separate informed consent addendum. Conditional approval possible if safety monitoring is enhanced for the expanded population.",
+          "structured_fields": {
+            "regulatory_concerns": "Lowering eGFR threshold changes risk profile — need updated DSMB charter with interim safety review at n=200 in expanded cohort.",
+            "consent_assessment": "Current consent does not cover telehealth visits. Need addendum addressing remote assessment limitations and data privacy for video visits.",
+            "conditional_approval": "Approve if: (1) DSMB interim review added, (2) telehealth consent addendum submitted, (3) renal AE reporting frequency increased to weekly."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-02-25T10:30:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000000004",
+          "role_id": "00000000-0000-0000-0000-000000000105",
+          "user_token": "seed-advocate-001",
+          "content": "Patient community is frustrated by the 22-page consent form and the number of required visits. Many potential participants are from communities that historically distrust clinical research. Need culturally sensitive outreach and simpler communication.",
+          "structured_fields": {
+            "patient_concerns": "Consent form is intimidating. Patients fear being a guinea pig. Visit schedule conflicts with work for hourly workers. No childcare support.",
+            "accessibility_issues": "No materials in Spanish despite 28% Hispanic population at 3 sites. No evening or weekend appointments. Transportation cost not covered.",
+            "communication_gaps": "Patients want to hear from other patients who completed the trial. No peer support program. Trial website is clinical and impersonal."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-02-25T10:35:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000000005",
+          "role_id": "00000000-0000-0000-0000-000000000103",
+          "user_token": "seed-sponsor-001",
+          "content": "Sponsor willing to fund additional CRC positions at top 5 sites and extend timeline by 4 months. Budget ceiling is firm — cannot extend beyond Q2 2027. Closing sites is last resort due to FDA diversity requirements.",
+          "structured_fields": {
+            "risk_assessment": "Current trajectory reaches 65% enrollment by study end. Need 85% for statistical power. Gap is closable with protocol amendment.",
+            "resource_commitment": "Funding for 5 additional CRCs, centralized recruitment campaign ($200K), and patient travel reimbursement program.",
+            "timeline_constraint": "Hard stop Q2 2027. FDA pre-specified enrollment target must be met or study is underpowered for primary endpoint."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-02-25T10:40:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000000006",
+          "role_id": "00000000-0000-0000-0000-000000000104",
+          "user_token": "seed-pi-001",
+          "content": "Enrollment stall is primarily driven by overly restrictive inclusion criteria for the eGFR threshold. Recommend relaxing from >60 to >45 mL/min. Three sites need additional CRC staffing. Closing two sites would concentrate resources but lose geographic diversity.",
+          "structured_fields": {
+            "clinical_assessment": "eGFR threshold too restrictive — excluding 30% of otherwise eligible patients. Visit burden (12 in-person visits) also cited by 4 sites.",
+            "protocol_recommendation": "Amend to eGFR >45, add telehealth for 4 of 12 visits, extend enrollment window by 6 months.",
+            "site_strategy": "Place two lowest-enrolling sites on 90-day probation with dedicated CRC support before closing."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-02-25T10:45:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000000007",
+          "role_id": "00000000-0000-0000-0000-000000000101",
+          "user_token": "seed-coord-chicago",
+          "content": "Chicago site at 55% enrollment. Language barriers are significant — 40% of our eligible population speaks Spanish as primary language. Translation of consent materials would open a large pool of participants.",
+          "structured_fields": {
+            "enrollment_barriers": "Language barrier for Spanish-speaking patients. Consent form only in English. Clinic hours don't accommodate shift workers.",
+            "patient_feedback": "Bilingual staff report strong patient interest when trial is explained verbally in Spanish, but patients cannot review written materials.",
+            "resource_needs": "Spanish-language consent and study materials. Bilingual CRC. Extended evening hours Tuesdays and Thursdays."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-02-25T10:50:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000000008",
+          "role_id": "00000000-0000-0000-0000-000000000102",
+          "user_token": "seed-irb-001",
+          "content": "Spanish-language materials must go through certified medical translation and back-translation verification. Estimated 3-week turnaround. Can expedite if sponsor covers certified translation costs.",
+          "structured_fields": {
+            "regulatory_concerns": "All translated materials require certified medical translation with back-translation verification per 21 CFR 50.25.",
+            "consent_assessment": "Spanish consent must be substantively identical to English version. Cannot use informal or simplified translation.",
+            "conditional_approval": "Approve translated materials if: (1) certified medical translator used, (2) back-translation verified by independent reviewer, (3) submitted within 30 days."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-02-25T10:55:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000000009",
+          "role_id": "00000000-0000-0000-0000-000000000105",
+          "user_token": "seed-advocate-002",
+          "content": "Patients at community health fairs are asking about the trial but get discouraged when they see the consent form length. A 2-page plain-language summary would dramatically improve initial engagement before they see the full document.",
+          "structured_fields": {
+            "patient_concerns": "22-page consent is the #1 deterrent. Patients feel overwhelmed before learning about potential benefits. Need plain-language entry point.",
+            "accessibility_issues": "Community health workers need patient-friendly materials to distribute at churches, barbershops, and community centers.",
+            "communication_gaps": "No social media presence for the trial. Patients under 50 search online first and find nothing patient-friendly about BEACON-CV."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-02-25T11:00:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000000010",
+          "role_id": "00000000-0000-0000-0000-000000000103",
+          "user_token": "seed-sponsor-001",
+          "content": "Sponsor can allocate $50K for certified translation services and $30K for plain-language summary development. Prefer to use existing vendor relationships for translation to expedite timeline.",
+          "structured_fields": {
+            "risk_assessment": "Language access gaps represent 15-20% of enrollment shortfall. ROI on translation investment is strong.",
+            "resource_commitment": "$50K translation budget, $30K plain-language materials, existing vendor can deliver in 2 weeks vs 3.",
+            "timeline_constraint": "Materials must be in-field within 6 weeks to impact Q3 enrollment numbers. Vendor commitment needed by Friday."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-02-25T11:05:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000000011",
+          "role_id": "00000000-0000-0000-0000-000000000104",
+          "user_token": "seed-pi-001",
+          "content": "Agree with eGFR relaxation and telehealth addition. Adding: recommend DSMB review the first 50 patients enrolled under relaxed criteria before proceeding to full enrollment under new protocol. This satisfies IRB safety concerns while maintaining enrollment momentum.",
+          "structured_fields": {
+            "clinical_assessment": "Safety review of initial expanded-criteria cohort is prudent. 50-patient review is sufficient for early signal detection without halting enrollment.",
+            "protocol_recommendation": "Phased rollout: enroll 50 under relaxed eGFR, DSMB review, then proceed if no safety signals. Adds ~4 weeks but provides data-driven assurance.",
+            "site_strategy": "Top 5 sites get relaxed criteria first. Remaining sites follow after DSMB review. Preserves geographic diversity."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-02-25T11:10:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000000012",
+          "role_id": "00000000-0000-0000-0000-000000000102",
+          "user_token": "seed-irb-001",
+          "content": "Phased rollout with 50-patient DSMB review is acceptable. This addresses our primary safety concern while allowing enrollment to continue. Will issue conditional approval letter within 48 hours if sponsor confirms enhanced AE reporting protocol.",
+          "structured_fields": {
+            "regulatory_concerns": "Phased approach with built-in safety checkpoint meets ethical review standards. Recommend AE reporting at 24h for renal events in expanded cohort.",
+            "consent_assessment": "Consent addendum for relaxed criteria is straightforward — 2-page addition. Can approve within 1 week if submitted with updated DSMB charter.",
+            "conditional_approval": "Conditional approval granted pending: (1) updated DSMB charter with 50-patient review, (2) 24h renal AE reporting, (3) consent addendum submission within 7 days."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-02-25T11:15:00Z"
+        }
+      ],
+      "artifact": {
+        "id": "00000000-0000-0000-0000-000000000201",
+        "version": 1,
+        "content_hash": "sha256:seed-draft-v1",
+        "sections": [
+          {
+            "title": "Protocol Amendment Recommendations",
+            "content": "1. Relax eGFR inclusion criterion from >60 to >45 mL/min/1.73m²\n2. Add telehealth option for 4 of 12 follow-up visits\n3. Extend enrollment window by 4-6 months (hard stop Q2 2027)\n4. Add simplified consent summary in plain language + Spanish translation",
+            "source_roles": ["Sponsor", "Safety Monitor", "Site Coordinator"],
+            "status": "pending_review"
+          },
+          {
+            "title": "IRB Conditions for Approval",
+            "content": "1. DSMB interim safety review at n=200 in expanded eGFR cohort\n2. Telehealth consent addendum addressing remote assessment limitations\n3. Increased renal AE reporting frequency (weekly)\n4. Updated risk-benefit analysis for expanded population",
+            "source_roles": ["IRB Officer"],
+            "status": "conditionally_approved"
+          },
+          {
+            "title": "Site Support Plan",
+            "content": "1. Fund 5 additional CRC positions at top-enrolling sites\n2. Centralized recruitment campaign ($200K budget)\n3. Patient travel reimbursement program\n4. Evening/weekend clinic hours at 3 highest-potential sites\n5. 90-day probation period for two lowest sites before closure decision",
+            "source_roles": ["Safety Monitor", "Site Coordinator", "Sponsor"],
+            "status": "pending_review"
+          }
+        ],
+        "status": "draft",
+        "created_at": "2026-02-25T11:20:00Z"
+      }
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000020",
+      "event_id": "00000000-0000-0000-0000-000000000001",
+      "title": "Medical Device Recall Coordination",
+      "description": "Class II recall of cardiac monitoring patch (Model CM-400) affecting 3 hospitals. Coordination needed between manufacturer, clinical engineering, and patient safety.",
+      "status": "open",
+      "heat_score": 0,
+      "dashboard_types": ["quorum_health_chart"],
+      "carousel_mode": "multi-view",
+      "roles": [
+        {
+          "id": "00000000-0000-0000-0000-000000000201",
+          "name": "Clinical Engineering",
+          "capacity": "unlimited",
+          "authority_rank": 2,
+          "prompt_template": [
+            { "field_name": "inventory_status", "prompt": "How many affected units are currently deployed?" },
+            { "field_name": "replacement_plan", "prompt": "What is the replacement timeline and logistics plan?" }
+          ],
+          "fallback_chain": [],
+          "color": "#0891B2"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000202",
+          "name": "Patient Safety Officer",
+          "capacity": 1,
+          "authority_rank": 3,
+          "prompt_template": [
+            { "field_name": "risk_level", "prompt": "What is the patient risk level for continued use during transition?" },
+            { "field_name": "notification_plan", "prompt": "How should affected patients be notified?" }
+          ],
+          "fallback_chain": [],
+          "color": "#E11D48"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000203",
+          "name": "Manufacturer Rep",
+          "capacity": 1,
+          "authority_rank": 1,
+          "prompt_template": [
+            { "field_name": "defect_details", "prompt": "What is the specific defect and affected serial number range?" },
+            { "field_name": "replacement_availability", "prompt": "When will replacement units be available?" }
+          ],
+          "fallback_chain": [],
+          "color": "#6366F1"
+        }
+      ],
+      "contributions": [],
+      "artifact": null
+    },
+    {
+      "id": "00000000-0000-0000-0000-000000000030",
+      "event_id": "00000000-0000-0000-0000-000000000001",
+      "title": "Emergency Department Overcrowding Response",
+      "description": "Regional surge in respiratory illness has pushed ED capacity to 140%. Need coordination between ED, inpatient, outpatient clinics, and EMS for diversion and discharge planning.",
+      "status": "open",
+      "heat_score": 0,
+      "dashboard_types": ["quorum_health_chart"],
+      "carousel_mode": "multi-view",
+      "roles": [
+        {
+          "id": "00000000-0000-0000-0000-000000000301",
+          "name": "ED Medical Director",
+          "capacity": 1,
+          "authority_rank": 3,
+          "prompt_template": [
+            { "field_name": "current_capacity", "prompt": "What is the current ED census and capacity status?" },
+            { "field_name": "diversion_criteria", "prompt": "What criteria should trigger ambulance diversion?" }
+          ],
+          "fallback_chain": [],
+          "color": "#DC2626"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000302",
+          "name": "Inpatient Flow Manager",
+          "capacity": 1,
+          "authority_rank": 2,
+          "prompt_template": [
+            { "field_name": "bed_availability", "prompt": "How many beds can be made available in the next 4 hours?" },
+            { "field_name": "discharge_candidates", "prompt": "Which current inpatients are discharge-ready?" }
+          ],
+          "fallback_chain": [],
+          "color": "#059669"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000000303",
+          "name": "EMS Coordinator",
+          "capacity": "unlimited",
+          "authority_rank": 1,
+          "prompt_template": [
+            { "field_name": "transport_volume", "prompt": "What is the current transport volume and expected trajectory?" },
+            { "field_name": "alternate_destinations", "prompt": "Which alternate facilities can accept patients?" }
+          ],
+          "fallback_chain": [],
+          "color": "#D97706"
+        }
+      ],
+      "contributions": [],
+      "artifact": null
+    }
+  ]
+}

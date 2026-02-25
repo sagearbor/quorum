@@ -39,3 +39,11 @@
 [2026-02-25] | CONTRACT.md as machine-readable spec | Any AI agent can onboard and build a client from CONTRACT.md alone. No prose needed. | Only ARCHITECTURE.md (rejected — too narrative for AI consumption)
 
 [2026-02-25] | `dashboard_types text[]` column on quorums table | API route accepts `dashboard_types: DashboardType[]` and ARCHITECTURE shows DashboardConfig as child of quorum. Storing as `text[]` on the quorums table is simplest — no junction table needed for a small, bounded enum set. Default `['quorum_health_chart']`. | Separate dashboard_config junction table (rejected — over-normalized for an array of enum strings), jsonb column (rejected — text[] is more queryable and type-safe for string arrays)
+
+[2026-02-25] | DemoEngine uses plain EventEmitter pattern, not Supabase mock | Simpler, zero dependencies, no network. Components subscribe via same interface through dataProvider abstraction. | Mock Supabase client (rejected — complex to maintain, couples demo to Supabase internals), MSW/service worker (rejected — overkill for demo, adds build complexity)
+
+[2026-02-25] | dataProvider as unified interface, components never import supabase directly | Single switching point for demo vs live mode. isDemoMode() checks env var or missing Supabase URL. Lazy-imports supabase module in live mode to avoid crashes when env vars are missing. | Direct Supabase imports with conditional checks everywhere (rejected — scattered, error-prone), context provider wrapping entire app (rejected — adds unnecessary React coupling for what's a data access pattern)
+
+[2026-02-25] | Seed JSON at repo root `seed/clinical-trial.json` shared by frontend DemoEngine and backend seed_loader | Single source of truth. Frontend imports JSON directly; backend reads file on startup. Avoids drift between demo data and DB seed. | Separate frontend fixtures and backend SQL (rejected — data drift), API endpoint to dump fixtures (rejected — requires live backend for demo)
+
+[2026-02-25] | Seed roles renamed to match task spec: Site Coordinator, IRB Officer, Patient Advocate, Safety Monitor, Sponsor | Task spec requires these 5 role names. Mapped from seed.sql roles (PI→Sponsor, IRB Chair→IRB Officer, Sponsor Medical Monitor→Safety Monitor). Keeps demo consistent with expo branding. | Keep seed.sql names as-is (rejected — task spec is explicit about role names)

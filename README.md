@@ -62,6 +62,34 @@ pnpm dev
 
 ---
 
+## Demo Mode (Offline)
+
+Run the full expo experience with no backend, no API key, and no internet:
+
+```bash
+# Offline demo — everything runs client-side
+NEXT_PUBLIC_QUORUM_TEST_MODE=true pnpm --filter web dev
+```
+
+This activates the **DemoEngine**, which:
+- Loads 1 pre-seeded clinical trial quorum with 12 realistic contributions and a draft artifact
+- Includes 2 stub quorums (Medical Device Recall, ED Overcrowding) ready for interaction
+- Ticks every 5 seconds: picks a random role, adds a realistic fake contribution
+- Health score starts at 35 and rises ~3 points per tick, capping at 88
+- Emits the same events as Supabase realtime (`contribution`, `health_update`, `artifact_update`)
+
+**Key files:**
+- `seed/clinical-trial.json` — structured seed data
+- `apps/web/src/lib/demoMode.ts` — DemoEngine class (EventEmitter pattern)
+- `apps/web/src/lib/dataProvider.ts` — unified interface (all components import from here)
+- `apps/api/seed_loader.py` — loads seed data into Supabase on FastAPI startup
+
+**Detection logic:** Demo mode activates if `NEXT_PUBLIC_QUORUM_TEST_MODE=true` **or** no `NEXT_PUBLIC_SUPABASE_URL` is set.
+
+**To regenerate fixtures with a real API key:** Run the backend with Supabase configured, then export the quorum state from the `/quorums/{id}/state` endpoint.
+
+---
+
 ## Status
 
-🚧 Active development — MVP targeting Duke Tech Expo 2026
+Active development — MVP targeting Duke Tech Expo 2026

@@ -11,11 +11,14 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@quorum/types": "workspace:*",
     "@supabase/supabase-js": "^2.97.0",
+    "framer-motion": "^12.34.3",
     "idb": "^8.0.3",
     "next": "14.2.35",
     "react": "^18",
     "react-dom": "^18",
+    "recharts": "^3.7.0",
     "zustand": "^5.0.11"
   },
   "devDependencies": {

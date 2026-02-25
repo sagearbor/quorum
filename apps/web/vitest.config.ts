@@ -4,16 +4,17 @@ import path from "path";
 
 export default defineConfig({
   plugins: [react()],
-  test: {
-    environment: "jsdom",
-    globals: true,
-    setupFiles: ["./src/test/setup.ts"],
-    css: false,
-  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
       "@quorum/types": path.resolve(__dirname, "../../packages/types/src"),
     },
+  },
+  test: {
+    environment: "jsdom",
+    globals: true,
+    setupFiles: ["./src/test/setup.ts"],
+    include: ["src/**/*.test.{ts,tsx}"],
+    css: false,
   },
 });

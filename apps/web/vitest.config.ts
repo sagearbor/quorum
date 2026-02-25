@@ -16,5 +16,13 @@ export default defineConfig({
     setupFiles: ["./src/test/setup.ts"],
     include: ["src/**/*.test.{ts,tsx}"],
     css: false,
+    env: {
+      NEXT_PUBLIC_API_URL: "http://localhost:8000",
+    },
+    environmentOptions: {
+      jsdom: {
+        url: "http://localhost:3000",
+      },
+    },
   },
 });

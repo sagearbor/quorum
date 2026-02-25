@@ -194,6 +194,9 @@ export const mockRolesByQuorum: Record<string, Role[]> = {
   "q-003": quorum3Roles,
 };
 
+// Alias for stream-i compatibility
+export const mockRoles = mockRolesByQuorum;
+
 export const mockActiveRoles: Record<string, ActiveRole[]> = {
   "q-001": [
     { role_id: "r-001", participant_count: 1 },

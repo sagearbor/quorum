@@ -3,6 +3,7 @@
 from quorum_llm.budget import BudgetGuard, guarded_complete
 from quorum_llm.factory import get_llm_provider
 from quorum_llm.interface import LLMProvider
+from quorum_llm.providers.mock import MockLLMProvider
 from quorum_llm.models import (
     ArtifactContent,
     ArtifactSection,
@@ -48,4 +49,6 @@ __all__ = [
     # Budget
     "BudgetGuard",
     "guarded_complete",
+    # Mock
+    "MockLLMProvider",
 ]

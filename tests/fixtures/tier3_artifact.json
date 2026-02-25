@@ -1,0 +1,79 @@
+{
+  "description": "Golden fixture: Tier 3 artifact synthesis output for clinical trial quorum",
+  "input": {
+    "quorum": {
+      "id": "quorum-001",
+      "title": "Phase II Clinical Trial Protocol — QRM-42",
+      "description": "Multi-site trial for treatment-resistant hypertension",
+      "roles": [
+        {
+          "id": "role-pi",
+          "name": "Principal Investigator",
+          "authority_rank": 2,
+          "capacity": 1
+        },
+        {
+          "id": "role-irb",
+          "name": "IRB Representative",
+          "authority_rank": 3,
+          "capacity": 1
+        },
+        {
+          "id": "role-biostat",
+          "name": "Biostatistician",
+          "authority_rank": 1,
+          "capacity": "unlimited"
+        }
+      ]
+    },
+    "contributions": [
+      {
+        "id": "contrib-001",
+        "role_id": "role-pi",
+        "content": "Recommend 12-week dosing interval based on Phase I pharmacokinetics. Primary endpoint: systolic BP reduction at 24 weeks. Target enrollment: 200 participants.",
+        "structured_fields": {
+          "dosing_interval": "12 weeks",
+          "primary_endpoint": "Systolic BP reduction at 24 weeks"
+        }
+      },
+      {
+        "id": "contrib-002",
+        "role_id": "role-irb",
+        "content": "Require 6-week safety review checkpoints. DSMB oversight mandatory. Stopping rules for >15% SAE rate.",
+        "structured_fields": {
+          "dosing_interval": "6-week safety checkpoint",
+          "safety_requirements": "DSMB review + stopping rules"
+        }
+      },
+      {
+        "id": "contrib-003",
+        "role_id": "role-biostat",
+        "content": "Power analysis indicates 240 participants needed for 0.82 power at alpha=0.05 with expected effect size of 0.35.",
+        "structured_fields": {
+          "sample_size": "240 participants",
+          "power": "0.82 at alpha=0.05"
+        }
+      }
+    ]
+  },
+  "expected_output": {
+    "sections": [
+      {
+        "title": "Protocol Summary",
+        "content": "Multi-site Phase II clinical trial (NCT-MOCK-2026-001) evaluating the efficacy of compound QRM-42 in treatment-resistant hypertension. Primary endpoint: reduction in systolic blood pressure at 24 weeks. Enrollment target: 240 participants across 6 DCRI-affiliated sites."
+      },
+      {
+        "title": "Safety & Monitoring",
+        "content": "Independent Data Safety Monitoring Board (DSMB) review at weeks 6, 12, and 18. Stopping rules: >15% serious adverse event rate triggers automatic enrollment pause. IRB oversight with expedited reporting for any Grade 3+ adverse events within 72 hours."
+      },
+      {
+        "title": "Stakeholder Consensus",
+        "content": "All contributing roles reached consensus on primary endpoint selection. The IRB-recommended 6-week safety checkpoints were adopted over the PI's proposed 12-week interval, per authority hierarchy. Biostatistics confirmed adequate power (0.82) at the revised sample size of 240."
+      },
+      {
+        "title": "Resource Allocation",
+        "content": "Budget allocation: 45% clinical operations, 25% site payments, 15% data management, 10% regulatory, 5% contingency. Estimated timeline: 18 months enrollment, 6 months follow-up, 4 months analysis and reporting."
+      }
+    ]
+  }
+}

@@ -1,0 +1,128 @@
+"""Mock LLM provider for testing — deterministic responses, no API calls.
+
+Returns realistic clinical trial content keyed by input hash so tests
+are fully reproducible without network access.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+
+from quorum_llm.interface import LLMProvider
+from quorum_llm.models import LLMTier
+from quorum_llm.tier1 import extract_keywords
+
+# ---------------------------------------------------------------------------
+# Pre-canned responses for deterministic testing
+# ---------------------------------------------------------------------------
+
+_TIER2_CONFLICT_RESPONSES: dict[str, dict] = {
+    "default_conflict": {
+        "has_conflict": True,
+        "description": (
+            "The Principal Investigator recommends a 12-week dosing interval "
+            "while the IRB requires a 6-week safety review checkpoint. "
+            "Higher-authority role (IRB, rank 3) overrides on safety matters."
+        ),
+        "severity": "high",
+    },
+    "default_no_conflict": {
+        "has_conflict": False,
+        "description": "All contributions align on the proposed protocol timeline.",
+        "severity": "low",
+    },
+}
+
+_TIER3_ARTIFACT_SECTIONS: list[dict[str, str]] = [
+    {
+        "title": "Protocol Summary",
+        "content": (
+            "Multi-site Phase II clinical trial (NCT-MOCK-2026-001) evaluating "
+            "the efficacy of compound QRM-42 in treatment-resistant hypertension. "
+            "Primary endpoint: reduction in systolic blood pressure at 24 weeks. "
+            "Enrollment target: 240 participants across 6 DCRI-affiliated sites."
+        ),
+    },
+    {
+        "title": "Safety & Monitoring",
+        "content": (
+            "Independent Data Safety Monitoring Board (DSMB) review at weeks 6, "
+            "12, and 18. Stopping rules: >15% serious adverse event rate triggers "
+            "automatic enrollment pause. IRB oversight with expedited reporting "
+            "for any Grade 3+ adverse events within 72 hours."
+        ),
+    },
+    {
+        "title": "Stakeholder Consensus",
+        "content": (
+            "All contributing roles reached consensus on primary endpoint "
+            "selection. The IRB-recommended 6-week safety checkpoints were "
+            "adopted over the PI's proposed 12-week interval, per authority "
+            "hierarchy. Biostatistics confirmed adequate power (0.82) at the "
+            "revised sample size of 240."
+        ),
+    },
+    {
+        "title": "Resource Allocation",
+        "content": (
+            "Budget allocation: 45% clinical operations, 25% site payments, "
+            "15% data management, 10% regulatory, 5% contingency. "
+            "Estimated timeline: 18 months enrollment, 6 months follow-up, "
+            "4 months analysis and reporting."
+        ),
+    },
+]
+
+# Conflict detection prompt response when there IS a conflict
+_CONFLICT_YES = json.dumps(_TIER2_CONFLICT_RESPONSES["default_conflict"])
+# Conflict detection prompt response when there is NO conflict
+_CONFLICT_NO = json.dumps(_TIER2_CONFLICT_RESPONSES["default_no_conflict"])
+# Artifact synthesis response
+_ARTIFACT_JSON = json.dumps(_TIER3_ARTIFACT_SECTIONS)
+
+
+def _hash_key(text: str) -> str:
+    """Produce a short hash key from input text."""
+    return hashlib.sha256(text.encode()).hexdigest()[:12]
+
+
+class MockLLMProvider(LLMProvider):
+    """Deterministic mock provider for testing.
+
+    - Tier 1: delegates to real keyword extraction (no API call)
+    - Tier 2: returns conflict/no-conflict based on prompt content
+    - Tier 3: returns realistic clinical trial artifact sections
+    - embed: returns a deterministic vector derived from input hash
+    """
+
+    def __init__(self) -> None:
+        self.call_log: list[dict] = []
+
+    async def complete(self, prompt: str, tier: LLMTier) -> str:
+        self.call_log.append({"prompt_hash": _hash_key(prompt), "tier": int(tier)})
+
+        if tier == LLMTier.KEYWORD:
+            return ", ".join(extract_keywords(prompt))
+
+        if tier == LLMTier.CONFLICT:
+            # Detect conflict based on whether there are multiple contribution
+            # lines from different roles (the structural signal, not keywords).
+            contrib_lines = [l for l in prompt.split("\n") if l.strip().startswith("- [")]
+            if len(contrib_lines) >= 2:
+                return _CONFLICT_YES
+            return _CONFLICT_NO
+
+        # Tier 3 — artifact synthesis
+        return _ARTIFACT_JSON
+
+    async def embed(self, text: str) -> list[float]:
+        self.call_log.append({"prompt_hash": _hash_key(text), "tier": "embed"})
+        # Deterministic 256-dim vector from hash
+        h = hashlib.sha256(text.encode()).digest()
+        # Use hash bytes to seed a reproducible vector
+        vec = [((b % 200) - 100) / 100.0 for b in h]
+        # Pad to 256 dimensions by cycling
+        while len(vec) < 256:
+            vec.extend(vec)
+        return vec[:256]

@@ -37,3 +37,5 @@
 [2026-02-25] | Proxy escalation for absent roles | Absent high-authority role shouldn't stall quorum. Fallback chain + async email approve/reject (signed JWT, no login). | Block on absence (rejected — breaks partial adoption promise)
 
 [2026-02-25] | CONTRACT.md as machine-readable spec | Any AI agent can onboard and build a client from CONTRACT.md alone. No prose needed. | Only ARCHITECTURE.md (rejected — too narrative for AI consumption)
+
+[2026-02-25] | `dashboard_types text[]` column on quorums table | API route accepts `dashboard_types: DashboardType[]` and ARCHITECTURE shows DashboardConfig as child of quorum. Storing as `text[]` on the quorums table is simplest — no junction table needed for a small, bounded enum set. Default `['quorum_health_chart']`. | Separate dashboard_config junction table (rejected — over-normalized for an array of enum strings), jsonb column (rejected — text[] is more queryable and type-safe for string arrays)

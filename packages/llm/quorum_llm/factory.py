@@ -2,20 +2,26 @@
 
 from __future__ import annotations
 
+import os
+
 from quorum_llm.interface import LLMProvider
 
 # Registry of known providers — lazy imports to avoid pulling in unused SDKs
 _PROVIDERS: dict[str, str] = {
     "azure": "quorum_llm.providers.azure:AzureOpenAIProvider",
     "anthropic": "quorum_llm.providers.anthropic:AnthropicProvider",
+    "mock": "quorum_llm.providers.mock:MockLLMProvider",
 }
 
 
 def get_llm_provider(provider_name: str = "azure", **kwargs) -> LLMProvider:
     """Instantiate an LLM provider by name.
 
+    When QUORUM_TEST_MODE=true is set, always returns MockLLMProvider
+    regardless of provider_name.
+
     Args:
-        provider_name: One of "azure", "anthropic". Matches CONTRACT.md LLMProvider enum.
+        provider_name: One of "azure", "anthropic", "mock".
         **kwargs: Forwarded to the provider constructor.
 
     Returns:
@@ -24,6 +30,11 @@ def get_llm_provider(provider_name: str = "azure", **kwargs) -> LLMProvider:
     Raises:
         ValueError: If provider_name is not recognized.
     """
+    if os.environ.get("QUORUM_TEST_MODE", "").lower() in ("true", "1", "yes"):
+        from quorum_llm.providers.mock import MockLLMProvider
+
+        return MockLLMProvider()
+
     target = _PROVIDERS.get(provider_name)
     if target is None:
         known = ", ".join(sorted(_PROVIDERS))

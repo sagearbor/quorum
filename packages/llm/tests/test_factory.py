@@ -5,13 +5,15 @@ import pytest
 from quorum_llm.factory import get_llm_provider
 
 
-def test_unknown_provider():
+def test_unknown_provider(monkeypatch):
+    monkeypatch.delenv("QUORUM_TEST_MODE", raising=False)
     with pytest.raises(ValueError, match="Unknown LLM provider"):
         get_llm_provider("nonexistent")
 
 
 def test_azure_provider_requires_env(monkeypatch):
     """Azure provider should fail without env vars."""
+    monkeypatch.delenv("QUORUM_TEST_MODE", raising=False)
     monkeypatch.delenv("AZURE_OPENAI_ENDPOINT", raising=False)
     monkeypatch.delenv("AZURE_OPENAI_KEY", raising=False)
     with pytest.raises(KeyError):
@@ -20,6 +22,7 @@ def test_azure_provider_requires_env(monkeypatch):
 
 def test_anthropic_provider_requires_env(monkeypatch):
     """Anthropic provider should fail without API key."""
+    monkeypatch.delenv("QUORUM_TEST_MODE", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     with pytest.raises(KeyError):
         get_llm_provider("anthropic")

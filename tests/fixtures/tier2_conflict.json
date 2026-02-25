@@ -1,0 +1,44 @@
+{
+  "description": "Golden fixture: Tier 2 conflict detection output for overlapping dosing_interval field",
+  "input": {
+    "contributions": [
+      {
+        "id": "contrib-001",
+        "role_id": "role-pi",
+        "content": "Recommend 12-week dosing interval based on Phase I pharmacokinetics",
+        "structured_fields": {
+          "dosing_interval": "12 weeks between administrations",
+          "rationale": "Phase I PK data shows adequate drug levels at 12-week trough"
+        }
+      },
+      {
+        "id": "contrib-002",
+        "role_id": "role-irb",
+        "content": "Require 6-week safety review checkpoints for participant protection",
+        "structured_fields": {
+          "dosing_interval": "6-week mandatory safety review before re-dosing",
+          "safety_requirements": "DSMB review required at each checkpoint"
+        }
+      }
+    ],
+    "roles": [
+      {
+        "id": "role-pi",
+        "name": "Principal Investigator",
+        "authority_rank": 2,
+        "capacity": 1
+      },
+      {
+        "id": "role-irb",
+        "name": "IRB Representative",
+        "authority_rank": 3,
+        "capacity": 1
+      }
+    ]
+  },
+  "expected_output": {
+    "has_conflict": true,
+    "description": "The Principal Investigator recommends a 12-week dosing interval while the IRB requires a 6-week safety review checkpoint. Higher-authority role (IRB, rank 3) overrides on safety matters.",
+    "severity": "high"
+  }
+}

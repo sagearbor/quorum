@@ -1,14 +1,25 @@
-"""All API routes from CONTRACT.md."""
+"""All API routes from CONTRACT.md — wired to quorum_llm pipeline."""
 
 from __future__ import annotations
 
-import hashlib
 import json
+import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
+from quorum_llm import (
+    Contribution as LLMContribution,
+    LLMTier,
+    Quorum as LLMQuorum,
+    Role as LLMRole,
+    detect_conflicts,
+    generate_artifact,
+    synthesize_contributions,
+)
+
 from .database import get_supabase
+from .health import calculate_health_score
 from .llm import llm_provider
 from .models import (
     ContributeRequest,
@@ -17,14 +28,44 @@ from .models import (
     CreateEventResponse,
     CreateQuorumRequest,
     CreateQuorumResponse,
-    HealthMetrics,
     QuorumStateResponse,
     ResolveRequest,
     ResolveResponse,
 )
 from .ws_manager import manager
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Helpers: convert DB rows → quorum_llm data models
+# ---------------------------------------------------------------------------
+
+def _db_roles_to_llm(roles_data: list[dict]) -> list[LLMRole]:
+    return [
+        LLMRole(
+            id=r["id"],
+            name=r["name"],
+            authority_rank=r.get("authority_rank", 0),
+            capacity=r.get("capacity", "unlimited"),
+        )
+        for r in roles_data
+    ]
+
+
+def _db_contribs_to_llm(contribs_data: list[dict]) -> list[LLMContribution]:
+    return [
+        LLMContribution(
+            id=c["id"],
+            role_id=c["role_id"],
+            content=c["content"],
+            structured_fields=c.get("structured_fields") or {},
+            tier_processed=c.get("tier_processed", 1),
+        )
+        for c in contribs_data
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -111,9 +152,9 @@ async def contribute(quorum_id: str, body: ContributeRequest):
     if quorum.data["status"] == "open":
         db.table("quorums").update({"status": "active"}).eq("id", quorum_id).execute()
 
-    # Tier-1 processing (deterministic — stub for now)
+    # --- Tier 1: keyword extraction on every contribution (deterministic) ---
     tier = 1
-    await llm_provider.complete(body.content, tier=1)
+    await llm_provider.complete(body.content, tier=LLMTier.KEYWORD)
 
     contribution_id = str(uuid.uuid4())
     contrib_row = {
@@ -127,10 +168,62 @@ async def contribute(quorum_id: str, body: ContributeRequest):
     }
     db.table("contributions").insert(contrib_row).execute()
 
-    # Broadcast to live WebSocket subscribers
+    # Broadcast contribution
     await manager.broadcast(quorum_id, {
         "type": "contribution",
         "data": contrib_row,
+    })
+
+    # --- Tier 2: conflict detection if >=2 contributions on same field ---
+    all_contribs = (
+        db.table("contributions")
+        .select("*")
+        .eq("quorum_id", quorum_id)
+        .order("created_at")
+        .execute()
+    )
+    roles_data = (
+        db.table("roles").select("*").eq("quorum_id", quorum_id).execute()
+    )
+
+    llm_contribs = _db_contribs_to_llm(all_contribs.data)
+    llm_roles = _db_roles_to_llm(roles_data.data)
+
+    # Check for overlapping structured fields that need Tier 2
+    fields_lists = [c.structured_fields for c in llm_contribs]
+    from quorum_llm import find_overlapping_fields
+
+    overlaps = find_overlapping_fields(fields_lists)
+    if overlaps:
+        tier = 2
+        try:
+            conflicts = await detect_conflicts(llm_contribs, llm_roles, llm_provider)
+            if conflicts:
+                logger.info(
+                    "Tier 2: detected %d conflicts in quorum %s",
+                    len(conflicts), quorum_id,
+                )
+        except Exception:
+            logger.warning("Tier 2 conflict detection failed for quorum %s", quorum_id, exc_info=True)
+
+        # Update contribution tier
+        db.table("contributions").update({"tier_processed": tier}).eq("id", contribution_id).execute()
+
+    # --- Recalculate health score ---
+    artifact_result = db.table("artifacts").select("*").eq("quorum_id", quorum_id).execute()
+    artifact = artifact_result.data[0] if artifact_result.data else None
+
+    health_score, metrics = calculate_health_score(
+        roles_data.data, all_contribs.data, artifact,
+    )
+
+    # Save health score to quorum
+    db.table("quorums").update({"heat_score": health_score}).eq("id", quorum_id).execute()
+
+    # Broadcast health update
+    await manager.broadcast(quorum_id, {
+        "type": "health_update",
+        "data": {"score": health_score, "metrics": metrics},
     })
 
     return ContributeResponse(contribution_id=contribution_id, tier_processed=tier)
@@ -160,7 +253,7 @@ async def get_quorum_state(quorum_id: str):
     )
     artifact = artifact_result.data[0] if artifact_result.data else None
 
-    roles = db.table("roles").select("id").eq("quorum_id", quorum_id).execute()
+    roles = db.table("roles").select("*").eq("quorum_id", quorum_id).execute()
 
     # Compute active roles (distinct user_tokens per role)
     role_participants: dict[str, set[str]] = {}
@@ -172,25 +265,15 @@ async def get_quorum_state(quorum_id: str):
         for r in roles.data
     ]
 
-    # Compute health score from basic metrics
-    total_roles = len(roles.data)
-    covered_roles = sum(1 for r in roles.data if r["id"] in role_participants)
-    role_coverage = (covered_roles / total_roles * 100) if total_roles > 0 else 0
-
-    metrics = HealthMetrics(role_coverage_pct=role_coverage)
-    health_score = (
-        metrics.completion_pct * 0.3
-        + metrics.consensus_score * 0.2
-        + metrics.critical_path_score * 0.2
-        + metrics.role_coverage_pct * 0.2
-        + metrics.blocker_score * 0.1
+    health_score, _ = calculate_health_score(
+        roles.data, contributions.data, artifact,
     )
 
     return QuorumStateResponse(
         quorum=quorum.data,
         contributions=contributions.data,
         artifact=artifact,
-        health_score=round(health_score, 2),
+        health_score=health_score,
         active_roles=active_roles,
     )
 
@@ -202,15 +285,15 @@ async def get_quorum_state(quorum_id: str):
 async def resolve_quorum(quorum_id: str, body: ResolveRequest):
     db = get_supabase()
 
-    quorum = (
-        db.table("quorums").select("id, status").eq("id", quorum_id).single().execute()
+    quorum_result = (
+        db.table("quorums").select("*").eq("id", quorum_id).single().execute()
     )
-    if not quorum.data:
+    if not quorum_result.data:
         raise HTTPException(status_code=404, detail="Quorum not found")
-    if quorum.data["status"] == "resolved":
+    if quorum_result.data["status"] == "resolved":
         raise HTTPException(status_code=409, detail="Quorum already resolved")
 
-    # Gather contributions for synthesis
+    # Gather all contributions + roles
     contributions = (
         db.table("contributions")
         .select("*")
@@ -218,28 +301,57 @@ async def resolve_quorum(quorum_id: str, body: ResolveRequest):
         .order("created_at")
         .execute()
     )
+    roles_data = (
+        db.table("roles").select("*").eq("quorum_id", quorum_id).execute()
+    )
 
-    # Tier-3 synthesis (stub — real impl in Stream E)
-    synthesis_prompt = json.dumps([c["content"] for c in contributions.data])
-    synthesized = await llm_provider.complete(synthesis_prompt, tier=3)
+    llm_roles = _db_roles_to_llm(roles_data.data)
+    llm_contribs = _db_contribs_to_llm(contributions.data)
 
-    content_hash = hashlib.sha256(synthesized.encode()).hexdigest()[:16]
+    # Build quorum context for artifact generation
+    llm_quorum = LLMQuorum(
+        id=quorum_id,
+        title=quorum_result.data["title"],
+        description=quorum_result.data.get("description", ""),
+        roles=llm_roles,
+        status=quorum_result.data["status"],
+    )
+
+    # --- Tier 3: full artifact synthesis ---
+    artifact_content = await generate_artifact(llm_quorum, llm_contribs, llm_provider)
+
+    # Serialize sections for DB storage
+    sections_json = [
+        {
+            "title": s.title,
+            "content": s.content,
+            "source_contribution_ids": s.source_contribution_ids,
+        }
+        for s in artifact_content.sections
+    ]
+    content_hash = artifact_content.content_hash
+
     artifact_id = str(uuid.uuid4())
 
     # Check for existing artifact (optimistic locking via version + CAS)
     existing = db.table("artifacts").select("id, version").eq("quorum_id", quorum_id).execute()
 
+    # Determine status: PENDING_RATIFICATION if any roles have 0 contributions
+    contributing_role_ids = {c["role_id"] for c in contributions.data}
+    all_role_ids = {r["id"] for r in roles_data.data}
+    missing_roles = all_role_ids - contributing_role_ids
+    artifact_status = "pending_ratification" if missing_roles else "draft"
+
     if existing.data:
         current = existing.data[0]
         new_version = current["version"] + 1
-        # CAS: update only if version hasn't changed
         update_result = (
             db.table("artifacts")
             .update({
                 "version": new_version,
                 "content_hash": content_hash,
-                "sections": [{"content": synthesized, "source_contributions": [c["id"] for c in contributions.data]}],
-                "status": "draft",
+                "sections": sections_json,
+                "status": artifact_status,
             })
             .eq("id", current["id"])
             .eq("version", current["version"])  # CAS condition
@@ -254,8 +366,8 @@ async def resolve_quorum(quorum_id: str, body: ResolveRequest):
             "quorum_id": quorum_id,
             "version": 1,
             "content_hash": content_hash,
-            "sections": [{"content": synthesized, "source_contributions": [c["id"] for c in contributions.data]}],
-            "status": "draft",
+            "sections": sections_json,
+            "status": artifact_status,
         }
         db.table("artifacts").insert(artifact_row).execute()
 
@@ -265,7 +377,12 @@ async def resolve_quorum(quorum_id: str, body: ResolveRequest):
     # Broadcast artifact update
     await manager.broadcast(quorum_id, {
         "type": "artifact_update",
-        "data": {"artifact_id": artifact_id, "status": "draft", "content_hash": content_hash},
+        "data": {
+            "artifact_id": artifact_id,
+            "status": artifact_status,
+            "content_hash": content_hash,
+            "sections": sections_json,
+        },
     })
 
     download_url = f"/artifacts/{artifact_id}/download"
@@ -280,7 +397,6 @@ async def quorum_live(websocket: WebSocket, quorum_id: str):
     await manager.connect(quorum_id, websocket)
     try:
         while True:
-            # Keep connection alive; client can send pings or role_join messages
             data = await websocket.receive_text()
             try:
                 msg = json.loads(data)

@@ -1,0 +1,44 @@
+{
+  "description": "Golden fixture: health score calculation for various quorum states",
+  "cases": [
+    {
+      "name": "empty_quorum",
+      "roles": [
+        {"id": "r1", "name": "PI", "authority_rank": 2, "capacity": "1"},
+        {"id": "r2", "name": "IRB", "authority_rank": 3, "capacity": "1"},
+        {"id": "r3", "name": "Biostat", "authority_rank": 1, "capacity": "unlimited"}
+      ],
+      "contributions": [],
+      "artifact": null,
+      "expected_score_range": [0, 20]
+    },
+    {
+      "name": "one_role_contributing",
+      "roles": [
+        {"id": "r1", "name": "PI", "authority_rank": 2, "capacity": "1"},
+        {"id": "r2", "name": "IRB", "authority_rank": 3, "capacity": "1"},
+        {"id": "r3", "name": "Biostat", "authority_rank": 1, "capacity": "unlimited"}
+      ],
+      "contributions": [
+        {"id": "c1", "role_id": "r1", "content": "test", "user_token": "u1"}
+      ],
+      "artifact": null,
+      "expected_score_range": [10, 40]
+    },
+    {
+      "name": "all_roles_contributing",
+      "roles": [
+        {"id": "r1", "name": "PI", "authority_rank": 2, "capacity": "1"},
+        {"id": "r2", "name": "IRB", "authority_rank": 3, "capacity": "1"},
+        {"id": "r3", "name": "Biostat", "authority_rank": 1, "capacity": "unlimited"}
+      ],
+      "contributions": [
+        {"id": "c1", "role_id": "r1", "content": "test", "user_token": "u1"},
+        {"id": "c2", "role_id": "r2", "content": "test", "user_token": "u2"},
+        {"id": "c3", "role_id": "r3", "content": "test", "user_token": "u3"}
+      ],
+      "artifact": null,
+      "expected_score_range": [50, 90]
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: quorum-llm
+Version: 0.1.0
+Summary: Pluggable LLM provider package for Quorum
+Requires-Python: >=3.11
+Requires-Dist: openai>=1.0.0
+Requires-Dist: anthropic>=0.39.0
+Provides-Extra: dev
+Requires-Dist: pytest>=8.0; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.24; extra == "dev"

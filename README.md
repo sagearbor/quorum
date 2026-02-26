@@ -40,15 +40,19 @@ Even if only 2 of 10 parties use it, Quorum creates value. Absent roles trigger 
 git clone https://github.com/sagearbor/quorum.git
 cd quorum
 
-# Install
-pnpm install
+# Install (from repo root)
+pnpm install --filter "./apps/*" --filter "./packages/*"
 
 # Configure
 cp .env.example .env
-# Fill in: AZURE_OPENAI_KEY, SUPABASE_URL, SUPABASE_ANON_KEY
+# Fill in: AZURE_OPENAI_ENDPOINT, SUPABASE_URL, SUPABASE_ANON_KEY
+# AZURE_OPENAI_KEY is optional — omit for Managed Identity auth (see .env.example)
 
-# Dev
-pnpm dev
+# Terminal 1 — FastAPI backend (http://localhost:8000)
+cd apps && uvicorn api.main:app --reload
+
+# Terminal 2 — Next.js frontend (http://localhost:3000)
+cd apps/web && pnpm dev
 ```
 
 ---
@@ -67,8 +71,8 @@ pnpm dev
 Run the full expo experience with no backend, no API key, and no internet:
 
 ```bash
-# Offline demo — everything runs client-side
-NEXT_PUBLIC_QUORUM_TEST_MODE=true pnpm --filter web dev
+# Offline demo — everything runs client-side (http://localhost:3000)
+cd apps/web && NEXT_PUBLIC_QUORUM_TEST_MODE=true pnpm dev
 ```
 
 This activates the **DemoEngine**, which:

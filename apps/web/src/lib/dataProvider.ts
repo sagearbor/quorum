@@ -36,6 +36,14 @@ export function isDemoMode(): boolean {
   );
 }
 
+export function isPollingMode(): boolean {
+  return process.env.NEXT_PUBLIC_REALTIME_PROVIDER === "polling";
+}
+
+function getApiBase(): string {
+  return process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+}
+
 // ---------------------------------------------------------------------------
 // Quorum data
 // ---------------------------------------------------------------------------
@@ -197,6 +205,95 @@ export async function getHealthScore(quorumId: string): Promise<number> {
 }
 
 // ---------------------------------------------------------------------------
+// Polling transport (used when NEXT_PUBLIC_REALTIME_PROVIDER=polling)
+// ---------------------------------------------------------------------------
+
+interface PollState {
+  etag: string;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  lastContributions: any[];
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  lastArtifact: any | null;
+  lastHealthScore: number;
+}
+
+const _pollIntervals = new Map<string, ReturnType<typeof setInterval>>();
+const _pollState = new Map<string, PollState>();
+const _pollHandlers = new Map<string, Set<(data: PollState & { raw: Record<string, unknown> }) => void>>();
+
+function _ensurePolling(quorumId: string): void {
+  if (_pollIntervals.has(quorumId)) return;
+
+  _pollState.set(quorumId, {
+    etag: "",
+    lastContributions: [],
+    lastArtifact: null,
+    lastHealthScore: 0,
+  });
+
+  const interval = setInterval(async () => {
+    try {
+      const res = await fetch(`${getApiBase()}/quorums/${quorumId}/poll`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const prev = _pollState.get(quorumId)!;
+
+      if (data.etag === prev.etag) return; // No changes
+
+      _pollState.set(quorumId, {
+        etag: data.etag,
+        lastContributions: data.contributions,
+        lastArtifact: data.artifact,
+        lastHealthScore: data.health_score,
+      });
+
+      // Notify handlers
+      const handlers = _pollHandlers.get(quorumId);
+      if (handlers) {
+        for (const h of handlers) {
+          h({ ...data, raw: data });
+        }
+      }
+    } catch {
+      // Silently skip poll failures
+    }
+  }, 2000);
+
+  _pollIntervals.set(quorumId, interval);
+}
+
+function _stopPolling(quorumId: string): void {
+  const handlers = _pollHandlers.get(quorumId);
+  if (handlers && handlers.size > 0) return; // Still has listeners
+  const interval = _pollIntervals.get(quorumId);
+  if (interval) {
+    clearInterval(interval);
+    _pollIntervals.delete(quorumId);
+    _pollState.delete(quorumId);
+  }
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function _addPollHandler(quorumId: string, handler: (data: any) => void): () => void {
+  _ensurePolling(quorumId);
+  if (!_pollHandlers.has(quorumId)) {
+    _pollHandlers.set(quorumId, new Set());
+  }
+  _pollHandlers.get(quorumId)!.add(handler);
+
+  return () => {
+    const handlers = _pollHandlers.get(quorumId);
+    if (handlers) {
+      handlers.delete(handler);
+      if (handlers.size === 0) {
+        _pollHandlers.delete(quorumId);
+        _stopPolling(quorumId);
+      }
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Realtime subscriptions
 // ---------------------------------------------------------------------------
 
@@ -214,6 +311,13 @@ export function subscribeToHealth(
       if (data.quorum_id === quorumId) {
         handler({ score: data.score, metrics: data.metrics });
       }
+    });
+  }
+
+  // Polling mode — use poll endpoint
+  if (isPollingMode()) {
+    return _addPollHandler(quorumId, (data) => {
+      handler({ score: data.health_score ?? 0, metrics: {} });
     });
   }
 
@@ -270,6 +374,20 @@ export function subscribeToContributions(
     });
   }
 
+  // Polling mode — diff contributions from poll
+  if (isPollingMode()) {
+    let seenIds = new Set<string>();
+    return _addPollHandler(quorumId, (data) => {
+      const contribs = (data.contributions ?? []) as DemoContribution[];
+      for (const c of contribs) {
+        if (!seenIds.has(c.id)) {
+          seenIds.add(c.id);
+          handler(c);
+        }
+      }
+    });
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   let channel: any = null;
 
@@ -313,6 +431,18 @@ export function subscribeToArtifact(
       const a = raw as DemoArtifact & { quorum_id: string };
       if (a.quorum_id === quorumId) {
         handler(a);
+      }
+    });
+  }
+
+  // Polling mode — check for artifact changes
+  if (isPollingMode()) {
+    let lastVersion = -1;
+    return _addPollHandler(quorumId, (data) => {
+      const artifact = data.artifact as DemoArtifact | null;
+      if (artifact && (artifact.version ?? 0) !== lastVersion) {
+        lastVersion = artifact.version ?? 0;
+        handler(artifact);
       }
     });
   }

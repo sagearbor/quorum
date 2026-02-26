@@ -127,6 +127,16 @@ class QuorumStateResponse(BaseModel):
     active_roles: list[ActiveRole]
 
 
+# GET /quorums/{quorum_id}/poll
+class PollResponse(BaseModel):
+    quorum: dict[str, Any]
+    contributions: list[dict[str, Any]]
+    artifact: dict[str, Any] | None
+    health_score: float
+    active_roles: list[ActiveRole]
+    etag: str
+
+
 # POST /quorums/{quorum_id}/resolve
 class ResolveRequest(BaseModel):
     sign_off_token: str

@@ -8,9 +8,11 @@ from pathlib import Path
 
 import pytest
 
-# Ensure packages/llm is importable
+# Ensure packages are importable
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "packages" / "llm"))
+sys.path.insert(0, str(ROOT / "packages"))
+sys.path.insert(0, str(ROOT / "apps"))
 
 # Force test mode before any imports that touch the factory
 os.environ["QUORUM_TEST_MODE"] = "true"

@@ -1,10 +1,17 @@
-"""All API routes from CONTRACT.md — wired to quorum_llm pipeline."""
+"""All API routes from CONTRACT.md — wired to quorum_llm pipeline.
+
+Uses DBProvider + RealtimeProvider abstractions for Supabase/Azure switchability.
+"""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import os
+import sys
 import uuid
+from pathlib import Path
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
@@ -18,7 +25,6 @@ from quorum_llm import (
     synthesize_contributions,
 )
 
-from .database import get_supabase
 from .health import calculate_health_score
 from .llm import llm_provider
 from .models import (
@@ -28,11 +34,20 @@ from .models import (
     CreateEventResponse,
     CreateQuorumRequest,
     CreateQuorumResponse,
+    PollResponse,
     QuorumStateResponse,
     ResolveRequest,
     ResolveResponse,
 )
+from .realtime import get_realtime_provider
 from .ws_manager import manager
+
+# Ensure packages/ is importable for db provider
+_packages_path = str(Path(__file__).resolve().parent.parent.parent / "packages")
+if _packages_path not in sys.path:
+    sys.path.insert(0, _packages_path)
+
+from db import get_db_provider
 
 logger = logging.getLogger(__name__)
 
@@ -68,12 +83,18 @@ def _db_contribs_to_llm(contribs_data: list[dict]) -> list[LLMContribution]:
     ]
 
 
+def _compute_etag(data: dict) -> str:
+    """Compute a simple ETag from JSON-serialized state."""
+    raw = json.dumps(data, sort_keys=True, default=str)
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
 # ---------------------------------------------------------------------------
 # POST /events
 # ---------------------------------------------------------------------------
 @router.post("/events", response_model=CreateEventResponse)
 async def create_event(body: CreateEventRequest):
-    db = get_supabase()
+    db = get_db_provider()
     event_id = str(uuid.uuid4())
     row = {
         "id": event_id,
@@ -82,8 +103,7 @@ async def create_event(body: CreateEventRequest):
         "access_code": body.access_code,
         "max_active_quorums": body.max_active_quorums,
     }
-    result = db.table("events").insert(row).execute()
-    created = result.data[0]
+    created = await db.create_event(row)
     return CreateEventResponse(
         id=created["id"],
         slug=created["slug"],
@@ -96,11 +116,11 @@ async def create_event(body: CreateEventRequest):
 # ---------------------------------------------------------------------------
 @router.post("/events/{event_id}/quorums", response_model=CreateQuorumResponse)
 async def create_quorum(event_id: str, body: CreateQuorumRequest):
-    db = get_supabase()
+    db = get_db_provider()
 
     # Verify event exists
-    event = db.table("events").select("id, slug").eq("id", event_id).single().execute()
-    if not event.data:
+    event = await db.get_event_by_id(event_id)
+    if not event:
         raise HTTPException(status_code=404, detail="Event not found")
 
     quorum_id = str(uuid.uuid4())
@@ -112,7 +132,7 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
         "status": "open",
         "carousel_mode": body.carousel_mode.value,
     }
-    db.table("quorums").insert(quorum_row).execute()
+    await db.create_quorum(quorum_row)
 
     # Insert roles
     for role_def in body.roles:
@@ -128,9 +148,9 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
             "prompt_template": [f.model_dump() for f in role_def.prompt_template],
             "fallback_chain": role_def.fallback_chain,
         }
-        db.table("roles").insert(role_row).execute()
+        await db.create_role(role_row)
 
-    share_url = f"/event/{event.data['slug']}/quorum/{quorum_id}"
+    share_url = f"/event/{event['slug']}/quorum/{quorum_id}"
     return CreateQuorumResponse(id=quorum_id, status="open", share_url=share_url)
 
 
@@ -139,18 +159,19 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
 # ---------------------------------------------------------------------------
 @router.post("/quorums/{quorum_id}/contribute", response_model=ContributeResponse)
 async def contribute(quorum_id: str, body: ContributeRequest):
-    db = get_supabase()
+    db = get_db_provider()
+    rt = get_realtime_provider()
 
     # Verify quorum exists and is not resolved/archived
-    quorum = db.table("quorums").select("id, status").eq("id", quorum_id).single().execute()
-    if not quorum.data:
+    quorum = await db.get_quorum(quorum_id)
+    if not quorum:
         raise HTTPException(status_code=404, detail="Quorum not found")
-    if quorum.data["status"] in ("resolved", "archived"):
+    if quorum["status"] in ("resolved", "archived"):
         raise HTTPException(status_code=409, detail="Quorum is no longer accepting contributions")
 
     # Activate quorum on first contribution
-    if quorum.data["status"] == "open":
-        db.table("quorums").update({"status": "active"}).eq("id", quorum_id).execute()
+    if quorum["status"] == "open":
+        await db.update_quorum(quorum_id, {"status": "active"})
 
     # --- Tier 1: keyword extraction on every contribution (deterministic) ---
     tier = 1
@@ -166,28 +187,17 @@ async def contribute(quorum_id: str, body: ContributeRequest):
         "structured_fields": body.structured_fields,
         "tier_processed": tier,
     }
-    db.table("contributions").insert(contrib_row).execute()
+    await db.add_contribution(contrib_row)
 
     # Broadcast contribution
-    await manager.broadcast(quorum_id, {
-        "type": "contribution",
-        "data": contrib_row,
-    })
+    await rt.broadcast(quorum_id, "contribution", contrib_row)
 
     # --- Tier 2: conflict detection if >=2 contributions on same field ---
-    all_contribs = (
-        db.table("contributions")
-        .select("*")
-        .eq("quorum_id", quorum_id)
-        .order("created_at")
-        .execute()
-    )
-    roles_data = (
-        db.table("roles").select("*").eq("quorum_id", quorum_id).execute()
-    )
+    all_contribs = await db.get_contributions(quorum_id)
+    roles_data = await db.get_roles(quorum_id)
 
-    llm_contribs = _db_contribs_to_llm(all_contribs.data)
-    llm_roles = _db_roles_to_llm(roles_data.data)
+    llm_contribs = _db_contribs_to_llm(all_contribs)
+    llm_roles = _db_roles_to_llm(roles_data)
 
     # Check for overlapping structured fields that need Tier 2
     fields_lists = [c.structured_fields for c in llm_contribs]
@@ -207,24 +217,20 @@ async def contribute(quorum_id: str, body: ContributeRequest):
             logger.warning("Tier 2 conflict detection failed for quorum %s", quorum_id, exc_info=True)
 
         # Update contribution tier
-        db.table("contributions").update({"tier_processed": tier}).eq("id", contribution_id).execute()
+        await db.update_contribution(contribution_id, {"tier_processed": tier})
 
     # --- Recalculate health score ---
-    artifact_result = db.table("artifacts").select("*").eq("quorum_id", quorum_id).execute()
-    artifact = artifact_result.data[0] if artifact_result.data else None
+    artifact = await db.get_artifact(quorum_id)
 
     health_score, metrics = calculate_health_score(
-        roles_data.data, all_contribs.data, artifact,
+        roles_data, all_contribs, artifact,
     )
 
     # Save health score to quorum
-    db.table("quorums").update({"heat_score": health_score}).eq("id", quorum_id).execute()
+    await db.update_quorum(quorum_id, {"heat_score": health_score})
 
     # Broadcast health update
-    await manager.broadcast(quorum_id, {
-        "type": "health_update",
-        "data": {"score": health_score, "metrics": metrics},
-    })
+    await rt.broadcast(quorum_id, "health_update", {"score": health_score, "metrics": metrics})
 
     return ContributeResponse(contribution_id=contribution_id, tier_processed=tier)
 
@@ -234,47 +240,84 @@ async def contribute(quorum_id: str, body: ContributeRequest):
 # ---------------------------------------------------------------------------
 @router.get("/quorums/{quorum_id}/state", response_model=QuorumStateResponse)
 async def get_quorum_state(quorum_id: str):
-    db = get_supabase()
+    db = get_db_provider()
 
-    quorum = db.table("quorums").select("*").eq("id", quorum_id).single().execute()
-    if not quorum.data:
+    state = await db.get_quorum_state(quorum_id)
+    if not state:
         raise HTTPException(status_code=404, detail="Quorum not found")
 
-    contributions = (
-        db.table("contributions")
-        .select("*")
-        .eq("quorum_id", quorum_id)
-        .order("created_at")
-        .execute()
-    )
-
-    artifact_result = (
-        db.table("artifacts").select("*").eq("quorum_id", quorum_id).execute()
-    )
-    artifact = artifact_result.data[0] if artifact_result.data else None
-
-    roles = db.table("roles").select("*").eq("quorum_id", quorum_id).execute()
+    quorum = state["quorum"]
+    contributions = state["contributions"]
+    roles = state["roles"]
+    artifact = state["artifact"]
 
     # Compute active roles (distinct user_tokens per role)
     role_participants: dict[str, set[str]] = {}
-    for c in contributions.data:
+    for c in contributions:
         role_participants.setdefault(c["role_id"], set()).add(c["user_token"])
 
     active_roles = [
         {"role_id": r["id"], "participant_count": len(role_participants.get(r["id"], set()))}
-        for r in roles.data
+        for r in roles
     ]
 
-    health_score, _ = calculate_health_score(
-        roles.data, contributions.data, artifact,
-    )
+    health_score, _ = calculate_health_score(roles, contributions, artifact)
 
     return QuorumStateResponse(
-        quorum=quorum.data,
-        contributions=contributions.data,
+        quorum=quorum,
+        contributions=contributions,
         artifact=artifact,
         health_score=health_score,
         active_roles=active_roles,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GET /quorums/{quorum_id}/poll — polling fallback for Azure SQL mode
+# ---------------------------------------------------------------------------
+@router.get("/quorums/{quorum_id}/poll", response_model=PollResponse)
+async def poll_quorum(quorum_id: str):
+    """Returns quorum state + ETag for polling clients."""
+    db = get_db_provider()
+
+    state = await db.get_quorum_state(quorum_id)
+    if not state:
+        raise HTTPException(status_code=404, detail="Quorum not found")
+
+    quorum = state["quorum"]
+    contributions = state["contributions"]
+    roles = state["roles"]
+    artifact = state["artifact"]
+
+    # Compute active roles
+    role_participants: dict[str, set[str]] = {}
+    for c in contributions:
+        role_participants.setdefault(c["role_id"], set()).add(c["user_token"])
+
+    active_roles = [
+        {"role_id": r["id"], "participant_count": len(role_participants.get(r["id"], set()))}
+        for r in roles
+    ]
+
+    health_score, metrics = calculate_health_score(roles, contributions, artifact)
+
+    response_data = {
+        "quorum": quorum,
+        "contributions": contributions,
+        "artifact": artifact,
+        "health_score": health_score,
+        "active_roles": active_roles,
+    }
+
+    etag = _compute_etag(response_data)
+
+    return PollResponse(
+        quorum=quorum,
+        contributions=contributions,
+        artifact=artifact,
+        health_score=health_score,
+        active_roles=active_roles,
+        etag=etag,
     )
 
 
@@ -283,38 +326,29 @@ async def get_quorum_state(quorum_id: str):
 # ---------------------------------------------------------------------------
 @router.post("/quorums/{quorum_id}/resolve", response_model=ResolveResponse)
 async def resolve_quorum(quorum_id: str, body: ResolveRequest):
-    db = get_supabase()
+    db = get_db_provider()
+    rt = get_realtime_provider()
 
-    quorum_result = (
-        db.table("quorums").select("*").eq("id", quorum_id).single().execute()
-    )
-    if not quorum_result.data:
+    quorum = await db.get_quorum(quorum_id)
+    if not quorum:
         raise HTTPException(status_code=404, detail="Quorum not found")
-    if quorum_result.data["status"] == "resolved":
+    if quorum["status"] == "resolved":
         raise HTTPException(status_code=409, detail="Quorum already resolved")
 
     # Gather all contributions + roles
-    contributions = (
-        db.table("contributions")
-        .select("*")
-        .eq("quorum_id", quorum_id)
-        .order("created_at")
-        .execute()
-    )
-    roles_data = (
-        db.table("roles").select("*").eq("quorum_id", quorum_id).execute()
-    )
+    contributions = await db.get_contributions(quorum_id)
+    roles_data = await db.get_roles(quorum_id)
 
-    llm_roles = _db_roles_to_llm(roles_data.data)
-    llm_contribs = _db_contribs_to_llm(contributions.data)
+    llm_roles = _db_roles_to_llm(roles_data)
+    llm_contribs = _db_contribs_to_llm(contributions)
 
     # Build quorum context for artifact generation
     llm_quorum = LLMQuorum(
         id=quorum_id,
-        title=quorum_result.data["title"],
-        description=quorum_result.data.get("description", ""),
+        title=quorum["title"],
+        description=quorum.get("description", ""),
         roles=llm_roles,
-        status=quorum_result.data["status"],
+        status=quorum["status"],
     )
 
     # --- Tier 3: full artifact synthesis ---
@@ -334,32 +368,29 @@ async def resolve_quorum(quorum_id: str, body: ResolveRequest):
     artifact_id = str(uuid.uuid4())
 
     # Check for existing artifact (optimistic locking via version + CAS)
-    existing = db.table("artifacts").select("id, version").eq("quorum_id", quorum_id).execute()
+    existing = await db.get_artifact(quorum_id)
 
     # Determine status: PENDING_RATIFICATION if any roles have 0 contributions
-    contributing_role_ids = {c["role_id"] for c in contributions.data}
-    all_role_ids = {r["id"] for r in roles_data.data}
+    contributing_role_ids = {c["role_id"] for c in contributions}
+    all_role_ids = {r["id"] for r in roles_data}
     missing_roles = all_role_ids - contributing_role_ids
     artifact_status = "pending_ratification" if missing_roles else "draft"
 
-    if existing.data:
-        current = existing.data[0]
-        new_version = current["version"] + 1
-        update_result = (
-            db.table("artifacts")
-            .update({
+    if existing:
+        new_version = existing["version"] + 1
+        updated = await db.update_artifact(
+            existing["id"],
+            existing["version"],
+            {
                 "version": new_version,
                 "content_hash": content_hash,
                 "sections": sections_json,
                 "status": artifact_status,
-            })
-            .eq("id", current["id"])
-            .eq("version", current["version"])  # CAS condition
-            .execute()
+            },
         )
-        if not update_result.data:
+        if not updated:
             raise HTTPException(status_code=409, detail="Artifact version conflict — retry")
-        artifact_id = current["id"]
+        artifact_id = existing["id"]
     else:
         artifact_row = {
             "id": artifact_id,
@@ -369,20 +400,17 @@ async def resolve_quorum(quorum_id: str, body: ResolveRequest):
             "sections": sections_json,
             "status": artifact_status,
         }
-        db.table("artifacts").insert(artifact_row).execute()
+        await db.create_artifact(artifact_row)
 
     # Mark quorum resolved
-    db.table("quorums").update({"status": "resolved"}).eq("id", quorum_id).execute()
+    await db.update_quorum(quorum_id, {"status": "resolved"})
 
     # Broadcast artifact update
-    await manager.broadcast(quorum_id, {
-        "type": "artifact_update",
-        "data": {
-            "artifact_id": artifact_id,
-            "status": artifact_status,
-            "content_hash": content_hash,
-            "sections": sections_json,
-        },
+    await rt.broadcast(quorum_id, "artifact_update", {
+        "artifact_id": artifact_id,
+        "status": artifact_status,
+        "content_hash": content_hash,
+        "sections": sections_json,
     })
 
     download_url = f"/artifacts/{artifact_id}/download"

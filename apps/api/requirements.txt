@@ -4,3 +4,4 @@ supabase>=2,<3
 pydantic>=2,<3
 python-dotenv>=1,<2
 websockets>=14,<15
+sqlalchemy>=2,<3

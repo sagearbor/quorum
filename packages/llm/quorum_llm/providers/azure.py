@@ -4,15 +4,21 @@ Tier 1: Deterministic keyword extraction (no LLM call — handled by tier1 modul
 Tier 2: GPT-4o-mini for conflict detection
 Tier 3: GPT-4o for final artifact synthesis
 
+Auth (mutually exclusive, checked in order):
+    API key mode:        set AZURE_OPENAI_KEY in env / .env
+    Managed Identity:    omit AZURE_OPENAI_KEY; run `az login` locally
+                         or use a managed identity in Azure — no secret needed
+
 Uses env vars:
     AZURE_OPENAI_ENDPOINT
-    AZURE_OPENAI_KEY
+    AZURE_OPENAI_KEY            (optional — omit to use Managed Identity)
     AZURE_OPENAI_DEPLOYMENT_T2  (gpt-4o-mini)
     AZURE_OPENAI_DEPLOYMENT_T3  (gpt-4o)
 """
 
 from __future__ import annotations
 
+import logging
 import os
 
 from openai import AsyncAzureOpenAI, RateLimitError
@@ -21,12 +27,22 @@ from quorum_llm.interface import LLMProvider
 from quorum_llm.models import BudgetExhaustedError, LLMTier
 from quorum_llm.tier1 import extract_keywords
 
+logger = logging.getLogger(__name__)
+
 # Azure OpenAI API version
 _API_VERSION = "2024-10-21"
+# Scope required for Entra ID / Managed Identity token
+_AZURE_COGNITIVESERVICES_SCOPE = "https://cognitiveservices.azure.com/.default"
 
 
 class AzureOpenAIProvider(LLMProvider):
-    """Azure OpenAI LLM provider."""
+    """Azure OpenAI LLM provider.
+
+    Supports two auth modes:
+    - API key:          pass api_key or set AZURE_OPENAI_KEY env var
+    - Managed Identity: omit api_key/AZURE_OPENAI_KEY; uses DefaultAzureCredential
+                        (works with `az login` locally or managed identity in Azure)
+    """
 
     def __init__(
         self,
@@ -36,18 +52,40 @@ class AzureOpenAIProvider(LLMProvider):
         deployment_t3: str | None = None,
     ):
         self._endpoint = endpoint or os.environ["AZURE_OPENAI_ENDPOINT"]
-        self._api_key = api_key or os.environ["AZURE_OPENAI_KEY"]
         self._deployment_t2 = (
             deployment_t2 or os.environ["AZURE_OPENAI_DEPLOYMENT_T2"]
         )
         self._deployment_t3 = (
             deployment_t3 or os.environ["AZURE_OPENAI_DEPLOYMENT_T3"]
         )
-        self._client = AsyncAzureOpenAI(
-            azure_endpoint=self._endpoint,
-            api_key=self._api_key,
-            api_version=_API_VERSION,
-        )
+
+        resolved_key = api_key or os.environ.get("AZURE_OPENAI_KEY")
+
+        if resolved_key:
+            logger.info("Azure LLM: using API key auth")
+            self._client = AsyncAzureOpenAI(
+                azure_endpoint=self._endpoint,
+                api_key=resolved_key,
+                api_version=_API_VERSION,
+            )
+        else:
+            logger.info("Azure LLM: AZURE_OPENAI_KEY not set — using Managed Identity (DefaultAzureCredential)")
+            try:
+                from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+            except ImportError as exc:
+                raise ImportError(
+                    "azure-identity is required for Managed Identity auth. "
+                    "Run: pip install azure-identity"
+                ) from exc
+
+            token_provider = get_bearer_token_provider(
+                DefaultAzureCredential(), _AZURE_COGNITIVESERVICES_SCOPE
+            )
+            self._client = AsyncAzureOpenAI(
+                azure_endpoint=self._endpoint,
+                azure_ad_token_provider=token_provider,
+                api_version=_API_VERSION,
+            )
 
     def _deployment_for_tier(self, tier: LLMTier) -> str:
         if tier == LLMTier.CONFLICT:

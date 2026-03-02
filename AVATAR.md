@@ -189,8 +189,8 @@ apps/web/
 
 Sage confirmed 4-5 simultaneous stations, running all day at the Expo off a local M5 Pro Mac (128GB).
 
-### Tier 1 — Projector/Display: Full photorealistic avatar
-- 1 avatar on the projector `/display` panel
+### Tier 1 — Projector/Display + Architect view: Full photorealistic avatar
+- 2 avatars: projector `/display` panel + Architect planning view
 - MuseTalk or cloud provider (EL/Simli)
 - The "wow" centerpiece
 
@@ -208,3 +208,94 @@ Sage confirmed 4-5 simultaneous stations, running all day at the Expo off a loca
 - TTS: Kokoro or Chatterbox (open source, Apple Silicon optimized)
 - Lip sync: MuseTalk (runs on Metal/MPS)
 - Head pose: custom StereoAnalyzer → CSS transform (already in Phase 2)
+
+---
+
+## Phase 4 — Full-Body Idle + Vision Tracking + Transitions
+
+### Overview
+- **Idle state:** Ready Player Me (RPM) full-body avatar walks/idles in a 3D scene (Three.js/React Three Fiber)
+- **Engaged state:** ElevenLabs bust overlay (existing Phase 1) for conversation quality
+- **Transition:** 6 named transition animations bridging RPM full-body → EL bust
+- **Vision tracking:** MediaPipe person detection → head/eye gaze follows detected person
+
+### Tech Stack Addition
+- `@react-three/fiber` + `@react-three/drei` — Three.js in React
+- `@readyplayerme/react-avatar-creator` or direct GLB load — RPM character
+- Mixamo animations (GLB): idle, walk, jog-toward-camera, sit-down
+- `@mediapipe/tasks-vision` — in-browser person detection for gaze tracking
+
+### Vision Tracking
+```
+getUserMedia (video) → MediaPipe PersonDetector (WASM/WebGL)
+    ↓ bounding box centroid X (0=left, 1=right)
+normalize to yaw [-1, 1]
+    ↓
+IdleAvatarController.setGaze(yaw)
+    ↓ (RPM): Three.js camera + head bone rotation
+    ↓ (EL bust, engaged): existing AvatarProvider.setHeadPose()
+```
+
+Modes:
+- **No person detected:** slow random idle glances, natural micro-movements
+- **Person detected, far away:** gaze tracks person position (haunted painting effect)
+- **Person at station (audio active):** audio direction takes priority over vision
+
+### Transitions: RPM full-body → EL bust
+
+All 6 must be implemented. Each is a named class implementing `Transition.play(): Promise<void>`.
+
+1. **`ZoomIn`** — Three.js camera push from full-body to face, crossfade EL bust at end
+2. **`JogAndPeek`** — avatar jogs toward screen edge, exits frame, EL bust slides in from same edge
+3. **`RunAndBounce`** — avatar sprints at camera, screen flash+shake, bust "bounces" back out (CSS spring animation)
+4. **`SitDown`** — Mixamo sit animation plays, camera settles on face level, dissolve to EL bust
+5. **`DepthBlur`** — RPM scene blurs (CSS filter + Three.js depth of field), EL bust fades in sharp
+6. **`EyeMatchCut`** — RPM looks at camera (head bone), hard cut to extreme close-up CSS zoom on bust eyes, pull back
+
+### Test Harness
+- `AVATAR_TRANSITION_TEST=true` env var enables test mode
+- Renders all 6 transitions in sequence, 5s each, looping
+- Small overlay UI: current transition name + prev/next buttons
+- Cycle time configurable: `AVATAR_TRANSITION_INTERVAL=5000`
+
+### Files to Create/Modify
+```
+apps/web/src/components/avatar/
+  IdleScene.tsx              # RPM + Three.js full-body scene
+  VisionTracker.ts           # MediaPipe person detection → gaze yaw
+  transitions/
+    Transition.ts            # Interface
+    ZoomIn.ts
+    JogAndPeek.ts
+    RunAndBounce.ts
+    SitDown.ts
+    DepthBlur.ts
+    EyeMatchCut.ts
+    TransitionEngine.ts      # Orchestrates, randomizes, test harness
+  AvatarPanel.tsx            # UPDATE: add idle/engaged state machine
+  useAvatarController.ts     # UPDATE: add vision tracking mode
+```
+
+### Idle/Engaged State Machine
+```
+IDLE: RPM full-body + vision gaze tracking
+  → person detected at station + audio activity → TRANSITIONING
+TRANSITIONING: play random transition (or next in test sequence)
+  → transition complete → ENGAGED
+ENGAGED: EL bust, lip sync, audio direction tracking
+  → audio silence > 30s + no person detected → TRANSITIONING_OUT
+TRANSITIONING_OUT: reverse transition (zoom out / walk away)
+  → complete → IDLE
+```
+
+### RPM Character
+- Load a default RPM avatar GLB (neutral, professional appearance)
+- Mixamo animations to bundle: `idle.glb`, `walk.glb`, `jog.glb`, `sit.glb`
+- Download from Mixamo and commit to `apps/web/public/animations/`
+- Head/spine bones for gaze animation: use `SkeletonUtils` to clone + drive bones
+
+### Notes
+- AVATAR_MOCK=true: replace RPM scene with a CSS animated stick figure or simple SVG character. All transitions still run (simplified versions). Zero external deps.
+- Gaze tracking: graceful fallback if camera permission denied — just use slow random idle
+- Lip sync in ENGAGED mode: existing EL provider handles it (Phase 1)
+- The bust EL/Simli overlay sits in a DOM layer above the Three.js canvas — no z-fighting

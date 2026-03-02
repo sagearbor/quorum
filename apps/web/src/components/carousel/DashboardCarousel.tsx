@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { QuorumHealthChart } from "@/components/dashboards/QuorumHealthChart";
+import { AvatarPanel } from "@/components/avatar/AvatarPanel";
 
 export type CarouselMode = "multi-view" | "multi-quorum";
 
@@ -13,10 +14,13 @@ interface DashboardCarouselProps {
   intervalMs?: number;
 }
 
+type PanelType = "health" | "facilitator";
+
 interface PanelConfig {
   key: string;
   quorumId: string;
   label: string;
+  type: PanelType;
 }
 
 const slideVariants = {
@@ -101,7 +105,11 @@ export function DashboardCarousel({
               >
                 <div className="text-xs text-white/40 mb-2 truncate">{panel.label}</div>
                 <div className="flex-1 min-h-0">
-                  <QuorumHealthChart quorumId={panel.quorumId} />
+                  {panel.type === "facilitator" ? (
+                    <AvatarPanel quorumId={panel.quorumId} />
+                  ) : (
+                    <QuorumHealthChart quorumId={panel.quorumId} />
+                  )}
                 </div>
               </div>
             ))}
@@ -122,28 +130,41 @@ function usePanelPairs(mode: CarouselMode, quorumIds: string[]): PanelConfig[][]
   if (quorumIds.length === 0) return [];
 
   if (mode === "multi-view") {
-    // Same quorum, show Health Chart in both panels (in real app, different dashboard types)
-    // For now, show the same quorum with different framing
     const qId = quorumIds[0];
     return [
+      // Facilitator + Health Overview
       [
-        { key: `${qId}-health-1`, quorumId: qId, label: "Health Overview" },
-        { key: `${qId}-health-2`, quorumId: qId, label: "Detailed Metrics" },
+        { key: `${qId}-facilitator`, quorumId: qId, label: "Facilitator", type: "facilitator" },
+        { key: `${qId}-health-1`, quorumId: qId, label: "Health Overview", type: "health" },
+      ],
+      // Detailed Metrics (dual health)
+      [
+        { key: `${qId}-health-2`, quorumId: qId, label: "Detailed Metrics", type: "health" },
+        { key: `${qId}-health-3`, quorumId: qId, label: "Role Activity", type: "health" },
       ],
     ];
   }
 
-  // Multi-quorum: pair quorums side by side
+  // Multi-quorum: pair quorums side by side, with a facilitator slide first
   const pairs: PanelConfig[][] = [];
+
+  // First slide: Facilitator for first quorum + health for first quorum
+  pairs.push([
+    { key: "facilitator-main", quorumId: quorumIds[0], label: "Facilitator", type: "facilitator" },
+    { key: `q-${quorumIds[0]}-health`, quorumId: quorumIds[0], label: "Quorum 1", type: "health" },
+  ]);
+
+  // Remaining quorum pairs as health charts
   for (let i = 0; i < quorumIds.length; i += 2) {
     const pair: PanelConfig[] = [
-      { key: `q-${quorumIds[i]}`, quorumId: quorumIds[i], label: `Quorum ${i + 1}` },
+      { key: `q-${quorumIds[i]}`, quorumId: quorumIds[i], label: `Quorum ${i + 1}`, type: "health" },
     ];
     if (i + 1 < quorumIds.length) {
       pair.push({
         key: `q-${quorumIds[i + 1]}`,
         quorumId: quorumIds[i + 1],
         label: `Quorum ${i + 2}`,
+        type: "health",
       });
     }
     pairs.push(pair);

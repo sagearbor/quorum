@@ -182,3 +182,29 @@ apps/web/
 2. ElevenLabs free tier: 10,000 chars/month — enough for ~30 min demo. Probably yes.
 3. Should avatar have a name/persona? ("Dr. Quinn"? Just "Facilitator"?)
 4. Should avatar speak proactively on every synthesis update, or only when triggered?
+
+---
+
+## Updated Architecture: Tiered Avatars (added post-spec)
+
+Sage confirmed 4-5 simultaneous stations, running all day at the Expo off a local M5 Pro Mac (128GB).
+
+### Tier 1 — Projector/Display: Full photorealistic avatar
+- 1 avatar on the projector `/display` panel
+- MuseTalk or cloud provider (EL/Simli)
+- The "wow" centerpiece
+
+### Tier 2 — Station terminals: Animated 2D avatar
+- 4-5 lightweight animated avatars, one per station browser tab
+- SVG/canvas-based, voice-driven mouth + expression animation
+- Runs on the Mac with zero GPU strain
+- No cloud cost, no API keys, works all day
+
+### Hardware path
+- **Now (ThinkPad demo):** Cloud provider (EL free tier) for projector only; stations use MockProvider/2D
+- **After M5 Pro arrives:** Benchmark MuseTalk 4-5× simultaneous on Apple Silicon. If it handles it, swap stations to photorealistic local inference. No code changes needed — just swap provider env var.
+
+### Local stack (M5 Pro target)
+- TTS: Kokoro or Chatterbox (open source, Apple Silicon optimized)
+- Lip sync: MuseTalk (runs on Metal/MPS)
+- Head pose: custom StereoAnalyzer → CSS transform (already in Phase 2)

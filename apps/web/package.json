@@ -14,7 +14,10 @@
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@mediapipe/tasks-vision": "^0.10.32",
     "@quorum/types": "workspace:*",
+    "@react-three/drei": "^10.7.7",
+    "@react-three/fiber": "^9.5.0",
     "@supabase/supabase-js": "^2.97.0",
     "framer-motion": "^12.34.3",
     "idb": "^8.0.3",
@@ -23,6 +26,7 @@
     "react": "^18",
     "react-dom": "^18",
     "recharts": "^3.7.0",
+    "three": "^0.183.2",
     "zustand": "^5.0.11"
   },
   "devDependencies": {
@@ -32,6 +36,7 @@
     "@types/node": "^20",
     "@types/react": "^18",
     "@types/react-dom": "^18",
+    "@types/three": "^0.183.1",
     "@vitejs/plugin-react": "^5.1.4",
     "eslint": "^8",
     "eslint-config-next": "14.2.35",

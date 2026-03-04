@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { TransitionContext } from './Transition';
 import { ZoomIn } from './ZoomIn';
 import { JogAndPeek } from './JogAndPeek';

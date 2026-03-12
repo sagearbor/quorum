@@ -106,7 +106,7 @@ export function DashboardCarousel({
                 <div className="text-xs text-white/40 mb-2 truncate">{panel.label}</div>
                 <div className="flex-1 min-h-0">
                   {panel.type === "facilitator" ? (
-                    <AvatarPanel quorumId={panel.quorumId} />
+                    <AvatarPanel quorumId={panel.quorumId} providerType="mock" showDirectionIndicator={false} />
                   ) : (
                     <QuorumHealthChart quorumId={panel.quorumId} />
                   )}
@@ -132,15 +132,15 @@ function usePanelPairs(mode: CarouselMode, quorumIds: string[]): PanelConfig[][]
   if (mode === "multi-view") {
     const qId = quorumIds[0];
     return [
-      // Facilitator + Health Overview
+      // Health Overview (dual health)
       [
-        { key: `${qId}-facilitator`, quorumId: qId, label: "Facilitator", type: "facilitator" },
         { key: `${qId}-health-1`, quorumId: qId, label: "Health Overview", type: "health" },
+        { key: `${qId}-health-2`, quorumId: qId, label: "Role Activity", type: "health" },
       ],
-      // Detailed Metrics (dual health)
+      // Avatar Facilitator + Health
       [
-        { key: `${qId}-health-2`, quorumId: qId, label: "Detailed Metrics", type: "health" },
-        { key: `${qId}-health-3`, quorumId: qId, label: "Role Activity", type: "health" },
+        { key: "avatar", quorumId: qId, label: "Facilitator", type: "facilitator" },
+        { key: `${qId}-health-3`, quorumId: qId, label: "Health Overview", type: "health" },
       ],
     ];
   }

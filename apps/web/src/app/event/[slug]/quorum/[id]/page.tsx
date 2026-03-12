@@ -12,6 +12,7 @@ import {
 } from "@/lib/mockData";
 import { enqueue } from "@/lib/offlineQueue";
 import type { Role, Contribution, ContributeRequest } from "@quorum/types";
+import { AvatarPanel } from "@/components/avatar/AvatarPanel";
 
 interface SpeechRecognitionLike {
   continuous: boolean;
@@ -419,6 +420,15 @@ export default function QuorumPage() {
           </div>
         </section>
       )}
+
+      {/* Avatar presence indicator */}
+      <div className="mt-4" style={{ height: 80 }}>
+        <AvatarPanel
+          quorumId={quorumId}
+          providerType="mock"
+          showDirectionIndicator={false}
+        />
+      </div>
     </div>
   );
 }

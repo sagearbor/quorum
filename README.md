@@ -59,10 +59,11 @@ cd apps/web && pnpm dev
 
 ## Docs
 
-- [ARCHITECTURE.md](./ARCHITECTURE.md) — system design
-- [CONTRACT.md](./CONTRACT.md) — API + schema spec (machine-readable)
-- [DECISIONS.md](./DECISIONS.md) — decision log
-- [DASHBOARDS.md](./DASHBOARDS.md) — visualization catalog
+- [ARCHITECTURE.md](./docs/ARCHITECTURE.md) — system design
+- [CONTRACT.md](./docs/CONTRACT.md) — API + schema spec (machine-readable)
+- [DECISIONS.md](./docs/DECISIONS.md) — decision log
+- [SETUP.md](./docs/SETUP.md) — manual setup walkthrough
+- [DASHBOARDS.md](./docs/DASHBOARDS.md) — visualization catalog
 
 ---
 

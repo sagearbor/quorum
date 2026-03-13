@@ -8,10 +8,11 @@ Quorum is a multi-agent coordination platform. Real people with different roles 
 
 ## Read These Files
 
-1. **ARCHITECTURE.md** — system design, data model, component map
-2. **CONTRACT.md** — all API routes, Supabase tables, enums, env vars (machine-readable)
-3. **DECISIONS.md** — why things are built the way they are; do not re-propose rejected alternatives
-4. **DASHBOARDS.md** — visualization catalog and how to add new ones
+1. **docs/ARCHITECTURE.md** — system design, data model, component map
+2. **docs/CONTRACT.md** — all API routes, Supabase tables, enums, env vars (machine-readable)
+3. **docs/DECISIONS.md** — why things are built the way they are; do not re-propose rejected alternatives
+4. **docs/DASHBOARDS.md** — visualization catalog and how to add new ones
+5. **docs/AVATAR.md** — avatar facilitator spec (eye tracking, TTS, transitions)
 
 ## Key Concepts
 
@@ -36,12 +37,12 @@ Quorum is a multi-agent coordination platform. Real people with different roles 
 
 ## Rules
 
-- Never hardcode Azure credentials — use env vars from CONTRACT.md
+- Never hardcode Azure credentials — use env vars from docs/CONTRACT.md
 - Never bypass the `LLMProvider` interface — swap providers there, not in business logic
 - All artifact writes use optimistic locking (version + CAS)
-- Dashboard components must accept standard props — see DASHBOARDS.md
-- Do not add prose to CONTRACT.md — structured YAML/JSON only
-- Append to DECISIONS.md when making architectural choices
+- Dashboard components must accept standard props — see docs/DASHBOARDS.md
+- Do not add prose to docs/CONTRACT.md — structured YAML/JSON only
+- Append to docs/DECISIONS.md when making architectural choices
 
 ## Repo Structure (target)
 
@@ -59,10 +60,16 @@ quorum/
 │   └── migrations/   # DB schema migrations
 ├── seed/
 │   └── clinical-trial.json  # Seed quorum (anchor demo)
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── CONTRACT.md
+│   ├── DASHBOARDS.md
+│   ├── DECISIONS.md
+│   ├── PRD.md
+│   ├── AVATAR.md         # Avatar facilitator spec
+│   ├── AVATAR_PRD.md     # Avatar product requirements
+│   └── SETUP.md          # Manual setup walkthrough
 ├── README.md
-├── ARCHITECTURE.md
-├── CONTRACT.md
-├── DECISIONS.md
-├── DASHBOARDS.md
+├── CLAUDE.md
 └── agent.md          # This file
 ```

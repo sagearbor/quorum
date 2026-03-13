@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Avaturn Avatar Creator</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: sans-serif; background: #0f172a; color: #e2e8f0; }
+    #header {
+      padding: 12px 24px;
+      background: #1e293b;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    #header h1 { font-size: 18px; }
+    #status { font-size: 14px; color: #94a3b8; }
+    #avaturn-sdk-container {
+      width: 100%;
+      height: calc(100vh - 48px);
+    }
+    #download-banner {
+      display: none;
+      position: fixed;
+      top: 0; left: 0; right: 0;
+      background: #16a34a;
+      color: white;
+      padding: 16px 24px;
+      text-align: center;
+      font-size: 16px;
+      z-index: 1000;
+    }
+    #download-banner a {
+      color: white;
+      font-weight: bold;
+      text-decoration: underline;
+      margin-left: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div id="download-banner">
+    Avatar exported! <a id="download-link" href="#" download="avatar.glb">Click here to download GLB</a>
+    <span id="file-size"></span>
+  </div>
+  <div id="header">
+    <h1>Quorum Avatar Creator (Avaturn)</h1>
+    <span id="status">Loading Avaturn...</span>
+  </div>
+  <div id="avaturn-sdk-container"></div>
+
+  <script type="module">
+    import { AvaturnSDK } from "https://cdn.jsdelivr.net/npm/@avaturn/sdk/dist/index.js";
+
+    const container = document.getElementById("avaturn-sdk-container");
+    const status = document.getElementById("status");
+    const banner = document.getElementById("download-banner");
+    const downloadLink = document.getElementById("download-link");
+    const fileSize = document.getElementById("file-size");
+
+    const subdomain = "quorum";
+    const url = `https://${subdomain}.avaturn.dev`;
+
+    const sdk = new AvaturnSDK();
+
+    try {
+      await sdk.init(container, { url });
+      status.textContent = "Create your avatar, then click Export/Next";
+
+      sdk.on("export", (data) => {
+        console.log("Export data received:", data);
+        status.textContent = "Avatar exported! Preparing download...";
+
+        let blob;
+        let filename = "avatar.glb";
+
+        // Handle different export data formats
+        if (data instanceof Blob) {
+          blob = data;
+        } else if (data instanceof ArrayBuffer) {
+          blob = new Blob([data], { type: "model/gltf-binary" });
+        } else if (typeof data === "string" && data.startsWith("data:")) {
+          // DataURL format
+          const byteString = atob(data.split(",")[1]);
+          const ab = new ArrayBuffer(byteString.length);
+          const ia = new Uint8Array(ab);
+          for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i);
+          }
+          blob = new Blob([ab], { type: "model/gltf-binary" });
+        } else if (typeof data === "string" && data.startsWith("http")) {
+          // HttpURL format — direct download link
+          downloadLink.href = data;
+          downloadLink.download = filename;
+          fileSize.textContent = "";
+          banner.style.display = "block";
+          status.textContent = "Avatar ready! Click the green banner to download.";
+          return;
+        } else if (data && data.url) {
+          // Object with url property
+          downloadLink.href = data.url;
+          downloadLink.download = filename;
+          fileSize.textContent = "";
+          banner.style.display = "block";
+          status.textContent = "Avatar ready! Click the green banner to download.";
+          return;
+        } else if (data && data.data) {
+          // Object with data property (could be ArrayBuffer or base64)
+          if (data.data instanceof ArrayBuffer) {
+            blob = new Blob([data.data], { type: "model/gltf-binary" });
+          } else {
+            // Try treating as raw data
+            blob = new Blob([data.data], { type: "model/gltf-binary" });
+          }
+        } else {
+          console.error("Unknown export format:", typeof data, data);
+          status.textContent = "Export received but format unknown. Check console (F12).";
+          return;
+        }
+
+        if (blob) {
+          const url = URL.createObjectURL(blob);
+          downloadLink.href = url;
+          downloadLink.download = filename;
+          const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
+          fileSize.textContent = ` (${sizeMB} MB)`;
+          banner.style.display = "block";
+          status.textContent = `Avatar ready (${sizeMB} MB)! Click the green banner to download.`;
+        }
+      });
+
+    } catch (err) {
+      console.error("Avaturn SDK init error:", err);
+      status.textContent = "Error loading Avaturn: " + err.message;
+    }
+  </script>
+</body>
+</html>

@@ -11,3 +11,4 @@ __pycache__/
 *.json.bak
 *.egg-info/
 .pytest_cache/
+tmp/

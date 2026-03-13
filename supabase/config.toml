@@ -1,9 +1,6 @@
 # Quorum — Supabase Local Development Configuration
 # See: https://supabase.com/docs/guides/cli/config
 
-[project]
-id = "quorum-local"
-
 [api]
 enabled = true
 port = 54321

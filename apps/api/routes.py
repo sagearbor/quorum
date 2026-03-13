@@ -81,6 +81,7 @@ async def create_event(body: CreateEventRequest):
         "slug": body.slug,
         "access_code": body.access_code,
         "max_active_quorums": body.max_active_quorums,
+        "created_by": "local-dev",
     }
     result = db.table("events").insert(row).execute()
     created = result.data[0]

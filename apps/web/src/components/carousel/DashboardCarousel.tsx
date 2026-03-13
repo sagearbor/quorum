@@ -106,7 +106,7 @@ export function DashboardCarousel({
                 <div className="text-xs text-white/40 mb-2 truncate">{panel.label}</div>
                 <div className="flex-1 min-h-0">
                   {panel.type === "facilitator" ? (
-                    <AvatarPanel quorumId={panel.quorumId} providerType="mock" showDirectionIndicator={false} />
+                    <AvatarPanel quorumId={panel.quorumId} showDirectionIndicator={false} />
                   ) : (
                     <QuorumHealthChart quorumId={panel.quorumId} />
                   )}

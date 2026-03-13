@@ -2,14 +2,13 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useParams, useSearchParams } from "next/navigation";
-import { useQuorumStore } from "@/store/quorumStore";
+import Link from "next/link";
 import {
-  mockQuorums,
-  mockRolesByQuorum,
-  mockActiveRoles,
-  mockContributions,
-  stationRoleMap,
-} from "@/lib/mockData";
+  getQuorum,
+  getRoles,
+  getContributions,
+  isDemoMode,
+} from "@/lib/dataProvider";
 import { enqueue } from "@/lib/offlineQueue";
 import type { Role, Contribution, ContributeRequest } from "@quorum/types";
 import { AvatarPanel } from "@/components/avatar/AvatarPanel";
@@ -97,61 +96,42 @@ export default function QuorumPage() {
   const searchParams = useSearchParams();
   const station = searchParams.get("station");
 
-  const {
-    currentQuorum,
-    currentRole,
-    roles,
-    activeRoles,
-    contributions,
-    pendingContributions,
-    setCurrentQuorum,
-    setCurrentRole,
-    setRolesForQuorum,
-    setActiveRoles,
-    setContributions,
-    setHealthScore,
-    addOptimisticContribution,
-    confirmContribution,
-    removeOptimisticContribution,
-    setStationDefault,
-  } = useQuorumStore();
+  const quorumId = params.id;
+  const slug = params.slug;
+
+  const [quorumTitle, setQuorumTitle] = useState<string>("");
+  const [quorumDescription, setQuorumDescription] = useState<string>("");
+  const [roles, setRoles] = useState<Role[]>([]);
+  const [contributions, setContributions] = useState<Contribution[]>([]);
+  const [currentRole, setCurrentRole] = useState<Role | null>(null);
+  const [loading, setLoading] = useState(true);
 
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
 
-  const quorumId = params.id;
-  const quorumRoles = roles[quorumId] ?? [];
-  const stationNum = station ? parseInt(station, 10) : null;
-  const defaultRoleId = stationNum ? stationRoleMap[stationNum] : null;
-
   useEffect(() => {
-    const quorum = mockQuorums.find((q) => q.id === quorumId);
-    if (quorum) {
-      setCurrentQuorum(quorum);
-      setHealthScore(quorum.heat_score);
-    }
+    let cancelled = false;
+    async function load() {
+      setLoading(true);
+      const [quorum, qRoles, qContribs] = await Promise.all([
+        getQuorum(quorumId),
+        getRoles(quorumId),
+        getContributions(quorumId),
+      ]);
+      if (cancelled) return;
 
-    const qRoles = mockRolesByQuorum[quorumId];
-    if (qRoles) setRolesForQuorum(quorumId, qRoles);
-
-    const ar = mockActiveRoles[quorumId];
-    if (ar) setActiveRoles(ar);
-
-    const contribs = mockContributions.filter((c) => c.quorum_id === quorumId);
-    setContributions(contribs);
-
-    if (stationNum) setStationDefault(stationNum);
-
-    // Auto-select station default role if no role selected yet
-    if (defaultRoleId && qRoles) {
-      const defaultRole = qRoles.find((r) => r.id === defaultRoleId);
-      if (defaultRole) {
-        setCurrentRole(defaultRole);
+      if (quorum) {
+        setQuorumTitle(quorum.title);
+        setQuorumDescription(quorum.description);
       }
+      setRoles(qRoles as Role[]);
+      setContributions(qContribs as Contribution[]);
+      setLoading(false);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quorumId, stationNum]);
+    load();
+    return () => { cancelled = true; };
+  }, [quorumId]);
 
   const selectRole = (role: Role) => {
     setCurrentRole(role);
@@ -178,26 +158,12 @@ export default function QuorumPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!currentRole || !currentQuorum) return;
+    if (!currentRole) return;
 
     setSubmitting(true);
     setSubmitSuccess(false);
 
     const content = Object.values(fieldValues).filter(Boolean).join("\n\n");
-    const tempId = `temp-${Date.now()}`;
-
-    const optimistic: Contribution = {
-      id: tempId,
-      quorum_id: quorumId,
-      role_id: currentRole.id,
-      user_token: "anon-local",
-      content,
-      structured_fields: { ...fieldValues },
-      tier_processed: 1,
-      created_at: new Date().toISOString(),
-    };
-
-    addOptimisticContribution(optimistic);
 
     const payload: ContributeRequest = {
       role_id: currentRole.id,
@@ -220,17 +186,24 @@ export default function QuorumPage() {
 
       if (res.ok) {
         const data = await res.json();
-        confirmContribution(tempId, data.contribution_id);
+        const newContrib: Contribution = {
+          id: data.contribution_id,
+          quorum_id: quorumId,
+          role_id: currentRole.id,
+          user_token: "anon-local",
+          content,
+          structured_fields: { ...fieldValues },
+          tier_processed: 1,
+          created_at: new Date().toISOString(),
+        };
+        setContributions((prev) => [...prev, newContrib]);
         setSubmitSuccess(true);
         setFieldValues({});
       } else {
         throw new Error(`HTTP ${res.status}`);
       }
     } catch {
-      // Offline or error: queue for later replay
-      removeOptimisticContribution(tempId);
       await enqueue(quorumId, payload);
-      addOptimisticContribution({ ...optimistic, id: `queued-${tempId}` });
       setSubmitSuccess(true);
       setFieldValues({});
     } finally {
@@ -238,196 +211,192 @@ export default function QuorumPage() {
     }
   };
 
-  const quorumContributions = contributions.filter(
-    (c) => c.quorum_id === quorumId
-  );
+  if (loading) {
+    return (
+      <div className="p-4 sm:p-6 max-w-4xl mx-auto animate-pulse">
+        <div className="h-6 bg-gray-200 rounded w-1/3 mb-4" />
+        <div className="h-64 bg-gray-100 rounded-xl" />
+      </div>
+    );
+  }
 
   return (
-    <div className="p-4 sm:p-6 max-w-2xl mx-auto">
-      <header className="mb-4">
-        <p className="text-sm text-gray-500">/{params.slug}</p>
-        <h1 className="text-xl font-bold">
-          {currentQuorum?.title ?? `Quorum ${quorumId}`}
-        </h1>
-        {currentQuorum?.description && (
-          <p className="text-sm text-gray-500 mt-1">
-            {currentQuorum.description}
-          </p>
-        )}
-      </header>
-
-      {/* Role pills — full-width buttons with participant count */}
-      <section className="mb-6">
-        <h2 className="text-sm font-semibold text-gray-700 mb-2">
-          Select your role
-        </h2>
-        <div className="flex flex-col gap-2">
-          {quorumRoles.map((role) => {
-            const ar = activeRoles.find((a) => a.role_id === role.id);
-            const count = ar?.participant_count ?? 0;
-            const isSelected = currentRole?.id === role.id;
-            const isDefault = role.id === defaultRoleId;
-
-            return (
-              <button
-                key={role.id}
-                data-testid={`role-select-${role.id}`}
-                onClick={() => selectRole(role)}
-                className={`w-full flex items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-medium transition-all ${
-                  isDefault && !isSelected ? "ring-1 ring-indigo-300" : ""
-                }`}
-                style={{
-                  backgroundColor: isSelected
-                    ? `${role.color}20`
-                    : `${role.color}08`,
-                  color: role.color,
-                  ...(isSelected
-                    ? { boxShadow: `0 0 0 2px ${role.color}` }
-                    : {}),
-                }}
-              >
-                <span className="flex items-center gap-2">
-                  {role.name}
-                  {isDefault && (
-                    <span className="text-[10px] bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full font-semibold">
-                      Station default
-                    </span>
-                  )}
-                </span>
-                <span
-                  className="rounded-full px-2 py-0.5 text-xs font-bold"
-                  style={{ backgroundColor: `${role.color}15` }}
-                >
-                  {count}
-                </span>
-              </button>
-            );
-          })}
+    <div className="min-h-screen flex flex-col lg:flex-row">
+      {/* Left panel: Avatar facilitator */}
+      <div className="lg:w-1/3 lg:min-h-screen bg-slate-900 p-4 flex flex-col">
+        <div className="flex items-center justify-between mb-3">
+          <Link
+            href={`/event/${slug}`}
+            className="text-xs text-white/50 hover:text-white/80 transition-colors"
+          >
+            &larr; Back to {slug}
+          </Link>
+          {isDemoMode() && (
+            <span className="text-[10px] bg-amber-500/20 text-amber-400 px-2 py-0.5 rounded-full">
+              Demo Mode
+            </span>
+          )}
         </div>
-      </section>
+        <div className="flex-1 min-h-[300px]">
+          <AvatarPanel
+            quorumId={quorumId}
+            showDirectionIndicator
+          />
+        </div>
+      </div>
 
-      {/* Contribution form */}
-      {currentRole && (
-        <section className="mb-6">
-          <form onSubmit={handleSubmit} data-testid="contribution-form">
-            <div className="flex items-center justify-between mb-3">
-              <h2 className="text-sm font-semibold text-gray-700">
-                Contributing as{" "}
-                <span style={{ color: currentRole.color }}>
-                  {currentRole.name}
-                </span>
-              </h2>
-              <VoiceButton onTranscript={handleVoiceTranscript} />
-            </div>
+      {/* Right panel: Quorum interaction */}
+      <div className="flex-1 p-4 sm:p-6 max-w-2xl">
+        <header className="mb-4">
+          <h1 className="text-xl font-bold">
+            {quorumTitle || `Quorum ${quorumId}`}
+          </h1>
+          {quorumDescription && (
+            <p className="text-sm text-gray-500 mt-1">{quorumDescription}</p>
+          )}
+          {station && (
+            <span className="mt-2 inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-indigo-700 text-xs font-medium">
+              Station {station}
+            </span>
+          )}
+        </header>
 
-            <div className="space-y-4">
-              {currentRole.prompt_template.map((field) => (
-                <div key={field.field_name}>
-                  <label
-                    htmlFor={field.field_name}
-                    className="block text-sm font-medium text-gray-700 mb-1"
+        {/* Role selection */}
+        {roles.length > 0 && (
+          <section className="mb-6">
+            <h2 className="text-sm font-semibold text-gray-700 mb-2">
+              Select your role
+            </h2>
+            <div className="flex flex-col gap-2">
+              {roles.map((role) => {
+                const isSelected = currentRole?.id === role.id;
+
+                return (
+                  <button
+                    key={role.id}
+                    data-testid={`role-select-${role.id}`}
+                    onClick={() => selectRole(role)}
+                    className="w-full flex items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-medium transition-all"
+                    style={{
+                      backgroundColor: isSelected
+                        ? `${role.color ?? "#6b7280"}20`
+                        : `${role.color ?? "#6b7280"}08`,
+                      color: role.color ?? "#6b7280",
+                      ...(isSelected
+                        ? { boxShadow: `0 0 0 2px ${role.color ?? "#6b7280"}` }
+                        : {}),
+                    }}
                   >
-                    {field.prompt}
-                  </label>
-                  <textarea
-                    id={field.field_name}
-                    data-testid={`field-${field.field_name}`}
-                    value={fieldValues[field.field_name] ?? ""}
-                    onChange={(e) =>
-                      handleFieldChange(field.field_name, e.target.value)
-                    }
-                    rows={3}
-                    className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:outline-none resize-none"
-                    placeholder={`Enter your ${field.field_name.replace(/_/g, " ")}...`}
-                  />
-                </div>
-              ))}
+                    <span>{role.name}</span>
+                  </button>
+                );
+              })}
             </div>
+          </section>
+        )}
 
-            <div className="mt-4 flex items-center gap-3">
-              <button
-                type="submit"
-                disabled={
-                  submitting ||
-                  Object.values(fieldValues).every((v) => !v.trim())
-                }
-                data-testid="submit-contribution"
-                className="flex-1 rounded-xl bg-indigo-600 text-white py-3 px-4 text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
-              >
-                {submitting ? "Submitting..." : "Submit Contribution"}
-              </button>
-            </div>
+        {/* Contribution form */}
+        {currentRole && currentRole.prompt_template.length > 0 && (
+          <section className="mb-6">
+            <form onSubmit={handleSubmit} data-testid="contribution-form">
+              <div className="flex items-center justify-between mb-3">
+                <h2 className="text-sm font-semibold text-gray-700">
+                  Contributing as{" "}
+                  <span style={{ color: currentRole.color }}>
+                    {currentRole.name}
+                  </span>
+                </h2>
+                <VoiceButton onTranscript={handleVoiceTranscript} />
+              </div>
 
-            {submitSuccess && (
-              <p
-                data-testid="submit-success"
-                className="mt-2 text-sm text-green-600 font-medium"
-              >
-                Contribution submitted successfully
-              </p>
-            )}
-          </form>
-        </section>
-      )}
-
-      {/* Recent contributions */}
-      {quorumContributions.length > 0 && (
-        <section>
-          <h2 className="text-sm font-semibold text-gray-700 mb-3">
-            Recent Contributions ({quorumContributions.length})
-          </h2>
-          <div className="space-y-2">
-            {quorumContributions.map((c) => {
-              const role = quorumRoles.find((r) => r.id === c.role_id);
-              const isPending = pendingContributions.some(
-                (pc) => pc.id === c.id
-              );
-              return (
-                <div
-                  key={c.id}
-                  data-testid={`contribution-${c.id}`}
-                  className={`rounded-lg border p-3 text-sm ${
-                    isPending
-                      ? "border-dashed border-gray-300 opacity-70"
-                      : "border-gray-200"
-                  }`}
-                >
-                  <div className="flex items-center gap-2 mb-1">
-                    <span
-                      className="text-xs font-medium px-2 py-0.5 rounded-full"
-                      style={{
-                        backgroundColor: role
-                          ? `${role.color}15`
-                          : "#f3f4f6",
-                        color: role?.color ?? "#6b7280",
-                      }}
+              <div className="space-y-4">
+                {currentRole.prompt_template.map((field) => (
+                  <div key={field.field_name}>
+                    <label
+                      htmlFor={field.field_name}
+                      className="block text-sm font-medium text-gray-700 mb-1"
                     >
-                      {role?.name ?? "Unknown"}
-                    </span>
-                    {isPending && (
-                      <span className="text-xs text-amber-600 font-medium">
-                        Pending...
-                      </span>
-                    )}
-                    <span className="text-xs text-gray-400 ml-auto">
-                      {new Date(c.created_at).toLocaleTimeString()}
-                    </span>
+                      {field.prompt}
+                    </label>
+                    <textarea
+                      id={field.field_name}
+                      data-testid={`field-${field.field_name}`}
+                      value={fieldValues[field.field_name] ?? ""}
+                      onChange={(e) =>
+                        handleFieldChange(field.field_name, e.target.value)
+                      }
+                      rows={3}
+                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:outline-none resize-none"
+                      placeholder={`Enter your ${field.field_name.replace(/_/g, " ")}...`}
+                    />
                   </div>
-                  <p className="text-gray-700 line-clamp-2">{c.content}</p>
-                </div>
-              );
-            })}
-          </div>
-        </section>
-      )}
+                ))}
+              </div>
 
-      {/* Avatar presence indicator */}
-      <div className="mt-4" style={{ height: 80 }}>
-        <AvatarPanel
-          quorumId={quorumId}
-          providerType="mock"
-          showDirectionIndicator={false}
-        />
+              <div className="mt-4 flex items-center gap-3">
+                <button
+                  type="submit"
+                  disabled={
+                    submitting ||
+                    Object.values(fieldValues).every((v) => !v.trim())
+                  }
+                  data-testid="submit-contribution"
+                  className="flex-1 rounded-xl bg-indigo-600 text-white py-3 px-4 text-sm font-semibold hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors active:scale-[0.98]"
+                >
+                  {submitting ? "Submitting..." : "Submit Contribution"}
+                </button>
+              </div>
+
+              {submitSuccess && (
+                <p
+                  data-testid="submit-success"
+                  className="mt-2 text-sm text-green-600 font-medium"
+                >
+                  Contribution submitted successfully
+                </p>
+              )}
+            </form>
+          </section>
+        )}
+
+        {/* Recent contributions */}
+        {contributions.length > 0 && (
+          <section>
+            <h2 className="text-sm font-semibold text-gray-700 mb-3">
+              Recent Contributions ({contributions.length})
+            </h2>
+            <div className="space-y-2">
+              {contributions.map((c) => {
+                const role = roles.find((r) => r.id === c.role_id);
+                return (
+                  <div
+                    key={c.id}
+                    data-testid={`contribution-${c.id}`}
+                    className="rounded-lg border border-gray-200 p-3 text-sm"
+                  >
+                    <div className="flex items-center gap-2 mb-1">
+                      <span
+                        className="text-xs font-medium px-2 py-0.5 rounded-full"
+                        style={{
+                          backgroundColor: role
+                            ? `${role.color}15`
+                            : "#f3f4f6",
+                          color: role?.color ?? "#6b7280",
+                        }}
+                      >
+                        {role?.name ?? "Unknown"}
+                      </span>
+                      <span className="text-xs text-gray-400 ml-auto">
+                        {new Date(c.created_at).toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <p className="text-gray-700 line-clamp-2">{c.content}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
       </div>
     </div>
   );

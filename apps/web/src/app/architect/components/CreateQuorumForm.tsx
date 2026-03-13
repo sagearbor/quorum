@@ -20,7 +20,8 @@ export function CreateQuorumForm() {
     e.preventDefault();
     if (!eventId) return;
 
-    const res = await fetch(`/events/${eventId}/quorums`, {
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const res = await fetch(`${apiBase}/events/${eventId}/quorums`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({

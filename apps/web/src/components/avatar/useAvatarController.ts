@@ -16,6 +16,8 @@ import {
   type Direction,
 } from "./AvatarProvider";
 import { StereoAnalyzer } from "./StereoAnalyzer";
+import { VisionTracker } from "./VisionTracker";
+import { EmotionDetector, type DetectedEmotion } from "./EmotionDetector";
 
 export interface AvatarControllerOptions {
   /** Provider type override (defaults to env var or 'mock') */
@@ -28,6 +30,10 @@ export interface AvatarControllerOptions {
   resolved?: boolean;
   /** Enable stereo mic analysis (default true in browser) */
   enableMic?: boolean;
+  /** Enable webcam vision tracking (default true in browser) */
+  enableVision?: boolean;
+  /** Enable webcam emotion detection (default true in browser) */
+  enableEmotion?: boolean;
   /** Latest synthesis text to speak */
   synthesisText?: string;
 }
@@ -35,10 +41,12 @@ export interface AvatarControllerOptions {
 export interface AvatarControllerState {
   /** Current speaker direction */
   direction: Direction;
-  /** Current yaw value (-1 to 1) */
+  /** Current yaw value (-1 to 1) — merged from stereo + vision */
   yaw: number;
-  /** Current emotion */
+  /** Current emotion (from health score delta) */
   emotion: Emotion;
+  /** Current detected emotion from webcam face analysis */
+  detectedEmotion: DetectedEmotion;
   /** Whether avatar is speaking */
   speaking: boolean;
   /** Whether the controller is initialized */
@@ -52,6 +60,8 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
     healthScore,
     resolved = false,
     enableMic = true,
+    enableVision = typeof window !== "undefined",
+    enableEmotion = typeof window !== "undefined",
     synthesisText,
   } = options;
 
@@ -59,15 +69,21 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
     direction: "center",
     yaw: 0,
     emotion: "neutral",
+    detectedEmotion: "neutral",
     speaking: false,
     ready: false,
   });
 
   const providerRef = useRef<AvatarProvider | null>(null);
   const analyzerRef = useRef<StereoAnalyzer | null>(null);
+  const visionRef = useRef<VisionTracker | null>(null);
+  const emotionDetectorRef = useRef<EmotionDetector | null>(null);
   const prevHealthRef = useRef<number>(healthScore);
   const prevSynthesisRef = useRef<string | undefined>(undefined);
   const speakingRef = useRef(false);
+  // Track gaze sources separately so we can merge them
+  const stereoYawRef = useRef(0);
+  const visionYawRef = useRef(0);
 
   // Compute emotion from health score delta
   const computeEmotion = useCallback(
@@ -101,14 +117,32 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [providerType]);
 
+  // Helper: merge stereo + vision yaw and update state
+  const mergeAndSetYaw = useCallback((stereoYaw: number, visionYaw: number) => {
+    // Vision takes priority when it has signal; blend with stereo
+    // If vision is providing yaw, weight it 70/30 over stereo; otherwise stereo alone
+    const hasVision = Math.abs(visionYaw) > 0.01;
+    const mergedYaw = hasVision
+      ? visionYaw * 0.7 + stereoYaw * 0.3
+      : stereoYaw;
+    const clampedYaw = Math.max(-1, Math.min(1, mergedYaw));
+
+    let direction: Direction = "center";
+    if (clampedYaw < -0.2) direction = "left";
+    else if (clampedYaw > 0.2) direction = "right";
+
+    setState((s) => ({ ...s, direction, yaw: clampedYaw }));
+    providerRef.current?.setHeadPose(clampedYaw, 0);
+  }, []);
+
   // Initialize stereo analyzer
   useEffect(() => {
     if (!enableMic) return;
 
     const analyzer = new StereoAnalyzer({
-      onDirection: (direction, yaw) => {
-        setState((s) => ({ ...s, direction, yaw }));
-        providerRef.current?.setHeadPose(yaw, 0);
+      onDirection: (_direction, yaw) => {
+        stereoYawRef.current = yaw;
+        mergeAndSetYaw(yaw, visionYawRef.current);
       },
     });
     analyzerRef.current = analyzer;
@@ -118,7 +152,44 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
       analyzer.stop();
       analyzerRef.current = null;
     };
-  }, [enableMic]);
+  }, [enableMic, mergeAndSetYaw]);
+
+  // Initialize VisionTracker (webcam person detection → gaze yaw)
+  useEffect(() => {
+    if (!enableVision) return;
+
+    const tracker = new VisionTracker({
+      onGaze: (yaw) => {
+        visionYawRef.current = yaw;
+        mergeAndSetYaw(stereoYawRef.current, yaw);
+      },
+    });
+    visionRef.current = tracker;
+    tracker.start();
+
+    return () => {
+      tracker.stop();
+      visionRef.current = null;
+    };
+  }, [enableVision, mergeAndSetYaw]);
+
+  // Initialize EmotionDetector (webcam face landmarks → emotion)
+  useEffect(() => {
+    if (!enableEmotion) return;
+
+    const detector = new EmotionDetector({
+      onEmotion: (emotion) => {
+        setState((s) => ({ ...s, detectedEmotion: emotion }));
+      },
+    });
+    emotionDetectorRef.current = detector;
+    detector.start();
+
+    return () => {
+      detector.stop();
+      emotionDetectorRef.current = null;
+    };
+  }, [enableEmotion]);
 
   // Update emotion on health score change
   useEffect(() => {

@@ -60,6 +60,53 @@
     const subdomain = "quorum";
     const url = `https://${subdomain}.avaturn.dev`;
 
+    async function pollAndDownload(exportUrl, filename) {
+      const maxAttempts = 30;
+      const interval = 2000; // 2 seconds
+
+      for (let i = 1; i <= maxAttempts; i++) {
+        status.textContent = `Processing avatar... (attempt ${i}/${maxAttempts})`;
+        try {
+          const resp = await fetch(exportUrl);
+          if (resp.ok) {
+            const contentType = resp.headers.get("content-type") || "";
+            if (contentType.includes("json")) {
+              const json = await resp.json();
+              if (json.detail && json.detail.includes("processing")) {
+                // Still processing — wait and retry
+                await new Promise(r => setTimeout(r, interval));
+                continue;
+              }
+              // Unexpected JSON — show it
+              status.textContent = "Unexpected response: " + JSON.stringify(json);
+              return;
+            }
+            // Got the GLB binary
+            const blob = await resp.blob();
+            const blobUrl = URL.createObjectURL(blob);
+            downloadLink.href = blobUrl;
+            downloadLink.download = filename;
+            const sizeMB = (blob.size / 1024 / 1024).toFixed(1);
+            fileSize.textContent = ` (${sizeMB} MB)`;
+            banner.style.display = "block";
+            status.textContent = `Avatar ready (${sizeMB} MB)! Click the green banner to download.`;
+            return;
+          }
+          // Non-200 — might be temporary, retry
+          await new Promise(r => setTimeout(r, interval));
+        } catch (err) {
+          console.error("Poll error:", err);
+          await new Promise(r => setTimeout(r, interval));
+        }
+      }
+      // Exhausted retries — offer the raw URL as fallback
+      status.textContent = "Processing is taking long. Try the direct link:";
+      downloadLink.href = exportUrl;
+      downloadLink.download = filename;
+      fileSize.textContent = "";
+      banner.style.display = "block";
+    }
+
     const sdk = new AvaturnSDK();
 
     try {
@@ -88,20 +135,12 @@
           }
           blob = new Blob([ab], { type: "model/gltf-binary" });
         } else if (typeof data === "string" && data.startsWith("http")) {
-          // HttpURL format — direct download link
-          downloadLink.href = data;
-          downloadLink.download = filename;
-          fileSize.textContent = "";
-          banner.style.display = "block";
-          status.textContent = "Avatar ready! Click the green banner to download.";
+          // HttpURL format — poll until ready, then download
+          await pollAndDownload(data, filename);
           return;
         } else if (data && data.url) {
-          // Object with url property
-          downloadLink.href = data.url;
-          downloadLink.download = filename;
-          fileSize.textContent = "";
-          banner.style.display = "block";
-          status.textContent = "Avatar ready! Click the green banner to download.";
+          // Object with url property — poll until ready, then download
+          await pollAndDownload(data.url, filename);
           return;
         } else if (data && data.data) {
           // Object with data property (could be ArrayBuffer or base64)

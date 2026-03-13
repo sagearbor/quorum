@@ -26,9 +26,25 @@ vi.mock("../useAvatarController", () => ({
     direction: "center",
     yaw: 0,
     emotion: "neutral",
+    detectedEmotion: "neutral",
     speaking: false,
     ready: true,
   }),
+}));
+
+// Mock IdleScene to avoid Three.js in tests
+vi.mock("../IdleScene", () => ({
+  IdleScene: vi.fn(() => null),
+}));
+
+// Mock archetype modules
+vi.mock("../archetypes/resolveArchetype", () => ({
+  resolveArchetype: () => "neutral",
+}));
+
+vi.mock("../archetypes/archetypes", () => ({
+  ARCHETYPES: { neutral: { id: "neutral", glbSources: [{ provider: "placeholder", path: "/avatars/neutral.glb" }] } },
+  resolveGlbUrl: () => "/avatars/neutral.glb",
 }));
 
 describe("AvatarPanel", () => {

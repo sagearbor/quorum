@@ -28,6 +28,20 @@ vi.mock("../StereoAnalyzer", () => ({
   },
 }));
 
+vi.mock("../VisionTracker", () => ({
+  VisionTracker: class {
+    start = vi.fn().mockResolvedValue(undefined);
+    stop = vi.fn();
+  },
+}));
+
+vi.mock("../EmotionDetector", () => ({
+  EmotionDetector: class {
+    start = vi.fn().mockResolvedValue(undefined);
+    stop = vi.fn();
+  },
+}));
+
 describe("useAvatarController", () => {
   let containerEl: HTMLDivElement;
 

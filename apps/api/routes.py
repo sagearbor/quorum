@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import pathlib
 import uuid
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -766,6 +767,123 @@ async def create_a2a_request(quorum_id: str, body: A2ARequestCreate):
         created_at=now,
         target_response=target_response,
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /events/{event_id}/quorums/{quorum_id}/seed-documents
+# ---------------------------------------------------------------------------
+@router.post(
+    "/events/{event_id}/quorums/{quorum_id}/seed-documents",
+    status_code=201,
+)
+async def seed_documents(event_id: str, quorum_id: str):
+    """Load pre-seeded agent documents from seed/clinical-trial-documents.json.
+
+    Idempotent — documents whose title already exists for this quorum are
+    skipped.  Returns counts of inserted and skipped documents.
+
+    This endpoint is intended for development and demo setup only.  In
+    production, use scripts/seed-agent-documents.py with the service role key.
+    """
+    db = get_supabase()
+
+    # Verify event + quorum exist and are related
+    quorum = (
+        db.table("quorums")
+        .select("id, title, event_id")
+        .eq("id", quorum_id)
+        .eq("event_id", event_id)
+        .single()
+        .execute()
+    )
+    if not quorum.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Quorum not found or does not belong to this event",
+        )
+
+    # Locate the seed file relative to repo root (two levels above apps/api/)
+    seed_path = (
+        pathlib.Path(__file__).resolve().parent.parent.parent
+        / "seed"
+        / "clinical-trial-documents.json"
+    )
+    if not seed_path.exists():
+        raise HTTPException(
+            status_code=500,
+            detail=f"Seed file not found at {seed_path}",
+        )
+
+    with seed_path.open() as fh:
+        seed_data = json.load(fh)
+
+    # Fetch existing document titles so we can skip duplicates
+    existing = (
+        db.table("agent_documents")
+        .select("title")
+        .eq("quorum_id", quorum_id)
+        .eq("status", "active")
+        .execute()
+    )
+    existing_titles = {row["title"] for row in existing.data}
+
+    inserted: list[dict] = []
+    skipped: list[str] = []
+
+    for doc in seed_data.get("documents", []):
+        title = doc["title"]
+
+        if title in existing_titles:
+            skipped.append(title)
+            continue
+
+        doc_id = str(uuid.uuid4())
+        row = {
+            "id": doc_id,
+            "quorum_id": quorum_id,
+            "title": title,
+            "doc_type": doc["doc_type"],
+            # All seed documents use the json format envelope even when their
+            # logical representation is tabular (e.g., budget CSV).
+            "format": "json",
+            "content": doc["content"],
+            "status": "active",
+            "version": 1,
+            "tags": doc.get("tags", []),
+            "created_by_role_id": None,
+        }
+
+        result = db.table("agent_documents").insert(row).execute()
+        if result.data:
+            inserted.append({"id": doc_id, "title": title, "doc_type": doc["doc_type"]})
+            # Broadcast new document over WebSocket
+            await manager.broadcast(quorum_id, {
+                "type": "document_update",
+                "data": {
+                    "document_id": doc_id,
+                    "version": 1,
+                    "change_type": "create",
+                    "changed_by": None,
+                },
+            })
+        else:
+            logger.warning("seed_documents: insert failed for '%s'", title)
+
+    logger.info(
+        "seed_documents: quorum=%s inserted=%d skipped=%d",
+        quorum_id, len(inserted), len(skipped),
+    )
+
+    return {
+        "quorum_id": quorum_id,
+        "inserted": inserted,
+        "skipped": skipped,
+        "total_problems_seeded": sum(
+            len(doc["content"].get("metadata", {}).get("problems", []))
+            for doc in seed_data.get("documents", [])
+            if doc["title"] not in skipped
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------

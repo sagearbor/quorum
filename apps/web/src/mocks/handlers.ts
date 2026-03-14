@@ -59,6 +59,7 @@ export const handlers = [
   }),
 
   // POST /quorums/:quorumId/contribute
+  // Returns the extended agent-system response shape including facilitator_reply.
   http.post(`${API_BASE}/quorums/:quorumId/contribute`, async ({ request }) => {
     const body = (await request.json()) as Record<string, unknown>;
     void body;
@@ -66,6 +67,10 @@ export const handlers = [
       {
         contribution_id: `c-${Date.now()}`,
         tier_processed: 1,
+        facilitator_reply: "Contribution received. I'll incorporate your perspective into the quorum analysis.",
+        facilitator_message_id: `msg-${Date.now()}`,
+        facilitator_tags: ["contribution", "analysis"],
+        a2a_requests_triggered: 0,
       },
       { status: 201 }
     );
@@ -132,4 +137,25 @@ export const handlers = [
   http.get(`${API_BASE}/quorums/:quorumId/documents`, () => {
     return HttpResponse.json({ documents: [] });
   }),
+
+  // GET /quorums/:quorumId/a2a/requests
+  http.get(`${API_BASE}/quorums/:quorumId/a2a/requests`, () => {
+    return HttpResponse.json({ requests: [] });
+  }),
+
+  // POST /quorums/:quorumId/a2a/request
+  http.post(`${API_BASE}/quorums/:quorumId/a2a/request`, async () => {
+    return HttpResponse.json(
+      { request_id: `a2a-${Date.now()}`, target_response: null },
+      { status: 201 }
+    );
+  }),
+
+  // PATCH /quorums/:quorumId/a2a/requests/:requestId
+  http.patch(
+    `${API_BASE}/quorums/:quorumId/a2a/requests/:requestId`,
+    async () => {
+      return HttpResponse.json({ updated: true });
+    }
+  ),
 ];

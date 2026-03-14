@@ -38,7 +38,8 @@
     "model": {
       "type": "string",
       "default": "gpt-4o-mini",
-      "description": "LLM model identifier. Maps to Azure Assistants 'model'. Use 'gpt-4o-mini' for standard turns, 'gpt-4o' for complex reasoning."
+      "enum": ["gpt-4o-mini", "gpt-4o", "gpt-5-nano", "gpt-5-turbo"],
+      "description": "LLM model identifier. Maps to Azure Assistants 'model'. Use 'gpt-4o-mini' for standard turns, 'gpt-4o' for complex reasoning, 'gpt-5-nano' for efficient reasoning via Responses API."
     },
     "tools": {
       "type": "array",

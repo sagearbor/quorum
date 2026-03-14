@@ -19,9 +19,15 @@ from __future__ import annotations
 
 import json
 import logging
-import re
 import uuid
 from datetime import datetime, timezone
+
+from quorum_llm.affinity import (
+    compute_tag_affinity,
+    extract_tags_from_text,
+    find_relevant_agents,
+)
+from .tag_vocabulary import get_vocabulary, update_vocabulary
 
 logger = logging.getLogger(__name__)
 
@@ -45,25 +51,11 @@ def _slugify(name: str) -> str:
 
 
 def _jaccard(a: set[str], b: set[str]) -> float:
-    if not a or not b:
-        return 0.0
-    return len(a & b) / len(a | b)
+    """Thin wrapper kept for any callers that reference the private name directly.
 
-
-def _extract_tags_from_text(text: str) -> list[str]:
-    """Pull tags from an agent reply using the [tags: x, y, z] convention.
-
-    Also extracts any lowercase words that look like domain tags (simple
-    heuristic: lower-case-only tokens of length 3-20, excluding stop words).
+    Prefer ``compute_tag_affinity`` from ``quorum_llm.affinity`` for new code.
     """
-    tags: list[str] = []
-
-    # Explicit tag blocks written by the agent
-    for match in re.finditer(r"\[tags?:\s*([^\]]+)\]", text, re.IGNORECASE):
-        raw = match.group(1)
-        tags.extend(t.strip().lower().replace(" ", "_") for t in raw.split(","))
-
-    return list({t for t in tags if t})  # deduplicate
+    return compute_tag_affinity(list(a), list(b))
 
 
 def _flatten_messages(messages: list[dict]) -> str:
@@ -75,20 +67,71 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def _call_llm(llm_provider, messages: list[dict]) -> str:
-    """Call LLM with graceful fallback to complete() if chat() is unavailable."""
-    try:
-        # Track A will add chat() to LLMProvider; try it first.
-        if hasattr(llm_provider, "chat"):
-            from quorum_llm.models import LLMTier
-            return await llm_provider.chat(messages, LLMTier.CONFLICT)
-    except Exception:
-        pass
+def _is_gpt5_model(model: str) -> bool:
+    """Return True if the model name indicates a GPT-5 variant.
 
-    # Fallback: flatten to a single prompt and use complete()
+    GPT-5 models require the Responses API rather than Chat Completions.
+    We check by prefix so that gpt-5-nano, gpt-5-turbo, etc. all match.
+    """
+    return model.startswith("gpt-5")
+
+
+async def _call_llm(llm_provider, messages: list[dict], agent_def=None) -> str:
+    """Call LLM using the appropriate API based on the agent's model.
+
+    Routing logic:
+    1. If the agent definition specifies a gpt-5-* model AND the provider
+       exposes ``respond()``, use the Responses API (stateless call — no
+       previous_response_id since we don't persist it yet at this level).
+    2. If the provider exposes ``chat()``, use it for full message history.
+    3. Otherwise flatten to a single string and call ``complete()``.
+
+    The agent_def parameter is optional; when absent the logic falls through
+    to chat() or complete() as before (safe for callers that don't have the
+    definition readily available).
+    """
     from quorum_llm.models import LLMTier
+
+    # Route gpt-5 agents through the Responses API when available
+    if agent_def is not None and _is_gpt5_model(getattr(agent_def, "model", "")):
+        if hasattr(llm_provider, "respond"):
+            try:
+                # Extract the system message as instructions and the last
+                # user message as input_text for the Responses API format.
+                instructions = next(
+                    (m["content"] for m in messages if m["role"] == "system"),
+                    "",
+                )
+                user_messages = [m for m in messages if m["role"] == "user"]
+                input_text = user_messages[-1]["content"] if user_messages else ""
+
+                reply, _ = await llm_provider.respond(
+                    instructions=instructions,
+                    input_text=input_text,
+                    tier=LLMTier.AGENT_RESPOND,
+                )
+                return reply
+            except Exception:
+                logger.warning(
+                    "agent_engine: respond() failed for gpt-5 agent '%s', "
+                    "falling back to chat()",
+                    getattr(agent_def, "name", "unknown"),
+                    exc_info=True,
+                )
+
+    # Standard path: use chat() for full message-list context
+    if hasattr(llm_provider, "chat"):
+        try:
+            return await llm_provider.chat(messages, LLMTier.AGENT_CHAT)
+        except Exception:
+            logger.warning(
+                "agent_engine: chat() failed, falling back to complete()",
+                exc_info=True,
+            )
+
+    # Final fallback: flatten to a single prompt and use complete()
     flat = _flatten_messages(messages)
-    return await llm_provider.complete(flat, LLMTier.CONFLICT)
+    return await llm_provider.complete(flat, LLMTier.AGENT_CHAT)
 
 
 # ---------------------------------------------------------------------------
@@ -162,9 +205,9 @@ async def process_agent_turn(
         user_message=user_message,
     )
 
-    # --- 8. Call LLM ---
+    # --- 8. Call LLM (routing: gpt-5 → Responses API, others → chat()) ---
     try:
-        reply = await _call_llm(llm_provider, messages)
+        reply = await _call_llm(llm_provider, messages, agent_def=agent_def)
     except Exception:
         logger.error(
             "agent_engine: LLM call failed for role=%s station=%s",
@@ -189,8 +232,11 @@ async def process_agent_turn(
     except Exception:
         logger.warning("agent_engine: failed to persist user message", exc_info=True)
 
-    # --- 10. Extract tags from reply ---
-    reply_tags = _extract_tags_from_text(reply)
+    # --- 10. Extract tags from reply using vocabulary-aware extraction ---
+    vocab = get_vocabulary(quorum_id)
+    reply_tags = extract_tags_from_text(reply, existing_vocabulary=vocab)
+    # Grow the quorum vocabulary with any new tags discovered in this turn
+    update_vocabulary(quorum_id, reply_tags)
 
     # --- 11. Persist agent reply ---
     reply_msg_id = str(uuid.uuid4())
@@ -218,6 +264,15 @@ async def process_agent_turn(
             content=reply[:1000],  # cap insight content length
             tags=reply_tags,
             insight_type="summary",
+        )
+        # Notify any agents with high tag affinity to this insight so they can
+        # incorporate it in their next turn without waiting for a human action.
+        _notify_relevant_agents(
+            db=db,
+            quorum_id=quorum_id,
+            from_role_id=role_id,
+            insight_tags=reply_tags,
+            insight_content=reply[:500],
         )
 
     return reply, reply_msg_id, reply_tags
@@ -298,9 +353,9 @@ async def process_a2a_request(
         {"role": "user", "content": a2a_user_content},
     ]
 
-    # --- 4. Call LLM ---
+    # --- 4. Call LLM (routing: gpt-5 → Responses API, others → chat()) ---
     try:
-        response_text = await _call_llm(llm_provider, messages)
+        response_text = await _call_llm(llm_provider, messages, agent_def=agent_def)
     except Exception:
         logger.error(
             "process_a2a_request: LLM failed for request %s", request_id, exc_info=True
@@ -308,7 +363,12 @@ async def process_a2a_request(
         response_text = "I acknowledge your request and will respond shortly."
 
     # --- 5. Update request status to acknowledged ---
-    response_tags = _extract_tags_from_text(response_text)
+    # Load vocabulary for the quorum if available (best-effort; req row has quorum_id)
+    a2a_quorum_id: str = req.get("quorum_id", "")
+    a2a_vocab = get_vocabulary(a2a_quorum_id) if a2a_quorum_id else set()
+    response_tags = extract_tags_from_text(response_text, existing_vocabulary=a2a_vocab)
+    if a2a_quorum_id:
+        update_vocabulary(a2a_quorum_id, response_tags)
     try:
         db.table("agent_requests").update({
             "status": "acknowledged",
@@ -370,7 +430,13 @@ def _load_quorum_context(db, quorum_id: str) -> dict | None:
 def _load_relevant_insights(
     db, quorum_id: str, role_id: str, agent_tags: set[str]
 ) -> list[dict]:
-    """Load recent insights from other stations that share tag affinity."""
+    """Load recent insights from other stations that share tag affinity.
+
+    Uses ``find_relevant_agents`` semantics: each insight is treated as a
+    mini-agent with its own tag set and scored against this agent's tags.
+    Insights below ``_INSIGHT_RELEVANCE_THRESHOLD`` are excluded unless this
+    agent has no domain tags (new/unconfigured agents receive all insights).
+    """
     try:
         result = (
             db.table("agent_insights")
@@ -386,20 +452,35 @@ def _load_relevant_insights(
         logger.warning("agent_engine: failed to load insights", exc_info=True)
         return []
 
-    # Score by tag overlap and return top N
-    scored = []
-    for row in rows:
-        insight_tags = set(row.get("tags") or [])
-        score = _jaccard(agent_tags, insight_tags)
-        if score >= _INSIGHT_RELEVANCE_THRESHOLD or not agent_tags:
-            scored.append((score, row))
+    agent_tags_list = list(agent_tags)
 
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [r for _, r in scored[:_MAX_INSIGHTS]]
+    # When the agent has no domain tags, return all insights (unconfigured agent).
+    if not agent_tags_list:
+        return rows[:_MAX_INSIGHTS]
+
+    # Use find_relevant_agents to score each insight by tag overlap.
+    # We adapt the insight rows into the [{role_id, domain_tags}] shape expected
+    # by find_relevant_agents, then map back to the original rows.
+    insight_agent_proxies = [
+        {"role_id": str(i), "domain_tags": row.get("tags") or []}
+        for i, row in enumerate(rows)
+    ]
+    relevant = find_relevant_agents(
+        source_tags=agent_tags_list,
+        all_agents=insight_agent_proxies,
+        threshold=_INSIGHT_RELEVANCE_THRESHOLD,
+    )
+    # Map proxy role_ids (which are str indices) back to original rows
+    selected = [rows[int(proxy["role_id"])] for proxy in relevant[:_MAX_INSIGHTS]]
+    return selected
 
 
 def _load_relevant_documents(db, quorum_id: str, agent_tags: set[str]) -> list[dict]:
-    """Load active agent documents with tag affinity to this agent."""
+    """Load active agent documents with tag affinity to this agent.
+
+    Documents with no tags are given a small baseline score (0.1) so that
+    untagged documents are still surfaced when no better matches exist.
+    """
     try:
         result = (
             db.table("agent_documents")
@@ -415,11 +496,21 @@ def _load_relevant_documents(db, quorum_id: str, agent_tags: set[str]) -> list[d
         logger.warning("agent_engine: failed to load documents", exc_info=True)
         return []
 
-    # Prioritize documents with tag overlap; fallback to recency if no tags set
-    scored = []
+    agent_tags_list = list(agent_tags)
+
+    if not agent_tags_list:
+        # No domain tags — return most recent documents (recency order preserved)
+        return rows[:_MAX_DOCS]
+
+    # Score each document: use compute_tag_affinity for tagged docs, baseline for untagged.
+    scored: list[tuple[float, dict]] = []
     for row in rows:
-        doc_tags = set(row.get("tags") or [])
-        score = _jaccard(agent_tags, doc_tags) if agent_tags and doc_tags else 0.1
+        doc_tags: list[str] = row.get("tags") or []
+        score = (
+            compute_tag_affinity(agent_tags_list, doc_tags)
+            if doc_tags
+            else 0.1  # baseline: include untagged docs with low priority
+        )
         scored.append((score, row))
 
     scored.sort(key=lambda x: x[0], reverse=True)
@@ -577,3 +668,100 @@ def _publish_insight(
         }).execute()
     except Exception:
         logger.warning("agent_engine: failed to publish insight", exc_info=True)
+
+
+def _notify_relevant_agents(
+    db,
+    quorum_id: str,
+    from_role_id: str,
+    insight_tags: list[str],
+    insight_content: str,
+) -> None:
+    """Send doc_edit_notify A2A requests to agents with high tag affinity.
+
+    Loads all active roles in the quorum, computes tag affinity against the
+    insight tags, and sends a ``doc_edit_notify`` A2A request to any agent
+    whose affinity score meets or exceeds the high-priority threshold (0.6,
+    per PRP section 5 propagation rules).
+
+    This is fire-and-forget: errors are logged but never re-raised so that
+    the calling turn always completes successfully.
+
+    Args:
+        db:              Supabase client.
+        quorum_id:       Quorum identifier.
+        from_role_id:    Role that published the insight (excluded from targets).
+        insight_tags:    Tags associated with the published insight.
+        insight_content: Truncated insight text for the A2A request body.
+    """
+    # Threshold for auto-wake: only send A2A for strong affinity matches.
+    # Lower-affinity agents will see the insight via context injection instead.
+    _A2A_NOTIFY_THRESHOLD = 0.6
+
+    if not insight_tags:
+        return
+
+    try:
+        # Load all roles in this quorum and their domain tags from agent_configs
+        result = (
+            db.table("agent_configs")
+            .select("role_id, domain_tags")
+            .eq("quorum_id", quorum_id)
+            .execute()
+        )
+        role_configs: list[dict] = result.data or []
+    except Exception:
+        logger.warning("_notify_relevant_agents: failed to load role configs", exc_info=True)
+        return
+
+    # Filter out the publishing agent and find high-affinity targets
+    other_agents = [r for r in role_configs if r.get("role_id") != from_role_id]
+    if not other_agents:
+        return
+
+    relevant = find_relevant_agents(
+        source_tags=insight_tags,
+        all_agents=other_agents,
+        threshold=_A2A_NOTIFY_THRESHOLD,
+    )
+
+    if not relevant:
+        logger.debug(
+            "_notify_relevant_agents: no agents above threshold %.1f for quorum=%s",
+            _A2A_NOTIFY_THRESHOLD,
+            quorum_id,
+        )
+        return
+
+    # Insert one A2A request per relevant agent
+    for agent in relevant:
+        target_role_id = agent["role_id"]
+        score = agent["affinity_score"]
+        try:
+            db.table("agent_requests").insert({
+                "id": str(uuid.uuid4()),
+                "quorum_id": quorum_id,
+                "from_role_id": from_role_id,
+                "to_role_id": target_role_id,
+                "request_type": "doc_edit_notify",
+                "content": (
+                    f"A cross-station insight with tags [{', '.join(insight_tags)}] "
+                    f"(affinity {score:.2f}) was published and may be relevant to "
+                    f"your domain:\n\n{insight_content}"
+                ),
+                "priority": 1,  # Low priority per PRP section 6 table
+                "status": "pending",
+                "created_at": _now_iso(),
+            }).execute()
+            logger.debug(
+                "_notify_relevant_agents: notified role=%s (affinity=%.2f) in quorum=%s",
+                target_role_id,
+                score,
+                quorum_id,
+            )
+        except Exception:
+            logger.warning(
+                "_notify_relevant_agents: failed to insert A2A request for role=%s",
+                target_role_id,
+                exc_info=True,
+            )

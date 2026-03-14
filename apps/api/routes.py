@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import pathlib
 import uuid
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
@@ -286,6 +287,33 @@ async def contribute(quorum_id: str, body: ContributeRequest):
 
 
 # ---------------------------------------------------------------------------
+# GET /quorums/{quorum_id}/roles
+# ---------------------------------------------------------------------------
+@router.get("/quorums/{quorum_id}/roles")
+async def list_roles(quorum_id: str):
+    """Return all roles for a quorum.
+
+    Used by clients (including the E2E test script) that need to discover
+    role IDs after quorum creation — CreateQuorumResponse does not include
+    them since role creation is a side-effect of POST /events/{id}/quorums.
+    """
+    db = get_supabase()
+
+    quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
+    if not quorum.data:
+        raise HTTPException(status_code=404, detail="Quorum not found")
+
+    roles = (
+        db.table("roles")
+        .select("id, name, authority_rank, capacity")
+        .eq("quorum_id", quorum_id)
+        .order("authority_rank", desc=True)
+        .execute()
+    )
+    return roles.data or []
+
+
+# ---------------------------------------------------------------------------
 # GET /quorums/{quorum_id}/state
 # ---------------------------------------------------------------------------
 @router.get("/quorums/{quorum_id}/state", response_model=QuorumStateResponse)
@@ -540,8 +568,20 @@ async def list_documents(
     status: str = "active",
     doc_type: str | None = None,
 ):
-    """List agent documents for a quorum."""
+    """List agent documents for a quorum.
+
+    status must be one of: active, superseded, canceled.
+    Returns 400 for an invalid status value (avoids passing arbitrary strings
+    to Supabase which may cause DB-level enum errors).
+    """
     db = get_supabase()
+
+    _VALID_DOC_STATUSES = {"active", "superseded", "canceled"}
+    if status not in _VALID_DOC_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status '{status}'. Must be one of: {sorted(_VALID_DOC_STATUSES)}",
+        )
 
     query = (
         db.table("agent_documents")
@@ -616,6 +656,23 @@ async def update_document_endpoint(
     """
     db = get_supabase()
 
+    # Verify the document belongs to this quorum before attempting any write.
+    # This prevents cross-quorum document mutations via a crafted quorum_id.
+    doc_check = (
+        db.table("agent_documents")
+        .select("id, quorum_id")
+        .eq("id", doc_id)
+        .single()
+        .execute()
+    )
+    if not doc_check.data:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc_check.data["quorum_id"] != quorum_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Document does not belong to this quorum",
+        )
+
     try:
         result = await update_document(
             doc_id=doc_id,
@@ -663,8 +720,22 @@ async def list_insights(
     insight_type: str | None = None,
     limit: int = 20,
 ):
-    """Return cross-station agent insights for a quorum."""
+    """Return cross-station agent insights for a quorum.
+
+    insight_type, when provided, must be a valid InsightType enum value.
+    limit is capped at 100 to prevent runaway queries.
+    """
     db = get_supabase()
+
+    _VALID_INSIGHT_TYPES = {"summary", "conflict", "suggestion", "question", "decision", "escalation"}
+    if insight_type is not None and insight_type not in _VALID_INSIGHT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid insight_type '{insight_type}'. Must be one of: {sorted(_VALID_INSIGHT_TYPES)}",
+        )
+
+    # Cap limit to prevent accidentally fetching unbounded rows
+    limit = min(limit, 100)
 
     query = (
         db.table("agent_insights")
@@ -766,6 +837,123 @@ async def create_a2a_request(quorum_id: str, body: A2ARequestCreate):
         created_at=now,
         target_response=target_response,
     )
+
+
+# ---------------------------------------------------------------------------
+# POST /events/{event_id}/quorums/{quorum_id}/seed-documents
+# ---------------------------------------------------------------------------
+@router.post(
+    "/events/{event_id}/quorums/{quorum_id}/seed-documents",
+    status_code=201,
+)
+async def seed_documents(event_id: str, quorum_id: str):
+    """Load pre-seeded agent documents from seed/clinical-trial-documents.json.
+
+    Idempotent — documents whose title already exists for this quorum are
+    skipped.  Returns counts of inserted and skipped documents.
+
+    This endpoint is intended for development and demo setup only.  In
+    production, use scripts/seed-agent-documents.py with the service role key.
+    """
+    db = get_supabase()
+
+    # Verify event + quorum exist and are related
+    quorum = (
+        db.table("quorums")
+        .select("id, title, event_id")
+        .eq("id", quorum_id)
+        .eq("event_id", event_id)
+        .single()
+        .execute()
+    )
+    if not quorum.data:
+        raise HTTPException(
+            status_code=404,
+            detail="Quorum not found or does not belong to this event",
+        )
+
+    # Locate the seed file relative to repo root (two levels above apps/api/)
+    seed_path = (
+        pathlib.Path(__file__).resolve().parent.parent.parent
+        / "seed"
+        / "clinical-trial-documents.json"
+    )
+    if not seed_path.exists():
+        raise HTTPException(
+            status_code=500,
+            detail=f"Seed file not found at {seed_path}",
+        )
+
+    with seed_path.open() as fh:
+        seed_data = json.load(fh)
+
+    # Fetch existing document titles so we can skip duplicates
+    existing = (
+        db.table("agent_documents")
+        .select("title")
+        .eq("quorum_id", quorum_id)
+        .eq("status", "active")
+        .execute()
+    )
+    existing_titles = {row["title"] for row in existing.data}
+
+    inserted: list[dict] = []
+    skipped: list[str] = []
+
+    for doc in seed_data.get("documents", []):
+        title = doc["title"]
+
+        if title in existing_titles:
+            skipped.append(title)
+            continue
+
+        doc_id = str(uuid.uuid4())
+        row = {
+            "id": doc_id,
+            "quorum_id": quorum_id,
+            "title": title,
+            "doc_type": doc["doc_type"],
+            # All seed documents use the json format envelope even when their
+            # logical representation is tabular (e.g., budget CSV).
+            "format": "json",
+            "content": doc["content"],
+            "status": "active",
+            "version": 1,
+            "tags": doc.get("tags", []),
+            "created_by_role_id": None,
+        }
+
+        result = db.table("agent_documents").insert(row).execute()
+        if result.data:
+            inserted.append({"id": doc_id, "title": title, "doc_type": doc["doc_type"]})
+            # Broadcast new document over WebSocket
+            await manager.broadcast(quorum_id, {
+                "type": "document_update",
+                "data": {
+                    "document_id": doc_id,
+                    "version": 1,
+                    "change_type": "create",
+                    "changed_by": None,
+                },
+            })
+        else:
+            logger.warning("seed_documents: insert failed for '%s'", title)
+
+    logger.info(
+        "seed_documents: quorum=%s inserted=%d skipped=%d",
+        quorum_id, len(inserted), len(skipped),
+    )
+
+    return {
+        "quorum_id": quorum_id,
+        "inserted": inserted,
+        "skipped": skipped,
+        "total_problems_seeded": sum(
+            len(doc["content"].get("metadata", {}).get("problems", []))
+            for doc in seed_data.get("documents", [])
+            if doc["title"] not in skipped
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------

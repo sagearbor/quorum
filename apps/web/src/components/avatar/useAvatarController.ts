@@ -20,6 +20,7 @@ import {
 import { StereoAnalyzer } from "./StereoAnalyzer";
 import { VisionTracker } from "./VisionTracker";
 import { EmotionDetector, type DetectedEmotion } from "./EmotionDetector";
+import { speakText as browserSpeakText } from "@/lib/speechSynthesis";
 
 export interface AvatarControllerOptions {
   /**
@@ -218,24 +219,30 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
     setState((s) => ({ ...s, emotion }));
   }, [healthScore, computeEmotion]);
 
-  // Speak new synthesis text (no-op when no provider)
+  // Speak new synthesis text.
+  // Priority: configured AvatarProvider (ElevenLabs/Simli) → browser SpeechSynthesis fallback.
   useEffect(() => {
     if (!synthesisText || synthesisText === prevSynthesisRef.current) return;
-    if (speakingRef.current) return; // Don't interrupt
+    if (speakingRef.current) return; // Don't interrupt current speech
 
     prevSynthesisRef.current = synthesisText;
-
-    const provider = providerRef.current;
-    if (!provider) return;
-
     speakingRef.current = true;
     setState((s) => ({ ...s, speaking: true }));
 
-    const emotion = computeEmotion(healthScore, prevHealthRef.current);
-    provider.speak(synthesisText, emotion).then(() => {
+    const done = () => {
       speakingRef.current = false;
       setState((s) => ({ ...s, speaking: false }));
-    });
+    };
+
+    const provider = providerRef.current;
+    if (provider) {
+      const emotion = computeEmotion(healthScore, prevHealthRef.current);
+      provider.speak(synthesisText, emotion).then(done);
+    } else {
+      // No provider configured — fall back to browser Web Speech Synthesis API.
+      // This gives immediate audible feedback without requiring external credentials.
+      browserSpeakText(synthesisText).then(done);
+    }
   }, [synthesisText, healthScore, computeEmotion]);
 
   return state;

@@ -16,6 +16,8 @@ import { ConversationThread } from "@/components/conversation/ConversationThread
 import { DocumentPanel } from "@/components/documents/DocumentPanel";
 import { useStationConversation } from "@/hooks/useStationConversation";
 import { useAgentDocuments } from "@/hooks/useAgentDocuments";
+import { useA2ARequests } from "@/hooks/useA2ARequests";
+import type { StationMessage } from "@quorum/types";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -145,6 +147,29 @@ export default function QuorumPage() {
 
   // Agent documents hook
   const { documents, loading: docsLoading } = useAgentDocuments(quorumId);
+
+  // A2A notifications for the current role — shows when other agents flag concerns
+  const a2a = useA2ARequests(quorumId, currentRole?.id ?? "");
+
+  // Merge A2A notifications as synthetic "system" messages into the conversation
+  // so the human always sees agent-to-agent activity without a separate UI panel.
+  // We derive a stable merged array here; ConversationThread deduplicates by id.
+  const mergedMessages: StationMessage[] = [
+    ...conversation.messages,
+    ...a2a.notifications
+      .filter((n) => !n.dismissed)
+      .map((n): StationMessage => ({
+        id: `a2a-${n.id}`,
+        quorum_id: quorumId,
+        role_id: currentRole?.id ?? "",
+        station_id: stationId,
+        role: "system",
+        content: n.summary,
+        created_at: n.receivedAt,
+      })),
+  ].sort(
+    (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+  );
 
   // When there is a live facilitator reply, derive synthesisText for the avatar
   const synthesisText = conversation.facilitatorReply?.reply ?? undefined;
@@ -469,10 +494,10 @@ export default function QuorumPage() {
                 }`}
               >
                 {label}
-                {/* Unread indicator: show when the conversation has a new facilitator reply */}
+                {/* Unread indicator: show when there's a new facilitator reply or A2A notification */}
                 {id === "conversation" &&
                   activeTab !== "conversation" &&
-                  conversation.facilitatorReply && (
+                  (conversation.facilitatorReply || a2a.pendingCount > 0) && (
                     <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 align-middle" />
                   )}
               </button>
@@ -487,7 +512,7 @@ export default function QuorumPage() {
                 quorumId={quorumId}
                 stationId={stationId}
                 roleId={currentRole?.id ?? ""}
-                messages={conversation.messages}
+                messages={mergedMessages}
                 loading={conversation.loading}
                 sending={conversation.sending}
                 onSend={conversation.sendMessage}

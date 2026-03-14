@@ -75,20 +75,68 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def _call_llm(llm_provider, messages: list[dict]) -> str:
-    """Call LLM with graceful fallback to complete() if chat() is unavailable."""
+def _is_gpt5_model(model: str) -> bool:
+    """Return True if the model name indicates a GPT-5 variant.
+
+    GPT-5 models require the Responses API rather than Chat Completions.
+    We check by prefix so that gpt-5-nano, gpt-5-turbo, etc. all match.
+    """
+    return model.startswith("gpt-5")
+
+
+async def _call_llm(llm_provider, messages: list[dict], agent_def=None) -> str:
+    """Call LLM using the appropriate API based on the agent's model.
+
+    Routing logic:
+    1. If the agent definition specifies a gpt-5-* model AND the provider
+       exposes ``respond()``, use the Responses API (stateless call — no
+       previous_response_id since we don't persist it yet at this level).
+    2. If the provider exposes ``chat()``, use it for full message history.
+    3. Otherwise flatten to a single string and call ``complete()``.
+
+    The agent_def parameter is optional; when absent the logic falls through
+    to chat() or complete() as before (safe for callers that don't have the
+    definition readily available).
+    """
+    from quorum_llm.models import LLMTier
+
+    # Route gpt-5 agents through the Responses API when available
+    if agent_def is not None and _is_gpt5_model(getattr(agent_def, "model", "")):
+        if hasattr(llm_provider, "respond"):
+            try:
+                # Extract the system message as instructions and the last
+                # user message as input_text for the Responses API format.
+                instructions = next(
+                    (m["content"] for m in messages if m["role"] == "system"),
+                    "",
+                )
+                user_messages = [m for m in messages if m["role"] == "user"]
+                input_text = user_messages[-1]["content"] if user_messages else ""
+
+                reply, _ = await llm_provider.respond(
+                    instructions=instructions,
+                    input_text=input_text,
+                    tier=LLMTier.AGENT_RESPOND,
+                )
+                return reply
+            except Exception:
+                logger.warning(
+                    "agent_engine: respond() failed for gpt-5 agent '%s', "
+                    "falling back to chat()",
+                    getattr(agent_def, "name", "unknown"),
+                    exc_info=True,
+                )
+
+    # Standard path: use chat() for full message-list context
     try:
-        # Track A will add chat() to LLMProvider; try it first.
         if hasattr(llm_provider, "chat"):
-            from quorum_llm.models import LLMTier
-            return await llm_provider.chat(messages, LLMTier.CONFLICT)
+            return await llm_provider.chat(messages, LLMTier.AGENT_CHAT)
     except Exception:
         pass
 
-    # Fallback: flatten to a single prompt and use complete()
-    from quorum_llm.models import LLMTier
+    # Final fallback: flatten to a single prompt and use complete()
     flat = _flatten_messages(messages)
-    return await llm_provider.complete(flat, LLMTier.CONFLICT)
+    return await llm_provider.complete(flat, LLMTier.AGENT_CHAT)
 
 
 # ---------------------------------------------------------------------------
@@ -162,9 +210,9 @@ async def process_agent_turn(
         user_message=user_message,
     )
 
-    # --- 8. Call LLM ---
+    # --- 8. Call LLM (routing: gpt-5 → Responses API, others → chat()) ---
     try:
-        reply = await _call_llm(llm_provider, messages)
+        reply = await _call_llm(llm_provider, messages, agent_def=agent_def)
     except Exception:
         logger.error(
             "agent_engine: LLM call failed for role=%s station=%s",
@@ -298,9 +346,9 @@ async def process_a2a_request(
         {"role": "user", "content": a2a_user_content},
     ]
 
-    # --- 4. Call LLM ---
+    # --- 4. Call LLM (routing: gpt-5 → Responses API, others → chat()) ---
     try:
-        response_text = await _call_llm(llm_provider, messages)
+        response_text = await _call_llm(llm_provider, messages, agent_def=agent_def)
     except Exception:
         logger.error(
             "process_a2a_request: LLM failed for request %s", request_id, exc_info=True

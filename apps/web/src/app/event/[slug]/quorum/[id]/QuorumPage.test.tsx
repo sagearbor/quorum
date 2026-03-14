@@ -26,17 +26,44 @@ vi.mock("@/components/documents/DocumentPanel", () => ({
   DocumentPanel: () => <div data-testid="document-panel" />,
 }));
 
+// ---------------------------------------------------------------------------
+// Per-test-overrideable mock state for hooks
+// ---------------------------------------------------------------------------
+
+// We expose the mock return values as module-level objects so individual tests
+// can mutate them before rendering without needing vi.mocked().mockReturnValue.
+
+let lastConversationArgs: unknown[] = [];
+
+const mockConversationIngestReply = vi.fn();
+
+const mockConversationState: {
+  messages: import("@quorum/types").StationMessage[];
+  loading: boolean;
+  sending: boolean;
+  facilitatorReply: import("@/lib/dataProvider").FacilitatorReply | null;
+  sendMessage: ReturnType<typeof vi.fn>;
+  ingestFacilitatorReply: ReturnType<typeof vi.fn>;
+  clearFacilitatorReply: ReturnType<typeof vi.fn>;
+} = {
+  messages: [],
+  loading: false,
+  sending: false,
+  facilitatorReply: null,
+  sendMessage: vi.fn(),
+  ingestFacilitatorReply: mockConversationIngestReply,
+  clearFacilitatorReply: vi.fn(),
+};
+
+const mockA2APendingCount = { value: 0 };
+const mockA2ANotifications: import("@/hooks/useA2ARequests").A2ANotification[] = [];
+
 // Mock hooks that call dataProvider internally
 vi.mock("@/hooks/useStationConversation", () => ({
-  useStationConversation: () => ({
-    messages: [],
-    loading: false,
-    sending: false,
-    facilitatorReply: null,
-    sendMessage: vi.fn(),
-    ingestFacilitatorReply: vi.fn(),
-    clearFacilitatorReply: vi.fn(),
-  }),
+  useStationConversation: (...args: unknown[]) => {
+    lastConversationArgs = args;
+    return mockConversationState;
+  },
 }));
 
 vi.mock("@/hooks/useAgentDocuments", () => ({
@@ -44,6 +71,15 @@ vi.mock("@/hooks/useAgentDocuments", () => ({
     documents: [],
     loading: false,
     refresh: vi.fn(),
+  }),
+}));
+
+vi.mock("@/hooks/useA2ARequests", () => ({
+  useA2ARequests: () => ({
+    notifications: mockA2ANotifications,
+    pendingCount: mockA2APendingCount.value,
+    dismiss: vi.fn(),
+    clearDismissed: vi.fn(),
   }),
 }));
 
@@ -154,6 +190,13 @@ describe("QuorumPage", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Reset module-level hook state
+    lastConversationArgs = [];
+    mockConversationState.loading = false;
+    mockConversationState.sending = false;
+    mockConversationState.facilitatorReply = null;
+    mockA2APendingCount.value = 0;
+    mockA2ANotifications.length = 0;
   });
 
   it("renders quorum title after load", async () => {
@@ -280,5 +323,105 @@ describe("QuorumPage", () => {
     await waitFor(() => {
       expect(screen.getByText("Station 1")).toBeInTheDocument();
     });
+  });
+
+  it("wires facilitator reply to ingestFacilitatorReply on successful contribution", async () => {
+    render(<QuorumPage />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("role-select-r-001")).toBeInTheDocument()
+    );
+
+    // Select IRB Chair
+    fireEvent.click(screen.getByTestId("role-select-r-001"));
+
+    // Fill in a field
+    const textarea = screen.getByTestId("field-safety_assessment");
+    fireEvent.change(textarea, {
+      target: { value: "No major safety concerns identified" },
+    });
+
+    fireEvent.click(screen.getByTestId("submit-contribution"));
+
+    // MSW handler returns a facilitator_reply — ingestFacilitatorReply should be called
+    await waitFor(() => {
+      expect(mockConversationIngestReply).toHaveBeenCalledWith(
+        expect.objectContaining({
+          reply: expect.any(String),
+          message_id: expect.any(String),
+          tags: expect.any(Array),
+        })
+      );
+    });
+  });
+
+  it("switches active tab to conversation after facilitator reply arrives on contribution", async () => {
+    render(<QuorumPage />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("role-select-r-001")).toBeInTheDocument()
+    );
+
+    // Start on contributions tab
+    fireEvent.click(screen.getByTestId("tab-contributions"));
+    expect(screen.getByTestId("tab-contributions")).toHaveAttribute(
+      "aria-selected",
+      "true"
+    );
+
+    // Select role and submit
+    fireEvent.click(screen.getByTestId("role-select-r-001"));
+    const textarea = screen.getByTestId("field-safety_assessment");
+    fireEvent.change(textarea, { target: { value: "Safety looks good" } });
+    fireEvent.click(screen.getByTestId("submit-contribution"));
+
+    // After contribution with facilitator_reply, tab should switch to conversation
+    await waitFor(() => {
+      expect(screen.getByTestId("tab-conversation")).toHaveAttribute(
+        "aria-selected",
+        "true"
+      );
+    });
+  });
+
+  it("station_id is derived from ?station= URL param", async () => {
+    // The stationId passed to hooks should be 'station-1' when ?station=1
+    render(<QuorumPage />);
+
+    await waitFor(() => {
+      // lastConversationArgs is captured each render by our mock
+      expect(lastConversationArgs[0]).toBe("q-001");
+      expect(lastConversationArgs[1]).toBe("station-1");
+    });
+  });
+
+  it("shows unread indicator on conversation tab when A2A notifications exist", async () => {
+    // Set module-level A2A state to have a pending notification
+    mockA2APendingCount.value = 1;
+    mockA2ANotifications.push({
+      id: "req-001",
+      request: {} as import("@quorum/types").AgentRequest,
+      summary: "Safety Monitor flagged a conflict",
+      dismissed: false,
+      receivedAt: new Date().toISOString(),
+    });
+
+    render(<QuorumPage />);
+
+    await waitFor(() =>
+      expect(screen.getByTestId("quorum-tabs")).toBeInTheDocument()
+    );
+
+    // Switch to a different tab so the indicator is visible
+    fireEvent.click(screen.getByTestId("tab-documents"));
+
+    // The conversation tab should now show the unread dot
+    const conversationTab = screen.getByTestId("tab-conversation");
+    // The dot is an inline <span> inside the tab button
+    expect(conversationTab.querySelector("span.bg-indigo-500")).toBeInTheDocument();
+
+    // Clean up module-level state for subsequent tests
+    mockA2APendingCount.value = 0;
+    mockA2ANotifications.length = 0;
   });
 });

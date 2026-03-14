@@ -113,8 +113,32 @@ class MockLLMProvider(LLMProvider):
                 return _CONFLICT_YES
             return _CONFLICT_NO
 
-        # Tier 3 — artifact synthesis
+        if tier in (LLMTier.AGENT_CHAT, LLMTier.AGENT_REASON):
+            # Return a realistic facilitator acknowledgement for agent turns.
+            return (
+                "Understood. I have reviewed the current documents and the "
+                "incoming request. I note a potential concern around the "
+                "enrollment timeline and will flag it for the safety monitor. "
+                "[tags: enrollment, timeline, safety_monitoring]"
+            )
+
+        # Tier SYNTHESIS (3) — artifact synthesis
         return _ARTIFACT_JSON
+
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        tier: LLMTier,
+        temperature: float = 0.4,
+        max_tokens: int = 1024,
+    ) -> str:
+        """Chat completion — records the call and delegates to complete().
+
+        The mock flattens the messages array so the existing call_log format
+        (prompt_hash, tier) stays consistent across complete() and chat().
+        """
+        flat = "\n".join(f"[{m['role']}]: {m['content']}" for m in messages)
+        return await self.complete(flat, tier)
 
     async def embed(self, text: str) -> list[float]:
         self.call_log.append({"prompt_hash": _hash_key(text), "tier": "embed"})

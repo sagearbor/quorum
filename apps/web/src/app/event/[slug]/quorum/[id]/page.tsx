@@ -12,6 +12,21 @@ import {
 import { enqueue } from "@/lib/offlineQueue";
 import type { Role, Contribution, ContributeRequest } from "@quorum/types";
 import { AvatarPanel } from "@/components/avatar/AvatarPanel";
+import { ConversationThread } from "@/components/conversation/ConversationThread";
+import { DocumentPanel } from "@/components/documents/DocumentPanel";
+import { useStationConversation } from "@/hooks/useStationConversation";
+import { useAgentDocuments } from "@/hooks/useAgentDocuments";
+
+// ---------------------------------------------------------------------------
+// Types
+// ---------------------------------------------------------------------------
+
+/** Tabs shown below the contribution form. */
+type PanelTab = "conversation" | "contributions" | "documents";
+
+// ---------------------------------------------------------------------------
+// VoiceButton
+// ---------------------------------------------------------------------------
 
 interface SpeechRecognitionLike {
   continuous: boolean;
@@ -91,6 +106,10 @@ function VoiceButton({ onTranscript }: { onTranscript: (text: string) => void })
   );
 }
 
+// ---------------------------------------------------------------------------
+// QuorumPage
+// ---------------------------------------------------------------------------
+
 export default function QuorumPage() {
   const params = useParams<{ slug: string; id: string }>();
   const searchParams = useSearchParams();
@@ -98,6 +117,10 @@ export default function QuorumPage() {
 
   const quorumId = params.id;
   const slug = params.slug;
+
+  // Derive a stable stationId: use the ?station= param or fall back to a
+  // synthetic identifier so the conversation hook always has a valid ID.
+  const stationId = station ? `station-${station}` : `station-default`;
 
   const [quorumTitle, setQuorumTitle] = useState<string>("");
   const [quorumDescription, setQuorumDescription] = useState<string>("");
@@ -109,6 +132,22 @@ export default function QuorumPage() {
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [submitSuccess, setSubmitSuccess] = useState(false);
+
+  // Active tab in the bottom panel (defaults to Conversation)
+  const [activeTab, setActiveTab] = useState<PanelTab>("conversation");
+
+  // Conversation hook — scoped to this station + current role
+  const conversation = useStationConversation(
+    quorumId,
+    stationId,
+    currentRole?.id ?? ""
+  );
+
+  // Agent documents hook
+  const { documents, loading: docsLoading } = useAgentDocuments(quorumId);
+
+  // When there is a live facilitator reply, derive synthesisText for the avatar
+  const synthesisText = conversation.facilitatorReply?.reply ?? undefined;
 
   useEffect(() => {
     let cancelled = false;
@@ -154,7 +193,6 @@ export default function QuorumPage() {
           handleFieldChange(firstEmptyField.field_name, text);
         }
       } else {
-        // Generic contribution field
         handleFieldChange("contribution", text);
       }
     },
@@ -191,6 +229,7 @@ export default function QuorumPage() {
 
       if (res.ok) {
         const data = await res.json();
+
         const newContrib: Contribution = {
           id: data.contribution_id,
           quorum_id: quorumId,
@@ -198,12 +237,24 @@ export default function QuorumPage() {
           user_token: "anon-local",
           content,
           structured_fields: { ...fieldValues },
-          tier_processed: 1,
+          tier_processed: data.tier_processed ?? 1,
           created_at: new Date().toISOString(),
         };
         setContributions((prev) => [...prev, newContrib]);
         setSubmitSuccess(true);
         setFieldValues({});
+
+        // Wire facilitator reply from /contribute response to AvatarPanel and
+        // the conversation thread — satisfies the TODO in AvatarPanel.tsx.
+        if (data.facilitator_reply) {
+          conversation.ingestFacilitatorReply({
+            reply: data.facilitator_reply,
+            message_id: data.facilitator_message_id ?? `auto-${Date.now()}`,
+            tags: data.facilitator_tags ?? [],
+          });
+          // Switch to the Conversation tab so users see the reply
+          setActiveTab("conversation");
+        }
       } else {
         throw new Error(`HTTP ${res.status}`);
       }
@@ -242,16 +293,20 @@ export default function QuorumPage() {
             </span>
           )}
         </div>
+
+        {/* 3D Avatar — synthesisText is wired to the latest facilitator reply */}
         <div className="flex-1 min-h-[300px]">
           <AvatarPanel
             quorumId={quorumId}
             showDirectionIndicator
+            roleName={currentRole?.name}
+            staticSynthesisText={synthesisText}
           />
         </div>
       </div>
 
       {/* Right panel: Quorum interaction */}
-      <div className="flex-1 p-4 sm:p-6 max-w-2xl">
+      <div className="flex-1 p-4 sm:p-6 max-w-2xl flex flex-col min-h-screen lg:min-h-0">
         <header className="mb-4">
           <h1 className="text-xl font-bold">
             {quorumTitle || `Quorum ${quorumId}`}
@@ -275,7 +330,6 @@ export default function QuorumPage() {
             <div className="flex flex-col gap-2">
               {roles.map((role) => {
                 const isSelected = currentRole?.id === role.id;
-
                 return (
                   <button
                     key={role.id}
@@ -386,44 +440,117 @@ export default function QuorumPage() {
           </section>
         )}
 
-        {/* Recent contributions */}
-        {contributions.length > 0 && (
-          <section>
-            <h2 className="text-sm font-semibold text-gray-700 mb-3">
-              Recent Contributions ({contributions.length})
-            </h2>
-            <div className="space-y-2">
-              {contributions.map((c) => {
-                const role = roles.find((r) => r.id === c.role_id);
-                return (
-                  <div
-                    key={c.id}
-                    data-testid={`contribution-${c.id}`}
-                    className="rounded-lg border border-gray-200 p-3 text-sm"
+        {/* Tabbed panel — Conversation | Documents | Contributions */}
+        <section className="flex-1 border border-gray-200 rounded-xl overflow-hidden flex flex-col min-h-[400px]">
+          {/* Tab bar */}
+          <div
+            className="flex border-b border-gray-200 bg-gray-50"
+            role="tablist"
+            data-testid="quorum-tabs"
+          >
+            {(
+              [
+                { id: "conversation", label: "Conversation" },
+                { id: "documents", label: "Documents" },
+                { id: "contributions", label: `Contributions (${contributions.length})` },
+              ] as { id: PanelTab; label: string }[]
+            ).map(({ id, label }) => (
+              <button
+                key={id}
+                type="button"
+                role="tab"
+                aria-selected={activeTab === id}
+                onClick={() => setActiveTab(id)}
+                data-testid={`tab-${id}`}
+                className={`px-4 py-2.5 text-sm font-medium transition-colors focus:outline-none ${
+                  activeTab === id
+                    ? "text-indigo-600 border-b-2 border-indigo-600 bg-white"
+                    : "text-gray-500 hover:text-gray-700"
+                }`}
+              >
+                {label}
+                {/* Unread indicator: show when the conversation has a new facilitator reply */}
+                {id === "conversation" &&
+                  activeTab !== "conversation" &&
+                  conversation.facilitatorReply && (
+                    <span className="ml-1.5 inline-block w-1.5 h-1.5 rounded-full bg-indigo-500 align-middle" />
+                  )}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab content */}
+          <div className="flex-1 overflow-hidden">
+            {/* Conversation tab */}
+            {activeTab === "conversation" && (
+              <ConversationThread
+                quorumId={quorumId}
+                stationId={stationId}
+                roleId={currentRole?.id ?? ""}
+                messages={conversation.messages}
+                loading={conversation.loading}
+                sending={conversation.sending}
+                onSend={conversation.sendMessage}
+              />
+            )}
+
+            {/* Documents tab */}
+            {activeTab === "documents" && (
+              <DocumentPanel
+                quorumId={quorumId}
+                documents={documents}
+                loading={docsLoading}
+              />
+            )}
+
+            {/* Contributions tab */}
+            {activeTab === "contributions" && (
+              <div className="p-3 overflow-y-auto h-full">
+                {contributions.length === 0 ? (
+                  <p
+                    className="text-center text-sm text-gray-400 py-8"
+                    data-testid="contributions-empty"
                   >
-                    <div className="flex items-center gap-2 mb-1">
-                      <span
-                        className="text-xs font-medium px-2 py-0.5 rounded-full"
-                        style={{
-                          backgroundColor: role
-                            ? `${role.color}15`
-                            : "#f3f4f6",
-                          color: role?.color ?? "#6b7280",
-                        }}
-                      >
-                        {role?.name ?? "Unknown"}
-                      </span>
-                      <span className="text-xs text-gray-400 ml-auto">
-                        {new Date(c.created_at).toLocaleTimeString()}
-                      </span>
-                    </div>
-                    <p className="text-gray-700 line-clamp-2">{c.content}</p>
+                    No contributions yet.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {contributions.map((c) => {
+                      const role = roles.find((r) => r.id === c.role_id);
+                      return (
+                        <div
+                          key={c.id}
+                          data-testid={`contribution-${c.id}`}
+                          className="rounded-lg border border-gray-200 p-3 text-sm"
+                        >
+                          <div className="flex items-center gap-2 mb-1">
+                            <span
+                              className="text-xs font-medium px-2 py-0.5 rounded-full"
+                              style={{
+                                backgroundColor: role
+                                  ? `${role.color}15`
+                                  : "#f3f4f6",
+                                color: role?.color ?? "#6b7280",
+                              }}
+                            >
+                              {role?.name ?? "Unknown"}
+                            </span>
+                            <span className="text-xs text-gray-400 ml-auto">
+                              {new Date(c.created_at).toLocaleTimeString()}
+                            </span>
+                          </div>
+                          <p className="text-gray-700 line-clamp-2">
+                            {c.content}
+                          </p>
+                        </div>
+                      );
+                    })}
                   </div>
-                );
-              })}
-            </div>
-          </section>
-        )}
+                )}
+              </div>
+            )}
+          </div>
+        </section>
       </div>
     </div>
   );

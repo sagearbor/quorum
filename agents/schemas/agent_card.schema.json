@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://quorum.app/schemas/agent-card/v1",
+  "title": "Quorum Agent Definition",
+  "description": "Declarative agent definition aligned with Azure Assistants API format + Google A2A Agent Card for cross-agent discovery. Static identity — runtime state lives in Supabase (local) or Azure thread store (prod).",
+  "type": "object",
+  "required": ["name", "version", "description", "instructions", "domain_tags", "authority_rank"],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Human-readable agent name. Maps to Azure Assistants 'name'."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+$",
+      "description": "Semver-lite version (major.minor)"
+    },
+    "description": {
+      "type": "string",
+      "description": "One-line description. Maps to Azure Assistants 'description' and A2A Agent Card 'description'."
+    },
+    "instructions": {
+      "type": "string",
+      "description": "The agent's core system prompt. Maps directly to Azure Assistants 'instructions' field. Defines personality, responsibilities, and behavioral guidelines."
+    },
+    "domain_tags": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+      "minItems": 1,
+      "description": "Snake_case tags for affinity scoring. Stored in Azure Assistants 'metadata'. Agents with overlapping tags discover each other."
+    },
+    "authority_rank": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 10,
+      "description": "Higher rank overrides lower on conflict. 1=advisory, 5=standard, 8=senior, 10=orchestrator. Stored in Azure Assistants 'metadata'."
+    },
+    "model": {
+      "type": "string",
+      "default": "gpt-4o-mini",
+      "description": "LLM model identifier. Maps to Azure Assistants 'model'. Use 'gpt-4o-mini' for standard turns, 'gpt-4o' for complex reasoning."
+    },
+    "tools": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["type"],
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["function"]
+          },
+          "function": {
+            "type": "object",
+            "required": ["name", "description"],
+            "properties": {
+              "name": { "type": "string" },
+              "description": { "type": "string" },
+              "parameters": {
+                "type": "object",
+                "description": "JSON Schema for function parameters"
+              }
+            }
+          }
+        }
+      },
+      "description": "Tool definitions in Azure Assistants format. Each tool has type='function' with a function spec."
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "auto_create_docs": {
+          "type": "boolean",
+          "default": false,
+          "description": "Whether this agent can create new documents without human approval."
+        },
+        "escalation_model": {
+          "type": "string",
+          "default": "gpt-4o",
+          "description": "Model used for A2A negotiations and escalations."
+        },
+        "personality": {
+          "type": "object",
+          "properties": {
+            "tone": {
+              "type": "string",
+              "enum": ["formal", "conversational", "technical", "empathetic"],
+              "default": "conversational"
+            },
+            "verbosity": {
+              "type": "string",
+              "enum": ["terse", "moderate", "detailed"],
+              "default": "moderate"
+            },
+            "initiative": {
+              "type": "string",
+              "enum": ["reactive", "balanced", "proactive"],
+              "default": "balanced"
+            }
+          }
+        }
+      },
+      "description": "Custom metadata. Maps to Azure Assistants 'metadata' (max 16 key-value pairs). Quorum-specific fields stored here."
+    },
+    "a2a": {
+      "type": "object",
+      "description": "Google A2A protocol Agent Card fields for cross-agent discovery.",
+      "properties": {
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["id", "name"],
+            "properties": {
+              "id": { "type": "string" },
+              "name": { "type": "string" },
+              "description": { "type": "string" }
+            }
+          }
+        },
+        "capabilities": {
+          "type": "object",
+          "properties": {
+            "streaming": { "type": "boolean", "default": false },
+            "pushNotifications": { "type": "boolean", "default": false }
+          }
+        }
+      }
+    },
+    "azure": {
+      "type": "object",
+      "properties": {
+        "assistant_id": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Azure AI Assistant ID. Populated on first deployment by deploy script."
+        },
+        "thread_id": {
+          "type": ["string", "null"],
+          "default": null,
+          "description": "Azure thread ID for current session. Populated at runtime."
+        }
+      }
+    }
+  }
+}

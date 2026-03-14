@@ -113,6 +113,7 @@ export default function EventPage() {
               return (
                 <button
                   key={quorum.id}
+                  data-testid={`quorum-card-${quorum.id}`}
                   onClick={() =>
                     router.push(
                       `/event/${slug}/quorum/${quorum.id}${station ? `?station=${station}` : ""}`
@@ -143,6 +144,7 @@ export default function EventPage() {
                       {roles.map((role) => (
                         <span
                           key={role.id}
+                          data-testid={`role-pill-${role.id}`}
                           className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium"
                           style={{
                             backgroundColor: `${role.color ?? "#6b7280"}18`,

@@ -22,16 +22,28 @@ from .database import get_supabase
 from .health import calculate_health_score
 from .llm import llm_provider
 from .models import (
+    A2ARequestCreate,
+    A2ARequestResponse,
+    AskRequest,
+    AskResponse,
     ContributeRequest,
     ContributeResponse,
     CreateEventRequest,
     CreateEventResponse,
     CreateQuorumRequest,
     CreateQuorumResponse,
+    DocumentCreateRequest,
+    DocumentResponse,
+    DocumentUpdateRequest,
+    DocumentUpdateResponse,
+    InsightResponse,
     QuorumStateResponse,
     ResolveRequest,
     ResolveResponse,
+    StationMessageResponse,
 )
+from .agent_engine import process_a2a_request, process_agent_turn
+from .document_engine import create_document, detect_oscillation, update_document
 from .ws_manager import manager
 
 logger = logging.getLogger(__name__)
@@ -227,7 +239,50 @@ async def contribute(quorum_id: str, body: ContributeRequest):
         "data": {"score": health_score, "metrics": metrics},
     })
 
-    return ContributeResponse(contribution_id=contribution_id, tier_processed=tier)
+    # --- Agent facilitator turn (optional — requires station_id) ---
+    facilitator_reply: str | None = None
+    facilitator_message_id: str | None = None
+    facilitator_tags: list[str] | None = None
+
+    if body.station_id:
+        try:
+            facilitator_reply, facilitator_message_id, facilitator_tags = (
+                await process_agent_turn(
+                    quorum_id=quorum_id,
+                    role_id=body.role_id,
+                    station_id=body.station_id,
+                    user_message=body.content,
+                    supabase_client=db,
+                    llm_provider=llm_provider,
+                )
+            )
+            # Broadcast facilitator reply over WebSocket so the frontend can
+            # update the conversation thread in real time.
+            await manager.broadcast(quorum_id, {
+                "type": "facilitator_reply",
+                "data": {
+                    "station_id": body.station_id,
+                    "role_id": body.role_id,
+                    "content": facilitator_reply,
+                    "tags": facilitator_tags or [],
+                    "message_id": facilitator_message_id,
+                },
+            })
+        except Exception:
+            logger.warning(
+                "contribute: agent turn failed for quorum=%s role=%s station=%s",
+                quorum_id, body.role_id, body.station_id, exc_info=True,
+            )
+            # Non-fatal — contribution is already stored; facilitator fields
+            # remain None.
+
+    return ContributeResponse(
+        contribution_id=contribution_id,
+        tier_processed=tier,
+        facilitator_reply=facilitator_reply,
+        facilitator_message_id=facilitator_message_id,
+        facilitator_tags=facilitator_tags,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -388,6 +443,329 @@ async def resolve_quorum(quorum_id: str, body: ResolveRequest):
 
     download_url = f"/artifacts/{artifact_id}/download"
     return ResolveResponse(artifact_id=artifact_id, download_url=download_url)
+
+
+# ---------------------------------------------------------------------------
+# GET /quorums/{quorum_id}/stations/{station_id}/messages
+# ---------------------------------------------------------------------------
+@router.get(
+    "/quorums/{quorum_id}/stations/{station_id}/messages",
+    response_model=list[StationMessageResponse],
+)
+async def get_station_messages(
+    quorum_id: str,
+    station_id: str,
+    limit: int = 50,
+    before: str | None = None,
+):
+    """Return conversation history for a given station (newest-first)."""
+    db = get_supabase()
+
+    query = (
+        db.table("station_messages")
+        .select("*")
+        .eq("quorum_id", quorum_id)
+        .eq("station_id", station_id)
+        .order("created_at", desc=False)
+        .limit(limit)
+    )
+    if before:
+        query = query.lt("created_at", before)
+
+    result = query.execute()
+    return result.data or []
+
+
+# ---------------------------------------------------------------------------
+# POST /quorums/{quorum_id}/stations/{station_id}/ask
+# ---------------------------------------------------------------------------
+@router.post(
+    "/quorums/{quorum_id}/stations/{station_id}/ask",
+    response_model=AskResponse,
+)
+async def ask_facilitator(quorum_id: str, station_id: str, body: AskRequest):
+    """Ask the AI facilitator a freeform question at a specific station.
+
+    This is a direct question-and-answer call — it fires the full agent turn
+    pipeline and returns the reply.  The exchange is persisted in
+    station_messages for context continuity.
+    """
+    db = get_supabase()
+
+    # Verify quorum exists
+    quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
+    if not quorum.data:
+        raise HTTPException(status_code=404, detail="Quorum not found")
+
+    try:
+        reply, message_id, tags = await process_agent_turn(
+            quorum_id=quorum_id,
+            role_id=body.role_id,
+            station_id=station_id,
+            user_message=body.content,
+            supabase_client=db,
+            llm_provider=llm_provider,
+        )
+    except Exception:
+        logger.error(
+            "ask_facilitator: agent turn failed quorum=%s station=%s",
+            quorum_id, station_id, exc_info=True,
+        )
+        raise HTTPException(status_code=500, detail="Agent turn failed")
+
+    # Broadcast so other listeners see the exchange
+    await manager.broadcast(quorum_id, {
+        "type": "facilitator_reply",
+        "data": {
+            "station_id": station_id,
+            "role_id": body.role_id,
+            "content": reply,
+            "tags": tags,
+            "message_id": message_id,
+        },
+    })
+
+    return AskResponse(reply=reply, message_id=message_id, tags=tags)
+
+
+# ---------------------------------------------------------------------------
+# GET /quorums/{quorum_id}/documents
+# ---------------------------------------------------------------------------
+@router.get(
+    "/quorums/{quorum_id}/documents",
+    response_model=list[DocumentResponse],
+)
+async def list_documents(
+    quorum_id: str,
+    status: str = "active",
+    doc_type: str | None = None,
+):
+    """List agent documents for a quorum."""
+    db = get_supabase()
+
+    query = (
+        db.table("agent_documents")
+        .select("*")
+        .eq("quorum_id", quorum_id)
+        .eq("status", status)
+        .order("updated_at", desc=True)
+    )
+    if doc_type:
+        query = query.eq("doc_type", doc_type)
+
+    result = query.execute()
+    return result.data or []
+
+
+# ---------------------------------------------------------------------------
+# POST /quorums/{quorum_id}/documents
+# ---------------------------------------------------------------------------
+@router.post(
+    "/quorums/{quorum_id}/documents",
+    response_model=DocumentResponse,
+    status_code=201,
+)
+async def create_document_endpoint(quorum_id: str, body: DocumentCreateRequest):
+    """Create a new agent document for a quorum."""
+    db = get_supabase()
+
+    quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
+    if not quorum.data:
+        raise HTTPException(status_code=404, detail="Quorum not found")
+
+    try:
+        doc = await create_document(
+            quorum_id=quorum_id,
+            doc_data=body.model_dump(),
+            supabase=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+    # Broadcast document creation
+    await manager.broadcast(quorum_id, {
+        "type": "document_update",
+        "data": {
+            "document_id": doc["id"],
+            "version": 1,
+            "change_type": "create",
+            "changed_by": body.created_by_role_id,
+        },
+    })
+
+    return doc
+
+
+# ---------------------------------------------------------------------------
+# PUT /quorums/{quorum_id}/documents/{doc_id}
+# ---------------------------------------------------------------------------
+@router.put(
+    "/quorums/{quorum_id}/documents/{doc_id}",
+    response_model=DocumentUpdateResponse,
+)
+async def update_document_endpoint(
+    quorum_id: str, doc_id: str, body: DocumentUpdateRequest
+):
+    """CAS-update an agent document.
+
+    Returns 409 when the expected_version does not match — the client should
+    re-fetch and retry.  When the update merges (i.e., another agent edited
+    concurrently), ``merged=True`` is returned with the current version.
+    """
+    db = get_supabase()
+
+    try:
+        result = await update_document(
+            doc_id=doc_id,
+            changes=body.model_dump(),
+            role_id=body.changed_by_role,
+            rationale=body.rationale,
+            supabase=db,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    if result["merged"]:
+        # Return 409 so clients know the write did not land
+        raise HTTPException(
+            status_code=409,
+            detail=f"Version conflict — current version is {result['version']}. Re-fetch and retry.",
+        )
+
+    # Broadcast document edit
+    await manager.broadcast(quorum_id, {
+        "type": "document_update",
+        "data": {
+            "document_id": doc_id,
+            "version": result["version"],
+            "change_type": "edit",
+            "changed_by": body.changed_by_role,
+        },
+    })
+
+    return DocumentUpdateResponse(version=result["version"], merged=False)
+
+
+# ---------------------------------------------------------------------------
+# GET /quorums/{quorum_id}/insights
+# ---------------------------------------------------------------------------
+@router.get(
+    "/quorums/{quorum_id}/insights",
+    response_model=list[InsightResponse],
+)
+async def list_insights(
+    quorum_id: str,
+    role_id: str | None = None,
+    insight_type: str | None = None,
+    limit: int = 20,
+):
+    """Return cross-station agent insights for a quorum."""
+    db = get_supabase()
+
+    query = (
+        db.table("agent_insights")
+        .select("*")
+        .eq("quorum_id", quorum_id)
+        .order("created_at", desc=True)
+        .limit(limit)
+    )
+    if role_id:
+        query = query.eq("source_role_id", role_id)
+    if insight_type:
+        query = query.eq("insight_type", insight_type)
+
+    result = query.execute()
+    return result.data or []
+
+
+# ---------------------------------------------------------------------------
+# POST /quorums/{quorum_id}/a2a/request
+# ---------------------------------------------------------------------------
+@router.post(
+    "/quorums/{quorum_id}/a2a/request",
+    response_model=A2ARequestResponse,
+    status_code=201,
+)
+async def create_a2a_request(quorum_id: str, body: A2ARequestCreate):
+    """Create an agent-to-agent request and wake the target agent.
+
+    The target agent automatically processes the request and its response
+    is included in the return payload as ``target_response``.
+    """
+    db = get_supabase()
+
+    # Verify quorum exists
+    quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
+    if not quorum.data:
+        raise HTTPException(status_code=404, detail="Quorum not found")
+
+    # Verify both roles exist
+    for label, rid in [("from_role_id", body.from_role_id), ("to_role_id", body.to_role_id)]:
+        role = db.table("roles").select("id").eq("id", rid).single().execute()
+        if not role.data:
+            raise HTTPException(status_code=404, detail=f"Role not found: {label}={rid}")
+
+    request_id = str(uuid.uuid4())
+    now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
+    row = {
+        "id": request_id,
+        "quorum_id": quorum_id,
+        "from_role_id": body.from_role_id,
+        "to_role_id": body.to_role_id,
+        "request_type": body.request_type.value,
+        "content": body.content,
+        "tags": body.tags,
+        "document_id": body.document_id,
+        "status": "pending",
+        "priority": body.priority,
+        "created_at": now,
+    }
+    db.table("agent_requests").insert(row).execute()
+
+    # Wake the target agent immediately
+    target_response: str | None = None
+    try:
+        target_response = await process_a2a_request(
+            request_id=request_id,
+            supabase_client=db,
+            llm_provider=llm_provider,
+        )
+        # Broadcast A2A reply
+        await manager.broadcast(quorum_id, {
+            "type": "agent_request",
+            "data": {
+                "request_id": request_id,
+                "from_role_id": body.from_role_id,
+                "to_role_id": body.to_role_id,
+                "request_type": body.request_type.value,
+                "response": target_response,
+            },
+        })
+    except Exception:
+        logger.warning(
+            "create_a2a_request: agent wake failed for request %s",
+            request_id, exc_info=True,
+        )
+
+    return A2ARequestResponse(
+        id=request_id,
+        quorum_id=quorum_id,
+        from_role_id=body.from_role_id,
+        to_role_id=body.to_role_id,
+        request_type=body.request_type,
+        content=body.content,
+        tags=body.tags,
+        document_id=body.document_id,
+        status="acknowledged" if target_response else "pending",
+        response=target_response,
+        priority=body.priority,
+        created_at=now,
+        target_response=target_response,
+    )
 
 
 # ---------------------------------------------------------------------------

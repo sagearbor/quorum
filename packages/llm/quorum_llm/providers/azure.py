@@ -27,6 +27,9 @@ from quorum_llm.interface import LLMProvider
 from quorum_llm.models import BudgetExhaustedError, LLMTier
 from quorum_llm.tier1 import extract_keywords
 
+# Tiers that use the T2 deployment (gpt-4o-mini)
+_T2_TIERS = frozenset({LLMTier.CONFLICT, LLMTier.AGENT_CHAT})
+
 logger = logging.getLogger(__name__)
 
 # Azure OpenAI API version
@@ -88,9 +91,16 @@ class AzureOpenAIProvider(LLMProvider):
             )
 
     def _deployment_for_tier(self, tier: LLMTier) -> str:
-        if tier == LLMTier.CONFLICT:
+        """Map a tier to the appropriate Azure deployment name.
+
+        AGENT_CHAT uses the same gpt-4o-mini deployment as CONFLICT but is
+        tracked separately for cost accounting purposes.
+        AGENT_REASON uses the same gpt-4o deployment as SYNTHESIS but is
+        reserved for escalation / deep reasoning turns only.
+        """
+        if tier in _T2_TIERS:
             return self._deployment_t2
-        if tier == LLMTier.SYNTHESIS:
+        if tier in (LLMTier.SYNTHESIS, LLMTier.AGENT_REASON):
             return self._deployment_t3
         raise ValueError(f"Tier {tier} does not use LLM — use tier1 module directly")
 
@@ -105,6 +115,51 @@ class AzureOpenAIProvider(LLMProvider):
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3 if tier == LLMTier.CONFLICT else 0.7,
                 max_tokens=2048 if tier == LLMTier.CONFLICT else 4096,
+            )
+            return response.choices[0].message.content or ""
+        except RateLimitError as exc:
+            raise BudgetExhaustedError(
+                provider="azure",
+                tier=tier,
+                detail=str(exc),
+            ) from exc
+
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        tier: LLMTier,
+        temperature: float = 0.4,
+        max_tokens: int = 1024,
+    ) -> str:
+        """Chat completion using the native Azure OpenAI messages API.
+
+        Passes the full messages array directly to the API rather than
+        flattening to a string.  This gives the model proper role-aware
+        context and enables Azure OpenAI prompt caching on stable prefixes
+        (system message + slowly-changing context block), reducing per-turn
+        cost by ~50% after the first call in a session.
+
+        The KEYWORD tier is not applicable for multi-turn chat; callers should
+        use ``complete()`` or ``extract_keywords()`` from tier1 directly.
+        """
+        if tier == LLMTier.KEYWORD:
+            # Keyword extraction is deterministic and does not use the messages
+            # format — flatten and delegate so callers can use chat() uniformly.
+            flat = "\n".join(m["content"] for m in messages)
+            return ", ".join(extract_keywords(flat))
+
+        deployment = self._deployment_for_tier(tier)
+        # Default temperature per tier: lower for analytical turns (conflict,
+        # agent_chat), higher for synthesis/reasoning turns.
+        resolved_temperature = temperature
+        resolved_max_tokens = max_tokens
+
+        try:
+            response = await self._client.chat.completions.create(
+                model=deployment,
+                messages=messages,  # type: ignore[arg-type]
+                temperature=resolved_temperature,
+                max_tokens=resolved_max_tokens,
             )
             return response.choices[0].message.content or ""
         except RateLimitError as exc:

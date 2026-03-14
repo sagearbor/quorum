@@ -106,4 +106,30 @@ export const handlers = [
       download_url: "#",
     });
   }),
+
+  // GET /quorums/:quorumId/stations/:stationId/messages
+  http.get(
+    `${API_BASE}/quorums/:quorumId/stations/:stationId/messages`,
+    () => {
+      return HttpResponse.json({ messages: [] });
+    }
+  ),
+
+  // POST /quorums/:quorumId/stations/:stationId/ask
+  http.post(
+    `${API_BASE}/quorums/:quorumId/stations/:stationId/ask`,
+    async ({ request }) => {
+      const body = (await request.json()) as { content: string };
+      return HttpResponse.json({
+        reply: `Facilitator response to: "${body.content}"`,
+        message_id: `msg-${Date.now()}`,
+        tags: ["test"],
+      });
+    }
+  ),
+
+  // GET /quorums/:quorumId/documents
+  http.get(`${API_BASE}/quorums/:quorumId/documents`, () => {
+    return HttpResponse.json({ documents: [] });
+  }),
 ];

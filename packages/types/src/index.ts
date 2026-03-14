@@ -21,6 +21,14 @@ export type {
   ArtifactSection,
   ArtifactVersion,
   ArtifactDiff,
+  // Agent system
+  StationMessage,
+  DocFormat,
+  DocStatus,
+  AgentDocument,
+  DocumentChange,
+  AgentInsight,
+  AgentRequest,
 } from "./database";
 
 export type {
@@ -44,6 +52,12 @@ export type {
   WsHealthUpdateEvent,
   WsArtifactUpdateEvent,
   WsRoleJoinEvent,
+  // Agent system WS events
+  WsFacilitatorReplyEvent,
+  WsAgentInsightEvent,
+  WsAgentRequestEvent,
+  WsDocumentUpdateEvent,
+  WsOscillationEvent,
   WebSocketEvent,
 } from "./websocket";
 

@@ -8,6 +8,54 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 
+# --- Agent System Enums ---
+
+
+class MessageRole(str, enum.Enum):
+    user = "user"
+    assistant = "assistant"
+    system = "system"
+
+
+class InsightType(str, enum.Enum):
+    summary = "summary"
+    conflict = "conflict"
+    suggestion = "suggestion"
+    question = "question"
+    decision = "decision"
+    escalation = "escalation"
+
+
+class A2AStatus(str, enum.Enum):
+    pending = "pending"
+    acknowledged = "acknowledged"
+    processing = "processing"
+    resolved = "resolved"
+    expired = "expired"
+
+
+class A2ARequestType(str, enum.Enum):
+    conflict_flag = "conflict_flag"
+    input_request = "input_request"
+    review_request = "review_request"
+    doc_edit_notify = "doc_edit_notify"
+    escalation = "escalation"
+    negotiation = "negotiation"
+
+
+class DocStatus(str, enum.Enum):
+    active = "active"
+    superseded = "superseded"
+    canceled = "canceled"
+
+
+class DocFormat(str, enum.Enum):
+    json = "json"
+    yaml = "yaml"
+    csv = "csv"
+    markdown = "markdown"
+
+
 # --- Enums ---
 
 
@@ -98,11 +146,20 @@ class ContributeRequest(BaseModel):
     user_token: str
     content: str
     structured_fields: dict[str, str] = Field(default_factory=dict)
+    # Optional: station_id ties the contribution to a specific physical station.
+    # When provided, the agent engine fires a facilitator turn for that station.
+    station_id: str | None = None
 
 
 class ContributeResponse(BaseModel):
     contribution_id: str
     tier_processed: int
+    # Agent facilitator reply — present when station_id was provided and the
+    # agent engine ran successfully.  None when no station context or on error.
+    facilitator_reply: str | None = None
+    facilitator_message_id: str | None = None
+    facilitator_tags: list[str] | None = None
+    a2a_requests_triggered: int = 0
 
 
 # GET /quorums/{quorum_id}/state
@@ -158,3 +215,116 @@ class WSArtifactUpdateMessage(BaseModel):
 class WSRoleJoinMessage(BaseModel):
     type: str = "role_join"
     data: dict[str, Any]
+
+
+# ---------------------------------------------------------------------------
+# Agent System Models
+# ---------------------------------------------------------------------------
+
+
+# GET /quorums/{id}/stations/{station_id}/messages
+class StationMessageResponse(BaseModel):
+    id: str
+    quorum_id: str
+    role_id: str
+    station_id: str
+    role: MessageRole
+    content: str
+    tags: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] | None = None
+    created_at: str
+
+
+# POST /quorums/{id}/stations/{station_id}/ask
+class AskRequest(BaseModel):
+    role_id: str
+    content: str
+
+
+class AskResponse(BaseModel):
+    reply: str
+    message_id: str
+    tags: list[str] = Field(default_factory=list)
+
+
+# GET /quorums/{id}/documents
+# POST /quorums/{id}/documents
+class DocumentCreateRequest(BaseModel):
+    title: str
+    doc_type: str
+    format: DocFormat = DocFormat.json
+    content: dict[str, Any]
+    tags: list[str] = Field(default_factory=list)
+    created_by_role_id: str | None = None
+
+
+class DocumentResponse(BaseModel):
+    id: str
+    quorum_id: str
+    title: str
+    doc_type: str
+    format: DocFormat
+    content: dict[str, Any]
+    status: DocStatus
+    version: int
+    tags: list[str] = Field(default_factory=list)
+    created_by_role_id: str | None = None
+    created_at: str
+    updated_at: str
+
+
+# PUT /documents/{doc_id}  (CAS update)
+class DocumentUpdateRequest(BaseModel):
+    content: dict[str, Any]
+    expected_version: int
+    changed_by_role: str
+    rationale: str
+
+
+class DocumentUpdateResponse(BaseModel):
+    version: int
+    merged: bool = False
+
+
+# GET /quorums/{id}/insights
+class InsightResponse(BaseModel):
+    id: str
+    quorum_id: str
+    source_role_id: str
+    insight_type: InsightType
+    content: str
+    tags: list[str] = Field(default_factory=list)
+    document_id: str | None = None
+    self_relevance: float = 0.5
+    version: int = 1
+    created_at: str
+
+
+# POST /quorums/{id}/a2a/request
+class A2ARequestCreate(BaseModel):
+    from_role_id: str
+    to_role_id: str
+    request_type: A2ARequestType
+    content: str
+    tags: list[str] = Field(default_factory=list)
+    document_id: str | None = None
+    priority: int = 0
+
+
+class A2ARequestResponse(BaseModel):
+    id: str
+    quorum_id: str
+    from_role_id: str
+    to_role_id: str
+    request_type: A2ARequestType
+    content: str
+    tags: list[str] = Field(default_factory=list)
+    document_id: str | None = None
+    status: A2AStatus
+    response: str | None = None
+    response_tags: list[str] = Field(default_factory=list)
+    priority: int = 0
+    created_at: str
+    resolved_at: str | None = None
+    # Present when the target agent auto-responded during request creation
+    target_response: str | None = None

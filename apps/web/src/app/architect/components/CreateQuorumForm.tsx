@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useArchitectStore } from "@/store/architect";
 import { RoleBuilder } from "./RoleBuilder";
 import { AuthorityStack } from "./AuthorityStack";
@@ -7,10 +8,12 @@ import { DashboardSelector } from "./DashboardSelector";
 import type { Quorum, Role } from "@quorum/types";
 
 export function CreateQuorumForm() {
+  const router = useRouter();
   const {
     quorumDraft,
     setQuorumDraft,
     eventId,
+    eventDraft,
     addCreatedQuorum,
     resetQuorumDraft,
     setStep,
@@ -65,6 +68,12 @@ export function CreateQuorumForm() {
 
     addCreatedQuorum(quorum);
     resetQuorumDraft();
+
+    // Navigate to the newly created quorum page
+    const slug = eventDraft.slug;
+    if (slug && data.id) {
+      router.push(`/event/${slug}/quorum/${data.id}`);
+    }
   }
 
   const isValid =

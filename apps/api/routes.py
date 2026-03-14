@@ -145,6 +145,36 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
         db.table("roles").insert(role_row).execute()
 
     share_url = f"/event/{event.data['slug']}/quorum/{quorum_id}"
+
+    # Auto-seed agent documents (non-fatal — quorum is already created)
+    try:
+        seed_path = (
+            pathlib.Path(__file__).resolve().parent.parent.parent
+            / "seed"
+            / "clinical-trial-documents.json"
+        )
+        if seed_path.exists():
+            with seed_path.open() as fh:
+                seed_data = json.load(fh)
+            for doc in seed_data.get("documents", []):
+                doc_id = str(uuid.uuid4())
+                doc_row = {
+                    "id": doc_id,
+                    "quorum_id": quorum_id,
+                    "title": doc["title"],
+                    "doc_type": doc["doc_type"],
+                    "format": "json",
+                    "content": doc["content"],
+                    "status": "active",
+                    "version": 1,
+                    "tags": doc.get("tags", []),
+                    "created_by_role_id": None,
+                }
+                db.table("agent_documents").insert(doc_row).execute()
+            logger.info("Auto-seeded %d documents for quorum %s", len(seed_data.get("documents", [])), quorum_id)
+    except Exception:
+        logger.warning("Auto-seed documents failed for quorum %s (non-fatal)", quorum_id, exc_info=True)
+
     return CreateQuorumResponse(id=quorum_id, status="open", share_url=share_url)
 
 

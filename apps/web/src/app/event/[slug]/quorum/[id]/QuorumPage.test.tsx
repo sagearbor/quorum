@@ -50,7 +50,7 @@ const mockConversationState: {
   loading: false,
   sending: false,
   facilitatorReply: null,
-  sendMessage: vi.fn(),
+  sendMessage: vi.fn().mockResolvedValue(undefined),
   ingestFacilitatorReply: mockConversationIngestReply,
   clearFacilitatorReply: vi.fn(),
 };
@@ -322,6 +322,16 @@ describe("QuorumPage", () => {
     render(<QuorumPage />);
     await waitFor(() => {
       expect(screen.getByText("Station 1")).toBeInTheDocument();
+    });
+  });
+
+  it("shows dashboard link in header", async () => {
+    render(<QuorumPage />);
+    await waitFor(() => {
+      const dashLink = screen.getByTestId("dashboard-link");
+      expect(dashLink).toBeInTheDocument();
+      expect(dashLink).toHaveTextContent("Dashboard");
+      expect(dashLink).toHaveAttribute("href", "/display/duke-expo-2026");
     });
   });
 

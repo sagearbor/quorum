@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
@@ -171,6 +171,36 @@ export default function QuorumPage() {
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
 
+  // Track whether the auto-greet has been sent for this station
+  const greetingSentRef = useRef(false);
+
+  // Auto-greet: when the page loads with a role selected (or when the user
+  // first selects a role) and the conversation is empty, send a greeting.
+  useEffect(() => {
+    if (
+      !currentRole ||
+      greetingSentRef.current ||
+      conversation.loading ||
+      conversation.messages.length > 0 ||
+      loading
+    ) {
+      return;
+    }
+
+    greetingSentRef.current = true;
+
+    const greetingPrompt = `I just arrived at this station as ${currentRole.name}. The quorum topic is: "${quorumTitle}". ${quorumDescription ? `Description: ${quorumDescription}. ` : ""}Please introduce the problem we're working on and what you'd like me to focus on.`;
+
+    const result = conversation.sendMessage(greetingPrompt);
+    // Guard: sendMessage may return void in test mocks
+    if (result && typeof result.catch === "function") {
+      result.catch(() => {
+        // Non-fatal — greeting is a nice-to-have
+        greetingSentRef.current = false;
+      });
+    }
+  }, [currentRole, conversation.loading, conversation.messages.length, loading, quorumTitle, quorumDescription]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // When there is a live facilitator reply, derive synthesisText for the avatar
   const synthesisText = conversation.facilitatorReply?.reply ?? undefined;
 
@@ -334,9 +364,33 @@ export default function QuorumPage() {
       {/* Right panel: Quorum interaction */}
       <div className="flex-1 p-4 sm:p-6 max-w-2xl flex flex-col min-h-screen lg:min-h-0">
         <header className="mb-4">
-          <h1 className="text-xl font-bold">
-            {quorumTitle || `Quorum ${quorumId}`}
-          </h1>
+          <div className="flex items-start justify-between">
+            <h1 className="text-xl font-bold">
+              {quorumTitle || `Quorum ${quorumId}`}
+            </h1>
+            <Link
+              href={`/display/${slug}`}
+              data-testid="dashboard-link"
+              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 text-indigo-600 px-3 py-1.5 text-xs font-medium hover:bg-indigo-100 transition-colors flex-shrink-0"
+            >
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <rect x="3" y="3" width="7" height="7" />
+                <rect x="14" y="3" width="7" height="7" />
+                <rect x="3" y="14" width="7" height="7" />
+                <rect x="14" y="14" width="7" height="7" />
+              </svg>
+              Dashboard
+            </Link>
+          </div>
           {quorumDescription && (
             <p className="text-sm text-gray-500 mt-1">{quorumDescription}</p>
           )}

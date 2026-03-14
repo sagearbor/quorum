@@ -48,12 +48,23 @@ def _install_quorum_llm_stub() -> None:
     models_stub.LLMTier = LLMTier
     sys.modules["quorum_llm.models"] = models_stub
 
-    for sub in ("interface", "factory", "tier1", "providers.mock"):
+    for sub in ("interface", "factory", "tier1", "affinity", "providers.mock"):
         full = f"quorum_llm.{sub}"
         if full not in sys.modules:
             stub = types.ModuleType(full)
             if sub == "tier1":
                 stub.extract_keywords = lambda t, **kw: t.lower().split()[:5]
+            elif sub == "affinity":
+                stub.compute_tag_affinity = lambda a, b: (
+                    len(set(a) & set(b)) / max(len(set(a) | set(b)), 1)
+                )
+                stub.extract_tags_from_text = (
+                    lambda text, existing_vocabulary=None: text.lower().split()[:5]
+                )
+                stub.find_relevant_agents = lambda tags, agents, threshold=0.2: agents
+                stub.build_affinity_graph = lambda agents: {}
+                stub.canonicalize_tag = lambda t: t.lower().replace(" ", "_")[:30]
+                stub.merge_tag_vocabularies = lambda ex, new, max_size=500: ex | set(new)
             sys.modules[full] = stub
 
     providers_pkg = types.ModuleType("quorum_llm.providers")
@@ -86,6 +97,24 @@ def _install_agents_stub() -> None:
 
 
 _install_agents_stub()
+
+
+def _install_tag_vocabulary_stub() -> None:
+    """Install a minimal apps.api.tag_vocabulary stub."""
+    for mod_name in ("apps", "apps.api", "apps.api.tag_vocabulary"):
+        if mod_name not in sys.modules:
+            sys.modules[mod_name] = types.ModuleType(mod_name)
+
+    stub = types.ModuleType("apps.api.tag_vocabulary")
+    stub.get_vocabulary = lambda quorum_id: set()
+    stub.update_vocabulary = lambda quorum_id, tags: 0
+    stub.seed_vocabulary = lambda quorum_id, tags: None
+    sys.modules["apps.api.tag_vocabulary"] = stub
+    # Also make it accessible as attribute on apps.api
+    setattr(sys.modules["apps.api"], "tag_vocabulary", stub)
+
+
+_install_tag_vocabulary_stub()
 
 
 # ---------------------------------------------------------------------------

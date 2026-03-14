@@ -287,6 +287,33 @@ async def contribute(quorum_id: str, body: ContributeRequest):
 
 
 # ---------------------------------------------------------------------------
+# GET /quorums/{quorum_id}/roles
+# ---------------------------------------------------------------------------
+@router.get("/quorums/{quorum_id}/roles")
+async def list_roles(quorum_id: str):
+    """Return all roles for a quorum.
+
+    Used by clients (including the E2E test script) that need to discover
+    role IDs after quorum creation — CreateQuorumResponse does not include
+    them since role creation is a side-effect of POST /events/{id}/quorums.
+    """
+    db = get_supabase()
+
+    quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
+    if not quorum.data:
+        raise HTTPException(status_code=404, detail="Quorum not found")
+
+    roles = (
+        db.table("roles")
+        .select("id, name, authority_rank, capacity")
+        .eq("quorum_id", quorum_id)
+        .order("authority_rank", desc=True)
+        .execute()
+    )
+    return roles.data or []
+
+
+# ---------------------------------------------------------------------------
 # GET /quorums/{quorum_id}/state
 # ---------------------------------------------------------------------------
 @router.get("/quorums/{quorum_id}/state", response_model=QuorumStateResponse)
@@ -541,8 +568,20 @@ async def list_documents(
     status: str = "active",
     doc_type: str | None = None,
 ):
-    """List agent documents for a quorum."""
+    """List agent documents for a quorum.
+
+    status must be one of: active, superseded, canceled.
+    Returns 400 for an invalid status value (avoids passing arbitrary strings
+    to Supabase which may cause DB-level enum errors).
+    """
     db = get_supabase()
+
+    _VALID_DOC_STATUSES = {"active", "superseded", "canceled"}
+    if status not in _VALID_DOC_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status '{status}'. Must be one of: {sorted(_VALID_DOC_STATUSES)}",
+        )
 
     query = (
         db.table("agent_documents")
@@ -617,6 +656,23 @@ async def update_document_endpoint(
     """
     db = get_supabase()
 
+    # Verify the document belongs to this quorum before attempting any write.
+    # This prevents cross-quorum document mutations via a crafted quorum_id.
+    doc_check = (
+        db.table("agent_documents")
+        .select("id, quorum_id")
+        .eq("id", doc_id)
+        .single()
+        .execute()
+    )
+    if not doc_check.data:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc_check.data["quorum_id"] != quorum_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Document does not belong to this quorum",
+        )
+
     try:
         result = await update_document(
             doc_id=doc_id,
@@ -664,8 +720,22 @@ async def list_insights(
     insight_type: str | None = None,
     limit: int = 20,
 ):
-    """Return cross-station agent insights for a quorum."""
+    """Return cross-station agent insights for a quorum.
+
+    insight_type, when provided, must be a valid InsightType enum value.
+    limit is capped at 100 to prevent runaway queries.
+    """
     db = get_supabase()
+
+    _VALID_INSIGHT_TYPES = {"summary", "conflict", "suggestion", "question", "decision", "escalation"}
+    if insight_type is not None and insight_type not in _VALID_INSIGHT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid insight_type '{insight_type}'. Must be one of: {sorted(_VALID_INSIGHT_TYPES)}",
+        )
+
+    # Cap limit to prevent accidentally fetching unbounded rows
+    limit = min(limit, 100)
 
     query = (
         db.table("agent_insights")

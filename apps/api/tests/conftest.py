@@ -26,7 +26,10 @@ def _install_quorum_llm_mock() -> None:
     class LLMTier(IntEnum):
         KEYWORD = 1
         CONFLICT = 2
+        AGENT_CHAT = 21
+        AGENT_RESPOND = 22
         SYNTHESIS = 3
+        AGENT_REASON = 31
 
     class Role:
         def __init__(self, id, name, authority_rank, capacity="unlimited"):

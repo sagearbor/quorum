@@ -1,0 +1,1 @@
+- [project_agent_stations.md](./project_agent_stations.md) — Next session: design per-station AI agents with memory, context, shared state

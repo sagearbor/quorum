@@ -25,6 +25,7 @@ vi.mock("../useAvatarController", () => ({
   useAvatarController: () => ({
     direction: "center",
     yaw: 0,
+    pitch: 0,
     emotion: "neutral",
     detectedEmotion: "neutral",
     speaking: false,

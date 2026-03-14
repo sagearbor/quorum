@@ -1,7 +1,9 @@
 /**
  * AvatarPanel — Facilitator avatar panel with 3D GLB avatar.
- * Uses IdleScene for rendering (Three.js with SVG stick figure fallback).
+ * Uses IdleScene for rendering (Three.js).
  * VisionTracker + EmotionDetector drive gaze and expressions via useAvatarController.
+ * TTS is provider-driven (ElevenLabs / Simli) — no provider is wired by default until
+ * a real LLM conversation channel is connected.
  */
 
 "use client";
@@ -33,8 +35,6 @@ export function AvatarPanel({
   roleName,
 }: AvatarPanelProps) {
   const idleSceneRef = useRef<IdleSceneHandle>(null);
-  // Hidden container — useAvatarController needs a ref but we don't want MockProvider SVG visible
-  const hiddenRef = useRef<HTMLDivElement>(null);
 
   // Get live quorum data (unless overridden for testing)
   const liveState = useQuorumLive(quorumId);
@@ -53,30 +53,25 @@ export function AvatarPanel({
     return resolveGlbUrl(archetype);
   }, [effectiveRoleName]);
 
-  // Get latest synthesis text from recent contributions
-  const latestSynthesis =
-    staticSynthesisText ??
-    (liveState.recentContributions.length > 0
-      ? liveState.recentContributions[liveState.recentContributions.length - 1].content
-      : undefined);
+  // Synthesis text: only speak LLM-generated output, never parrot user contributions.
+  // TODO: wire to Tier 3 artifact synthesis or a dedicated facilitator response channel
+  const latestSynthesis = staticSynthesisText ?? undefined;
 
-  // useAvatarController manages state (speaking, emotion, direction, gaze)
-  // MockProvider renders to hidden ref — we only use it for audio/state, not visuals
+  // useAvatarController manages gaze (VisionTracker + StereoAnalyzer), emotion
+  // (EmotionDetector + health score), and optional TTS when a provider is configured.
   const avatarState = useAvatarController({
-    providerType: "mock",
-    containerRef: hiddenRef as React.RefObject<HTMLElement | null>,
     healthScore,
     resolved,
     enableMic: typeof window !== "undefined",
     synthesisText: latestSynthesis,
   });
 
-  // Connect gaze yaw from controller to IdleScene
+  // Connect gaze (yaw + pitch) from controller to IdleScene
   useEffect(() => {
     if (idleSceneRef.current) {
-      idleSceneRef.current.setGaze(avatarState.yaw);
+      idleSceneRef.current.setGaze(avatarState.yaw, avatarState.pitch);
     }
-  }, [avatarState.yaw]);
+  }, [avatarState.yaw, avatarState.pitch]);
 
   // Connect detected emotion from controller to IdleScene
   useEffect(() => {
@@ -90,7 +85,7 @@ export function AvatarPanel({
       className="w-full h-full flex flex-col items-center justify-center relative bg-black/20 rounded-xl"
       data-testid="avatar-panel"
     >
-      {/* 3D avatar — IdleScene handles WebGL with SVG stick figure fallback */}
+      {/* 3D avatar — IdleScene handles WebGL */}
       <div
         className="flex-1 flex items-center justify-center min-h-0 w-full"
         data-testid="avatar-container"
@@ -102,9 +97,6 @@ export function AvatarPanel({
           height="100%"
         />
       </div>
-
-      {/* Hidden: MockProvider renders here for audio/state management only */}
-      <div ref={hiddenRef} className="hidden" />
 
       {/* Status bar */}
       <div className="w-full px-4 pb-3 flex items-center justify-between">

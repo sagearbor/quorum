@@ -146,11 +146,16 @@ export default function QuorumPage() {
   const handleVoiceTranscript = useCallback(
     (text: string) => {
       if (!currentRole) return;
-      const firstEmptyField = currentRole.prompt_template.find(
-        (f) => !fieldValues[f.field_name]
-      );
-      if (firstEmptyField) {
-        handleFieldChange(firstEmptyField.field_name, text);
+      if (currentRole.prompt_template.length > 0) {
+        const firstEmptyField = currentRole.prompt_template.find(
+          (f) => !fieldValues[f.field_name]
+        );
+        if (firstEmptyField) {
+          handleFieldChange(firstEmptyField.field_name, text);
+        }
+      } else {
+        // Generic contribution field
+        handleFieldChange("contribution", text);
       }
     },
     [currentRole, fieldValues]
@@ -296,7 +301,7 @@ export default function QuorumPage() {
         )}
 
         {/* Contribution form */}
-        {currentRole && currentRole.prompt_template.length > 0 && (
+        {currentRole && (
           <section className="mb-6">
             <form onSubmit={handleSubmit} data-testid="contribution-form">
               <div className="flex items-center justify-between mb-3">
@@ -310,27 +315,49 @@ export default function QuorumPage() {
               </div>
 
               <div className="space-y-4">
-                {currentRole.prompt_template.map((field) => (
-                  <div key={field.field_name}>
+                {currentRole.prompt_template.length > 0 ? (
+                  currentRole.prompt_template.map((field) => (
+                    <div key={field.field_name}>
+                      <label
+                        htmlFor={field.field_name}
+                        className="block text-sm font-medium text-gray-700 mb-1"
+                      >
+                        {field.prompt}
+                      </label>
+                      <textarea
+                        id={field.field_name}
+                        data-testid={`field-${field.field_name}`}
+                        value={fieldValues[field.field_name] ?? ""}
+                        onChange={(e) =>
+                          handleFieldChange(field.field_name, e.target.value)
+                        }
+                        rows={3}
+                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:outline-none resize-none"
+                        placeholder={`Enter your ${field.field_name.replace(/_/g, " ")}...`}
+                      />
+                    </div>
+                  ))
+                ) : (
+                  <div>
                     <label
-                      htmlFor={field.field_name}
+                      htmlFor="contribution"
                       className="block text-sm font-medium text-gray-700 mb-1"
                     >
-                      {field.prompt}
+                      Your contribution
                     </label>
                     <textarea
-                      id={field.field_name}
-                      data-testid={`field-${field.field_name}`}
-                      value={fieldValues[field.field_name] ?? ""}
+                      id="contribution"
+                      data-testid="field-contribution"
+                      value={fieldValues["contribution"] ?? ""}
                       onChange={(e) =>
-                        handleFieldChange(field.field_name, e.target.value)
+                        handleFieldChange("contribution", e.target.value)
                       }
-                      rows={3}
+                      rows={4}
                       className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:outline-none resize-none"
-                      placeholder={`Enter your ${field.field_name.replace(/_/g, " ")}...`}
+                      placeholder={`Share your perspective as ${currentRole.name}...`}
                     />
                   </div>
-                ))}
+                )}
               </div>
 
               <div className="mt-4 flex items-center gap-3">

@@ -4,7 +4,6 @@
  * via useImperativeHandle.
  *
  * Idle-alive behaviors: random glances every 8-15s, look-down, blink.
- * AVATAR_MOCK=true: renders an animated SVG stick figure with the same interface.
  */
 
 "use client";
@@ -15,240 +14,40 @@ import React, {
   useImperativeHandle,
   forwardRef,
   useState,
-  useCallback,
-  useMemo,
 } from "react";
 import type { DetectedEmotion } from "./EmotionDetector";
 
 // ─── Public handle interface ────────────────────────────────────────
 
 export interface IdleSceneHandle {
-  setGaze: (yaw: number) => void;
+  setGaze: (yaw: number, pitch?: number) => void;
   setEmotion: (emotion: DetectedEmotion) => void;
 }
 
 export interface IdleSceneProps {
   /** URL to the GLB model file */
   glbUrl?: string;
-  /** Force mock mode (SVG stick figure). Defaults to AVATAR_MOCK env. */
-  mock?: boolean;
   /** Width of canvas (default "100%") */
   width?: string | number;
   /** Height of canvas (default "100%") */
   height?: string | number;
 }
 
-// ─── Mock SVG Stick Figure ──────────────────────────────────────────
-
-const EMOTION_COLORS: Record<DetectedEmotion, string> = {
-  neutral: "#94a3b8",
-  happy: "#4ade80",
-  surprised: "#facc15",
-  concerned: "#f87171",
-  focused: "#60a5fa",
-};
-
-const MockIdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
-  function MockIdleScene(props, ref) {
-    const [yaw, setYaw] = useState(0);
-    const [emotion, setEmotion] = useState<DetectedEmotion>("neutral");
-    const [blinkOpen, setBlinkOpen] = useState(true);
-    const [breathPhase, setBreathPhase] = useState(0);
-
-    useImperativeHandle(ref, () => ({
-      setGaze: (y: number) => setYaw(Math.max(-1, Math.min(1, y))),
-      setEmotion: (e: DetectedEmotion) => setEmotion(e),
-    }));
-
-    // Blink every 3-6s
-    useEffect(() => {
-      const scheduleBlink = () => {
-        const delay = 3000 + Math.random() * 3000;
-        return setTimeout(() => {
-          setBlinkOpen(false);
-          setTimeout(() => setBlinkOpen(true), 150);
-          timer = scheduleBlink();
-        }, delay);
-      };
-      let timer = scheduleBlink();
-      return () => clearTimeout(timer);
-    }, []);
-
-    // Breathing cycle
-    useEffect(() => {
-      let raf: number;
-      const start = Date.now();
-      const animate = () => {
-        const t = ((Date.now() - start) / 1000) % (Math.PI * 2);
-        setBreathPhase(Math.sin(t) * 0.5 + 0.5);
-        raf = requestAnimationFrame(animate);
-      };
-      raf = requestAnimationFrame(animate);
-      return () => cancelAnimationFrame(raf);
-    }, []);
-
-    const headX = yaw * 15;
-    const eyeOffsetX = yaw * 3;
-    const bodyScale = 1 + breathPhase * 0.02;
-    const color = EMOTION_COLORS[emotion];
-
-    // Mouth shape per emotion
-    const mouthPath = useMemo(() => {
-      switch (emotion) {
-        case "happy":
-          return "M -4 2 Q 0 6 4 2";
-        case "surprised":
-          return "M -3 3 Q 0 0 3 3 Q 0 6 -3 3";
-        case "concerned":
-          return "M -4 4 Q 0 1 4 4";
-        case "focused":
-          return "M -3 3 L 3 3";
-        default:
-          return "M -3 3 L 3 3";
-      }
-    }, [emotion]);
-
-    return (
-      <div
-        data-testid="idle-scene-mock"
-        style={{
-          width: props.width ?? "100%",
-          height: props.height ?? "100%",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: "#0f172a",
-        }}
-      >
-        <svg viewBox="-30 -10 60 80" width="200" height="300">
-          {/* Body */}
-          <g transform={`scale(${bodyScale})`}>
-            {/* Torso */}
-            <line
-              x1="0"
-              y1="20"
-              x2="0"
-              y2="45"
-              stroke={color}
-              strokeWidth="2"
-              strokeLinecap="round"
-            />
-            {/* Arms */}
-            <line
-              x1="0"
-              y1="25"
-              x2="-15"
-              y2="38"
-              stroke={color}
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-            <line
-              x1="0"
-              y1="25"
-              x2="15"
-              y2="38"
-              stroke={color}
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-            {/* Legs */}
-            <line
-              x1="0"
-              y1="45"
-              x2="-10"
-              y2="65"
-              stroke={color}
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-            <line
-              x1="0"
-              y1="45"
-              x2="10"
-              y2="65"
-              stroke={color}
-              strokeWidth="1.5"
-              strokeLinecap="round"
-            />
-          </g>
-
-          {/* Head (moves with gaze) */}
-          <g transform={`translate(${headX}, 0)`}>
-            <circle
-              cx="0"
-              cy="10"
-              r="10"
-              fill="none"
-              stroke={color}
-              strokeWidth="2"
-            />
-            {/* Eyes */}
-            {blinkOpen ? (
-              <>
-                <circle
-                  cx={-3 + eyeOffsetX}
-                  cy="8"
-                  r="1.5"
-                  fill={color}
-                />
-                <circle
-                  cx={3 + eyeOffsetX}
-                  cy="8"
-                  r="1.5"
-                  fill={color}
-                />
-              </>
-            ) : (
-              <>
-                <line
-                  x1={-4.5 + eyeOffsetX}
-                  y1="8"
-                  x2={-1.5 + eyeOffsetX}
-                  y2="8"
-                  stroke={color}
-                  strokeWidth="1"
-                />
-                <line
-                  x1={1.5 + eyeOffsetX}
-                  y1="8"
-                  x2={4.5 + eyeOffsetX}
-                  y2="8"
-                  stroke={color}
-                  strokeWidth="1"
-                />
-              </>
-            )}
-            {/* Mouth */}
-            <g transform="translate(0, 10)">
-              <path
-                d={mouthPath}
-                fill="none"
-                stroke={color}
-                strokeWidth="1"
-                strokeLinecap="round"
-              />
-            </g>
-          </g>
-        </svg>
-      </div>
-    );
-  }
-);
-
 // ─── Three.js Idle Scene ────────────────────────────────────────────
 
-const ThreeIdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
-  function ThreeIdleScene(props, ref) {
+export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
+  function IdleScene(props, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
     const sceneRef = useRef<any>(null);
     const gazeRef = useRef(0);
+    const pitchRef = useRef(0);
     const emotionRef = useRef<DetectedEmotion>("neutral");
     const [loaded, setLoaded] = useState(false);
 
     useImperativeHandle(ref, () => ({
-      setGaze: (y: number) => {
+      setGaze: (y: number, p?: number) => {
         gazeRef.current = Math.max(-1, Math.min(1, y));
+        if (p !== undefined) pitchRef.current = Math.max(-1, Math.min(1, p));
       },
       setEmotion: (e: DetectedEmotion) => {
         emotionRef.current = e;
@@ -292,8 +91,13 @@ const ThreeIdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
         directional.position.set(2, 3, 2);
         scene.add(directional);
 
-        let mixer: THREE.AnimationMixer | null = null;
-        let headBone: THREE.Bone | null = null;
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        let mixer: any = null;
+        let headBone: any = null;
+        let leftEyeBone: any = null;
+        let rightEyeBone: any = null;
+        let skinnedMesh: any = null;
+        /* eslint-enable @typescript-eslint/no-explicit-any */
 
         // Load GLB
         if (props.glbUrl) {
@@ -307,10 +111,21 @@ const ThreeIdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
 
             scene.add(gltf.scene);
 
-            // Find head bone for gaze
+            // Find bones for gaze control
             gltf.scene.traverse((child: any) => {
-              if (child.isBone && /head/i.test(child.name)) {
-                headBone = child;
+              if (child.isBone) {
+                if (/head/i.test(child.name) && !headBone) {
+                  headBone = child;
+                }
+                if (/eye.?l|lefteye|l_eye/i.test(child.name) && !leftEyeBone) {
+                  leftEyeBone = child;
+                }
+                if (/eye.?r|righteye|r_eye/i.test(child.name) && !rightEyeBone) {
+                  rightEyeBone = child;
+                }
+              }
+              if (child.isSkinnedMesh && !skinnedMesh) {
+                skinnedMesh = child;
               }
             });
 
@@ -319,13 +134,37 @@ const ThreeIdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
               mixer = new THREE.AnimationMixer(gltf.scene);
               const action = mixer.clipAction(gltf.animations[0]);
               action.play();
+            } else {
+              // Fix T-pose for GLBs whose arms are near-horizontal.
+              // Detect by checking if LeftArm/RightArm quaternion is near-identity
+              // (= T-pose, e.g. Avaturn) vs already rotated (= arms-down, e.g. MakeHuman).
+              // Quaternion values computed analytically per skeleton type.
+              gltf.scene.traverse((bone: any) => {
+                if (!bone.isBone) return;
+                const name = bone.name;
+                if (name !== "LeftArm" && name !== "RightArm") return;
+
+                // Check if arm is in T-pose: w > 0.95 means near-identity quaternion
+                const isTPose = Math.abs(bone.quaternion.w) > 0.95;
+                if (!isTPose) return; // Already posed (e.g. MakeHuman) — don't touch
+
+                const isLeft = name === "LeftArm";
+                // Target: arms hanging at sides with 10° natural outward splay.
+                // Avaturn skeleton: [0.638, 0, ±0.080, 0.766]
+                bone.quaternion.set(
+                  0.637797,
+                  0,
+                  isLeft ? 0.079552 : -0.079552,
+                  0.766085
+                );
+              });
             }
           } catch {
             // GLB load failure is non-fatal; show empty scene
           }
         }
 
-        sceneRef.current = { scene, camera, renderer, mixer, headBone };
+        sceneRef.current = { scene, camera, renderer, mixer, headBone, leftEyeBone, rightEyeBone, skinnedMesh };
         if (!cancelled) setLoaded(true);
 
         // Idle-alive: random glances every 8-15s
@@ -350,17 +189,62 @@ const ThreeIdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
         // Animation loop
         const clock = new THREE.Clock();
         let rafId: number;
+        let currentEyeYaw = 0;
+        let currentHeadYaw = 0;
+        let currentHeadPitch = 0;
         const animate = () => {
           rafId = requestAnimationFrame(animate);
           const delta = clock.getDelta();
 
           if (mixer) mixer.update(delta);
 
-          // Apply gaze to head bone
+          const gazeTarget = gazeRef.current;
+
+          // Eyes lead: fast lerp to target
+          const eyeTargetY = gazeTarget * (Math.PI / 8); // max ±22.5°
+          currentEyeYaw += (eyeTargetY - currentEyeYaw) * 0.5;
+
+          // Head follows: slower lerp, creating natural delay
+          const headTargetY = gazeTarget * (Math.PI / 6); // max ±30°
+          currentHeadYaw += (headTargetY - currentHeadYaw) * 0.35;
+
+          // Apply eye gaze via bones
+          if (leftEyeBone) leftEyeBone.rotation.y = currentEyeYaw;
+          if (rightEyeBone) rightEyeBone.rotation.y = currentEyeYaw;
+
+          // Apply eye gaze via morph targets (ARKit blend shapes)
+          if (skinnedMesh?.morphTargetDictionary && skinnedMesh.morphTargetInfluences) {
+            const dict = skinnedMesh.morphTargetDictionary;
+            const infl = skinnedMesh.morphTargetInfluences;
+            const lookAmount = Math.abs(gazeTarget);
+            if (gazeTarget > 0.05) {
+              // Looking right
+              if (dict["eyeLookOutRight"] !== undefined) infl[dict["eyeLookOutRight"]] = lookAmount;
+              if (dict["eyeLookInLeft"] !== undefined) infl[dict["eyeLookInLeft"]] = lookAmount;
+              if (dict["eyeLookOutLeft"] !== undefined) infl[dict["eyeLookOutLeft"]] = 0;
+              if (dict["eyeLookInRight"] !== undefined) infl[dict["eyeLookInRight"]] = 0;
+            } else if (gazeTarget < -0.05) {
+              // Looking left
+              if (dict["eyeLookOutLeft"] !== undefined) infl[dict["eyeLookOutLeft"]] = lookAmount;
+              if (dict["eyeLookInRight"] !== undefined) infl[dict["eyeLookInRight"]] = lookAmount;
+              if (dict["eyeLookOutRight"] !== undefined) infl[dict["eyeLookOutRight"]] = 0;
+              if (dict["eyeLookInLeft"] !== undefined) infl[dict["eyeLookInLeft"]] = 0;
+            } else {
+              // Center — clear all look morphs
+              for (const key of ["eyeLookOutRight", "eyeLookInLeft", "eyeLookOutLeft", "eyeLookInRight"]) {
+                if (dict[key] !== undefined) infl[dict[key]] = 0;
+              }
+            }
+          }
+
+          // Apply head rotation (yaw + pitch)
+          const pitchTarget = pitchRef.current;
+          const headTargetX = pitchTarget * (Math.PI / 5); // max ±36° up/down
+          currentHeadPitch += (headTargetX - currentHeadPitch) * 0.35;
+
           if (headBone) {
-            const targetY = gazeRef.current * (Math.PI / 6); // max ±30°
-            headBone.rotation.y +=
-              (targetY - headBone.rotation.y) * 0.1; // smooth lerp
+            headBone.rotation.y = currentHeadYaw;
+            headBone.rotation.x = currentHeadPitch;
           }
 
           renderer.render(scene, camera);
@@ -405,27 +289,5 @@ const ThreeIdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
         }}
       />
     );
-  }
-);
-
-// ─── Exported component ─────────────────────────────────────────────
-
-function isMockEnv(): boolean {
-  if (typeof process !== "undefined") {
-    if (process.env?.NEXT_PUBLIC_AVATAR_MOCK === "true") return true;
-    if (process.env?.AVATAR_MOCK === "true") return true;
-  }
-  return false;
-}
-
-export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
-  function IdleScene(props, ref) {
-    const useMock = props.mock ?? isMockEnv();
-
-    if (useMock) {
-      return <MockIdleScene ref={ref} {...props} />;
-    }
-
-    return <ThreeIdleScene ref={ref} {...props} />;
   }
 );

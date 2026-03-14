@@ -1,6 +1,6 @@
 /**
  * AvatarProvider — swappable provider pattern for real-time avatar rendering.
- * Supports ElevenLabs, Simli, and a zero-API MockProvider for testing.
+ * Supports ElevenLabs and Simli. MockProvider has been removed.
  */
 
 export type Emotion = "neutral" | "engaged" | "tense" | "resolved";
@@ -29,39 +29,32 @@ export interface AvatarProvider {
   destroy(): void;
 }
 
-export type AvatarProviderType = "mock" | "elevenlabs" | "simli";
+export type AvatarProviderType = "elevenlabs" | "simli";
 
-import { MockProvider } from "./MockProvider";
 import { ElevenLabsProvider } from "./ElevenLabsProvider";
 import { SimliProvider } from "./SimliProvider";
 
 /**
  * Factory: create the appropriate AvatarProvider based on type or env vars.
+ * Returns null if no provider type is configured — callers should handle this
+ * gracefully (avatar panel works without a TTS provider).
  */
-export function createAvatarProvider(type?: AvatarProviderType): AvatarProvider {
+export function createAvatarProvider(type?: AvatarProviderType): AvatarProvider | null {
   const resolved = resolveProviderType(type);
+  if (!resolved) return null;
 
   switch (resolved) {
     case "elevenlabs":
       return new ElevenLabsProvider();
     case "simli":
       return new SimliProvider();
-    case "mock":
     default:
-      return new MockProvider();
+      return null;
   }
 }
 
-function resolveProviderType(explicit?: AvatarProviderType): AvatarProviderType {
+function resolveProviderType(explicit?: AvatarProviderType): AvatarProviderType | null {
   if (explicit) return explicit;
-
-  // AVATAR_MOCK=true always forces mock
-  if (typeof process !== "undefined" && process.env?.NEXT_PUBLIC_AVATAR_MOCK === "true") {
-    return "mock";
-  }
-  if (typeof process !== "undefined" && process.env?.AVATAR_MOCK === "true") {
-    return "mock";
-  }
 
   // Read from AVATAR_PROVIDER env var
   const envProvider =
@@ -70,6 +63,6 @@ function resolveProviderType(explicit?: AvatarProviderType): AvatarProviderType 
     return envProvider;
   }
 
-  // Default to mock for safety
-  return "mock";
+  // No provider configured
+  return null;
 }

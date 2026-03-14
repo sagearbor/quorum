@@ -100,7 +100,7 @@ def _install_quorum_llm_mock() -> None:
     sys.modules["quorum_llm"] = pkg
 
     # Sub-module stubs that are imported by name in various files
-    for sub in ("interface", "models", "factory", "providers.mock", "tier1"):
+    for sub in ("interface", "models", "factory", "providers.mock", "tier1", "affinity", "conversation"):
         full = f"quorum_llm.{sub}"
         if full not in sys.modules:
             stub = types.ModuleType(full)
@@ -120,6 +120,17 @@ def _install_quorum_llm_mock() -> None:
                 stub.get_llm_provider = get_llm_provider
             elif sub == "tier1":
                 stub.extract_keywords = lambda text, **kw: text.lower().split()[:5]
+            elif sub == "affinity":
+                stub.compute_tag_affinity = lambda a, b: len(set(a) & set(b)) / max(len(set(a) | set(b)), 1)
+                stub.extract_tags_from_text = lambda text, existing_vocabulary=None, vocab=None: text.lower().split()[:5]
+                stub.find_relevant_agents = lambda tags, agents, threshold=0.2: agents
+                stub.build_affinity_graph = lambda agents: {}
+                stub.canonicalize_tag = lambda t: t.lower().replace(" ", "_")[:30]
+                stub.merge_tag_vocabularies = lambda existing, new, max_size=500: existing | set(new)
+            elif sub == "conversation":
+                stub.build_agent_prompt = lambda **kw: [{"role": "user", "content": "mock"}]
+                stub.extract_tags_from_response = lambda text, tags=None: []
+                stub.summarize_history = lambda msgs, max_t, **kw: msgs[-5:]
             sys.modules[full] = stub
 
     # Also wire quorum_llm.providers as a package

@@ -238,6 +238,7 @@ export default function QuorumPage() {
       user_token: "anon-local",
       content,
       structured_fields: { ...fieldValues },
+      station_id: stationId,
     };
 
     try {

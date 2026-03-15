@@ -236,6 +236,30 @@ def test_health(client):
 
 
 # ---------------------------------------------------------------------------
+# GET /events — list all events
+# ---------------------------------------------------------------------------
+
+class TestListEvents:
+    def test_returns_list(self, client):
+        """GET /events should return a list (may be empty in test DB)."""
+        resp = client.get("/events")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+
+    def test_no_body_required(self, client):
+        """The endpoint requires no request body or query params."""
+        resp = client.get("/events")
+        assert resp.status_code == 200
+
+    def test_empty_db_returns_empty_list(self, empty_client):
+        """When the DB has no events, an empty list is returned (not 404)."""
+        resp = empty_client.get("/events")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+
+# ---------------------------------------------------------------------------
 # GET /quorums/{id}/stations/{station_id}/messages
 # ---------------------------------------------------------------------------
 

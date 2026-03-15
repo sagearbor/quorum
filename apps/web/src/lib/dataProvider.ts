@@ -37,6 +37,53 @@ export function isDemoMode(): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Events
+// ---------------------------------------------------------------------------
+
+export interface EventSummary {
+  id: string;
+  name: string;
+  slug: string;
+  created_at: string;
+  access_code?: string | null;
+  max_active_quorums?: number | null;
+}
+
+/**
+ * Fetch all events (newest first).
+ * In demo mode returns two canned events so the UI works offline.
+ */
+export async function getEvents(): Promise<EventSummary[]> {
+  if (isDemoMode()) {
+    return [
+      {
+        id: "demo-evt-001",
+        name: "BEACON-CV Clinical Trial Rescue",
+        slug: "beacon-cv-rescue",
+        created_at: "2026-02-25T09:00:00Z",
+      },
+      {
+        id: "demo-evt-002",
+        name: "Duke Health Expo 2026",
+        slug: "duke-expo-2026",
+        created_at: "2026-03-01T10:00:00Z",
+      },
+    ];
+  }
+
+  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  try {
+    const res = await fetch(`${apiBase}/events`);
+    if (!res.ok) return [];
+    const data = await res.json();
+    // API returns a list directly
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Quorum data
 // ---------------------------------------------------------------------------
 

@@ -82,6 +82,22 @@ def _db_contribs_to_llm(contribs_data: list[dict]) -> list[LLMContribution]:
 
 
 # ---------------------------------------------------------------------------
+# GET /events
+# ---------------------------------------------------------------------------
+@router.get("/events")
+async def list_events():
+    """List all events, newest first.
+
+    Returns a flat list of event rows — clients use the slug to navigate to
+    /event/{slug}.  No quorum data is embedded here; the event page fetches
+    quorums separately.
+    """
+    db = get_supabase()
+    result = db.table("events").select("*").order("created_at", desc=True).execute()
+    return result.data or []
+
+
+# ---------------------------------------------------------------------------
 # POST /events
 # ---------------------------------------------------------------------------
 @router.post("/events", response_model=CreateEventResponse)

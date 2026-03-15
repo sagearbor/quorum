@@ -425,10 +425,9 @@ describe("QuorumPage", () => {
     // Switch to a different tab so the indicator is visible
     fireEvent.click(screen.getByTestId("tab-documents"));
 
-    // The conversation tab should now show the unread dot
-    const conversationTab = screen.getByTestId("tab-conversation");
-    // The dot is an inline <span> inside the tab button
-    expect(conversationTab.querySelector("span.bg-indigo-500")).toBeInTheDocument();
+    // The conversation tab should now show the amber A2A badge count
+    // (replaced the old indigo dot with a numbered amber badge for A2A notifications)
+    expect(screen.getByTestId("a2a-badge")).toBeInTheDocument();
 
     // Clean up module-level state for subsequent tests
     mockA2APendingCount.value = 0;

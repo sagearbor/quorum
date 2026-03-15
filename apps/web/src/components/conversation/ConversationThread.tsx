@@ -108,11 +108,42 @@ export function ConversationThread({
           const isSystem = msg.role === "system";
 
           if (isSystem) {
+            // A2A and system notifications are styled as prominent amber banners
+            // so they stand out from regular conversation bubbles.
+            const isA2A = msg.id.startsWith("a2a-");
             return (
-              <div key={msg.id} className="flex justify-center" data-testid={`msg-${msg.id}`}>
-                <span className="text-[10px] text-gray-400 bg-gray-100 px-3 py-1 rounded-full">
-                  {msg.content}
-                </span>
+              <div
+                key={msg.id}
+                className="flex justify-center"
+                data-testid={`msg-${msg.id}`}
+              >
+                <div
+                  className={`max-w-[90%] flex items-start gap-2 rounded-lg px-3 py-2 text-xs ${
+                    isA2A
+                      ? "bg-amber-50 border border-amber-200 text-amber-800"
+                      : "bg-gray-100 text-gray-500 rounded-full"
+                  }`}
+                >
+                  {isA2A && (
+                    /* Agent activity icon */
+                    <svg
+                      width="12"
+                      height="12"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      className="flex-shrink-0 mt-0.5 text-amber-500"
+                    >
+                      <circle cx="12" cy="12" r="10" />
+                      <line x1="12" y1="8" x2="12" y2="12" />
+                      <line x1="12" y1="16" x2="12.01" y2="16" />
+                    </svg>
+                  )}
+                  <span>{msg.content}</span>
+                </div>
               </div>
             );
           }

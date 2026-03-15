@@ -2,30 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import { isDemoMode } from "@/lib/dataProvider";
-
-interface EventSummary {
-  id: string;
-  name: string;
-  slug: string;
-  created_at: string;
-}
-
-/** Demo events shown when no backend is connected. */
-const DEMO_EVENTS: EventSummary[] = [
-  {
-    id: "demo-evt-001",
-    name: "BEACON-CV Clinical Trial Rescue",
-    slug: "beacon-cv-rescue",
-    created_at: "2026-02-25T09:00:00Z",
-  },
-  {
-    id: "demo-evt-002",
-    name: "Duke Health Expo 2026",
-    slug: "duke-expo-2026",
-    created_at: "2026-03-01T10:00:00Z",
-  },
-];
+import { getEvents, type EventSummary } from "@/lib/dataProvider";
 
 export default function EventsPage() {
   const [events, setEvents] = useState<EventSummary[]>([]);
@@ -36,29 +13,11 @@ export default function EventsPage() {
 
     async function load() {
       setLoading(true);
-
-      if (isDemoMode()) {
-        if (!cancelled) {
-          setEvents(DEMO_EVENTS);
-          setLoading(false);
-        }
-        return;
-      }
-
       try {
-        const apiBase =
-          process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-        const res = await fetch(`${apiBase}/events`);
-        if (res.ok) {
-          const data = await res.json();
-          // The API may return a list directly or { events: [...] }
-          const list = Array.isArray(data) ? data : data.events ?? [];
-          if (!cancelled) {
-            setEvents(list);
-          }
+        const list = await getEvents();
+        if (!cancelled) {
+          setEvents(list);
         }
-      } catch {
-        // Non-fatal — show empty state
       } finally {
         if (!cancelled) setLoading(false);
       }

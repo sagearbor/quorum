@@ -581,3 +581,60 @@ NEXT_PUBLIC_API_URL=http://localhost:8000 pnpm test:e2e
 | Oscillation escalation targets any uninvolved role | Low | Should prefer the architect or a designated mediator role |
 | `_notify_relevant_agents` uses `agent_configs` table | Medium | `agent_configs` must be populated at quorum creation time; fallback to YAML domain_tags |
 | No deduplication of A2A notifications | Low | Multiple turns with the same tags can generate duplicate `doc_edit_notify` requests |
+
+---
+
+## 12. Using GPT-5-nano
+
+GPT-5-nano is the recommended model for `AGENT_RESPOND` turns (T5 tier).  It
+uses OpenAI's **Responses API** (`client.responses.create`) rather than Chat
+Completions, which means several Chat Completions parameters are not supported.
+
+### API constraints
+
+| Parameter | Chat Completions | Responses API (GPT-5) |
+|-----------|-----------------|----------------------|
+| `temperature` | supported | **NOT supported** — fixed at 1, causes 400 if passed |
+| `top_p` | supported | **NOT supported** — causes 400 if passed |
+| `presence_penalty` | supported | **NOT supported** — causes 400 if passed |
+| `frequency_penalty` | supported | **NOT supported** — causes 400 if passed |
+| `reasoning_effort` | top-level string | **nested object**: `reasoning={"effort": "low"}` |
+| `function` role in messages | supported | **NOT supported** — use `tool` role |
+
+Valid `reasoning.effort` values: `"low"`, `"medium"`, `"high"`.
+
+The Responses API also supports stateful threading via `previous_response_id`,
+which avoids re-sending the full conversation history on every turn and reduces
+latency + cost.
+
+### Setup
+
+1. Deploy `gpt-5-nano` in Azure AI Foundry under your Azure OpenAI resource.
+2. Note the deployment name you chose (e.g. `gpt5-nano-prod`).
+3. Add the env var to your `.env` file (or CI secrets):
+   ```
+   AZURE_OPENAI_DEPLOYMENT_T5=gpt5-nano-prod
+   ```
+4. To switch an agent to GPT-5-nano, change its YAML model field:
+   ```yaml
+   model: gpt-5-nano
+   ```
+   The provider auto-detects `gpt-5-*` model names and routes to the T5
+   deployment with the Responses API.  No other code changes are needed.
+
+### Fallback behaviour
+
+If `AZURE_OPENAI_DEPLOYMENT_T5` is not set, the T5 slot falls back to the T2
+deployment (`gpt-4o-mini`).  The provider detects this fallback and uses Chat
+Completions instead of the Responses API, so agents continue to work without
+GPT-5-nano configured.
+
+### Environment variable reference
+
+| Var | Required | Example |
+|-----|----------|---------|
+| `AZURE_OPENAI_ENDPOINT` | Yes | `https://my-resource.openai.azure.com/` |
+| `AZURE_OPENAI_KEY` | No (use Managed Identity if omitted) | `abc123...` |
+| `AZURE_OPENAI_DEPLOYMENT_T2` | Yes | `gpt-4o-mini` |
+| `AZURE_OPENAI_DEPLOYMENT_T3` | Yes | `gpt-4o` |
+| `AZURE_OPENAI_DEPLOYMENT_T5` | No (falls back to T2) | `gpt5-nano-prod` |

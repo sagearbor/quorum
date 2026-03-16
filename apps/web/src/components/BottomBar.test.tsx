@@ -37,7 +37,7 @@ describe("BottomBar", () => {
     });
   });
 
-  it("renders All Quorums link with station param", () => {
+  it("renders This Event link with station param", () => {
     render(<BottomBar />);
     const link = screen.getByTestId("all-quorums-link");
     expect(link).toBeInTheDocument();
@@ -45,7 +45,15 @@ describe("BottomBar", () => {
       "href",
       "/event/duke-expo-2026?station=2"
     );
-    expect(link).toHaveTextContent("All Quorums");
+    expect(link).toHaveTextContent("This Event");
+  });
+
+  it("renders All Events link pointing to /events", () => {
+    render(<BottomBar />);
+    const link = screen.getByTestId("all-events-link");
+    expect(link).toBeInTheDocument();
+    expect(link).toHaveAttribute("href", "/events");
+    expect(link).toHaveTextContent("All Events");
   });
 
   it("shows 'No role selected' when no role is active", () => {

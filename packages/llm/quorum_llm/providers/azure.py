@@ -3,6 +3,7 @@
 Tier 1: Deterministic keyword extraction (no LLM call — handled by tier1 module)
 Tier 2: GPT-4o-mini for conflict detection
 Tier 3: GPT-4o for final artifact synthesis
+Tier 5: GPT-5-nano for agent respond turns (Responses API)
 
 Auth (mutually exclusive, checked in order):
     API key mode:        set AZURE_OPENAI_KEY in env / .env
@@ -14,6 +15,13 @@ Uses env vars:
     AZURE_OPENAI_KEY            (optional — omit to use Managed Identity)
     AZURE_OPENAI_DEPLOYMENT_T2  (gpt-4o-mini)
     AZURE_OPENAI_DEPLOYMENT_T3  (gpt-4o)
+    AZURE_OPENAI_DEPLOYMENT_T5  (gpt-5-nano, optional — falls back to T2)
+
+GPT-5 API constraints (Responses API):
+    - Uses client.responses.create(model, instructions, input)
+    - Does NOT accept temperature, top_p, presence_penalty, frequency_penalty
+    - reasoning.effort uses nested dict: {"effort": "low"|"medium"|"high"}
+    - Does NOT work with Assistants API or function role in messages
 """
 
 from __future__ import annotations
@@ -39,6 +47,19 @@ logger = logging.getLogger(__name__)
 _API_VERSION = "2024-10-21"
 # Scope required for Entra ID / Managed Identity token
 _AZURE_COGNITIVESERVICES_SCOPE = "https://cognitiveservices.azure.com/.default"
+
+
+def _is_gpt5_deployment(deployment_name: str) -> bool:
+    """Return True if the deployment name indicates a GPT-5 model.
+
+    GPT-5 models use the Responses API and do not accept temperature,
+    top_p, presence_penalty, or frequency_penalty parameters.  We detect
+    this by checking for the 'gpt-5' prefix in the deployment name — Azure
+    deployment names are user-defined, but the convention is to include the
+    model name (e.g. 'gpt-5-nano-prod', 'my-gpt5nano').
+    """
+    lower = deployment_name.lower()
+    return "gpt-5" in lower or lower.startswith("gpt5")
 
 
 class AzureOpenAIProvider(LLMProvider):
@@ -123,12 +144,20 @@ class AzureOpenAIProvider(LLMProvider):
             return ", ".join(extract_keywords(prompt))
 
         deployment = self._deployment_for_tier(tier)
+        max_tokens = 2048 if tier == LLMTier.CONFLICT else 4096
+
+        # GPT-5 models do not accept temperature or related sampling parameters.
+        # Omit them entirely to avoid 400 errors.
+        extra: dict = {}
+        if not _is_gpt5_deployment(deployment):
+            extra["temperature"] = 0.3 if tier == LLMTier.CONFLICT else 0.7
+
         try:
             response = await self._client.chat.completions.create(
                 model=deployment,
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.3 if tier == LLMTier.CONFLICT else 0.7,
-                max_tokens=2048 if tier == LLMTier.CONFLICT else 4096,
+                max_tokens=max_tokens,
+                **extra,
             )
             return response.choices[0].message.content or ""
         except RateLimitError as exc:
@@ -163,17 +192,19 @@ class AzureOpenAIProvider(LLMProvider):
             return ", ".join(extract_keywords(flat))
 
         deployment = self._deployment_for_tier(tier)
-        # Default temperature per tier: lower for analytical turns (conflict,
-        # agent_chat), higher for synthesis/reasoning turns.
-        resolved_temperature = temperature
-        resolved_max_tokens = max_tokens
+
+        # GPT-5 models do not accept temperature, top_p, presence_penalty, or
+        # frequency_penalty.  Pass only max_tokens for those deployments.
+        extra: dict = {}
+        if not _is_gpt5_deployment(deployment):
+            extra["temperature"] = temperature
 
         try:
             response = await self._client.chat.completions.create(
                 model=deployment,
                 messages=messages,  # type: ignore[arg-type]
-                temperature=resolved_temperature,
-                max_tokens=resolved_max_tokens,
+                max_tokens=max_tokens,
+                **extra,
             )
             return response.choices[0].message.content or ""
         except RateLimitError as exc:
@@ -218,11 +249,12 @@ class AzureOpenAIProvider(LLMProvider):
 
         # Detect whether the deployment is a GPT-5 model.  GPT-5 models
         # require the Responses API; GPT-4 deployments use Chat Completions.
-        # We check the deployment name because the model field on the response
-        # object is only available after the call, not before.
-        is_gpt5 = deployment.startswith("gpt-5") or (
-            self._deployment_t5 == deployment
-            and "gpt-5" in (os.environ.get("AZURE_OPENAI_DEPLOYMENT_T5") or "")
+        # The T5 deployment is always treated as GPT-5 — even if the operator
+        # chose a deployment name that doesn't contain "gpt-5", the T5 slot is
+        # exclusively for GPT-5-nano.
+        is_gpt5 = _is_gpt5_deployment(deployment) or (
+            deployment == self._deployment_t5
+            and self._deployment_t5 != self._deployment_t2  # not the fallback alias
         )
 
         if is_gpt5:

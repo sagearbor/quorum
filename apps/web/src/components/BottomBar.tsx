@@ -15,7 +15,7 @@ export function BottomBar() {
 
   if (!slug) return null;
 
-  const allQuorumsHref = `/event/${slug}${station ? `?station=${station}` : ""}`;
+  const thisEventHref = `/event/${slug}${station ? `?station=${station}` : ""}`;
 
   return (
     <div
@@ -23,12 +23,21 @@ export function BottomBar() {
       className="fixed bottom-0 left-0 right-0 h-14 bg-white border-t border-gray-200 flex items-center px-4 gap-3 z-50"
     >
       <Link
-        href={allQuorumsHref}
+        href={thisEventHref}
         data-testid="all-quorums-link"
         className="flex items-center gap-2 rounded-lg bg-gray-100 hover:bg-gray-200 px-4 py-2 text-sm font-medium transition-colors"
       >
         <span className="text-base">&#8862;</span>
-        All Quorums
+        This Event
+      </Link>
+
+      <Link
+        href="/events"
+        data-testid="all-events-link"
+        className="flex items-center gap-2 rounded-lg bg-gray-100 hover:bg-gray-200 px-4 py-2 text-sm font-medium transition-colors"
+      >
+        <span className="text-base">&#128203;</span>
+        All Events
       </Link>
 
       {pendingCount > 0 && (

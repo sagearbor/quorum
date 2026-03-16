@@ -236,6 +236,30 @@ def test_health(client):
 
 
 # ---------------------------------------------------------------------------
+# GET /events — list all events
+# ---------------------------------------------------------------------------
+
+class TestListEvents:
+    def test_returns_list(self, client):
+        """GET /events should return a list (may be empty in test DB)."""
+        resp = client.get("/events")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+
+    def test_no_body_required(self, client):
+        """The endpoint requires no request body or query params."""
+        resp = client.get("/events")
+        assert resp.status_code == 200
+
+    def test_empty_db_returns_empty_list(self, empty_client):
+        """When the DB has no events, an empty list is returned (not 404)."""
+        resp = empty_client.get("/events")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
+
+# ---------------------------------------------------------------------------
 # GET /quorums/{id}/stations/{station_id}/messages
 # ---------------------------------------------------------------------------
 
@@ -649,3 +673,150 @@ class TestAgentEngineHelpers:
         assert "[system]" in flat
         assert "[user]" in flat
         assert "You are a facilitator." in flat
+
+
+# ---------------------------------------------------------------------------
+# GET /quorums/{id}/roles — new endpoint added in Phase 4 hardening
+# ---------------------------------------------------------------------------
+
+
+class TestGetQuorumRoles:
+    def test_returns_list_of_roles(self, client):
+        """GET /quorums/{id}/roles should return all roles for the quorum."""
+        resp = client.get("/quorums/quorum-1/roles")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert isinstance(data, list)
+
+    def test_roles_have_required_fields(self, client):
+        """Each role dict should contain id, name, authority_rank, capacity."""
+        resp = client.get("/quorums/quorum-1/roles")
+        assert resp.status_code == 200
+        roles = resp.json()
+        if roles:
+            role = roles[0]
+            for field in ("id", "name", "authority_rank", "capacity"):
+                assert field in role, f"Role missing field: {field}"
+
+    def test_404_for_unknown_quorum(self, empty_client):
+        """Requesting roles for a non-existent quorum should return 404."""
+        resp = empty_client.get("/quorums/nonexistent/roles")
+        assert resp.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# GET /quorums/{id}/documents — status validation (Phase 4 hardening)
+# ---------------------------------------------------------------------------
+
+
+class TestListDocumentsValidation:
+    def test_invalid_status_returns_400(self, client):
+        """An invalid status query param should return 400, not 500."""
+        resp = client.get("/quorums/quorum-1/documents?status=invalid_status")
+        assert resp.status_code == 400
+        detail = resp.json().get("detail", "")
+        assert "invalid_status" in detail.lower() or "status" in detail.lower()
+
+    def test_valid_statuses_accepted(self, client):
+        """All valid doc_status enum values should be accepted."""
+        for status in ("active", "superseded", "canceled"):
+            resp = client.get(f"/quorums/quorum-1/documents?status={status}")
+            assert resp.status_code == 200, f"status={status} should be accepted"
+
+
+# ---------------------------------------------------------------------------
+# GET /quorums/{id}/insights — insight_type validation (Phase 4 hardening)
+# ---------------------------------------------------------------------------
+
+
+class TestListInsightsValidation:
+    def test_invalid_insight_type_returns_400(self, client):
+        """An unrecognized insight_type should return 400."""
+        resp = client.get("/quorums/quorum-1/insights?insight_type=bad_type")
+        assert resp.status_code == 400
+        detail = resp.json().get("detail", "")
+        assert "bad_type" in detail.lower() or "insight_type" in detail.lower()
+
+    def test_valid_insight_types_accepted(self, client):
+        """All valid InsightType enum values should be accepted."""
+        valid_types = ("summary", "conflict", "suggestion", "question", "decision", "escalation")
+        for itype in valid_types:
+            resp = client.get(f"/quorums/quorum-1/insights?insight_type={itype}")
+            assert resp.status_code == 200, f"insight_type={itype} should be accepted"
+
+    def test_limit_cap_at_100(self, client):
+        """Requesting limit=999 should be silently capped to 100 max."""
+        resp = client.get("/quorums/quorum-1/insights?limit=999")
+        # We can't directly observe the limit applied, but the response should be 200
+        assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# PUT /quorums/{id}/documents/{doc_id} — ownership check (Phase 4 hardening)
+# ---------------------------------------------------------------------------
+
+
+class TestDocumentOwnershipCheck:
+    def test_403_when_document_belongs_to_different_quorum(self, client):
+        """Updating a document via a different quorum_id should return 403.
+
+        The fake DB returns 'quorum-1' as quorum_id for all docs.  If we
+        call PUT /quorums/other-quorum/documents/doc-1, the route should
+        detect the mismatch and return 403.
+        """
+        # Override the fake DB for this test to return a doc with quorum_id=quorum-1
+        from fastapi.testclient import TestClient
+        from unittest.mock import AsyncMock, patch
+
+        doc_row = {
+            "id": "doc-1",
+            "quorum_id": "quorum-1",  # document belongs to quorum-1
+            "title": "Test Doc",
+            "doc_type": "budget",
+            "format": "json",
+            "content": {"x": 1},
+            "status": "active",
+            "version": 1,
+            "tags": [],
+            "created_by_role_id": None,
+            "created_at": "2026-03-14T00:00:00+00:00",
+            "updated_at": "2026-03-14T00:00:00+00:00",
+        }
+        fake_db = _make_fake_supabase({
+            "quorums": _QUORUMS,
+            "roles": _ROLES,
+            "agent_documents": [doc_row],
+        })
+        fake_llm = _make_fake_llm_provider()
+
+        with (
+            patch("apps.api.routes.get_supabase", return_value=fake_db),
+            patch("apps.api.routes.llm_provider", fake_llm),
+            patch("apps.api.routes.process_agent_turn", new=AsyncMock(
+                return_value=("reply", "msg-id", [])
+            )),
+            patch("apps.api.routes.process_a2a_request", new=AsyncMock(return_value="resp")),
+            patch("apps.api.routes.create_document", new=AsyncMock(return_value={})),
+            patch("apps.api.routes.update_document", new=AsyncMock(
+                return_value={"version": 2, "merged": False}
+            )),
+            patch("apps.api.seed_loader.load_seed_quorum", new=AsyncMock()),
+        ):
+            import importlib
+            import apps.api.main as main_mod
+            importlib.reload(main_mod)
+            c = TestClient(main_mod.app, raise_server_exceptions=False)
+
+            # Try to update doc-1 (which belongs to quorum-1) via other-quorum
+            resp = c.put(
+                "/quorums/other-quorum/documents/doc-1",
+                json={
+                    "content": {"x": 2},
+                    "expected_version": 1,
+                    "changed_by_role": "role-1",
+                    "rationale": "Cross-quorum attack test",
+                },
+            )
+            assert resp.status_code == 403, (
+                f"Expected 403 for cross-quorum document update, got {resp.status_code}: {resp.text}"
+            )

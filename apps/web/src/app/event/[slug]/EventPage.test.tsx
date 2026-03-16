@@ -20,7 +20,7 @@ vi.mock("@/lib/dataProvider", () => {
     {
       id: "q-001",
       event_id: "evt-001",
-      title: "IRB Protocol Review — NCT-2026-4481",
+      title: "IRB Protocol Review \u2014 NCT-2026-4481",
       description: "Multi-site phase III trial safety protocol.",
       status: "active",
       heat_score: 72,
@@ -111,7 +111,7 @@ describe("EventPage", () => {
     render(<EventPage />);
     await waitFor(() => {
       expect(
-        screen.getByText("IRB Protocol Review — NCT-2026-4481")
+        screen.getByText("IRB Protocol Review \u2014 NCT-2026-4481")
       ).toBeInTheDocument();
     });
   });
@@ -119,21 +119,25 @@ describe("EventPage", () => {
   it("navigates to quorum page on card click", async () => {
     render(<EventPage />);
     await waitFor(() =>
-      expect(screen.getByTestId("quorum-card-q-001")).toBeInTheDocument()
+      expect(screen.getByTestId("quorum-card-link-q-001")).toBeInTheDocument()
     );
-    fireEvent.click(screen.getByTestId("quorum-card-q-001"));
+    fireEvent.click(screen.getByTestId("quorum-card-link-q-001"));
     expect(mockPush).toHaveBeenCalledWith(
       "/event/duke-expo-2026/quorum/q-001?station=1"
     );
   });
 
-  it("displays heat scores", async () => {
+  it("displays heat scores with flame icon", async () => {
     render(<EventPage />);
     await waitFor(() => {
       expect(screen.getByText("72")).toBeInTheDocument();
       expect(screen.getByText("45")).toBeInTheDocument();
       expect(screen.getByText("18")).toBeInTheDocument();
     });
+    // Heat badges should have tooltip
+    const badges = screen.getAllByTestId("heat-badge");
+    expect(badges.length).toBeGreaterThanOrEqual(3);
+    expect(badges[0]).toHaveAttribute("title", expect.stringContaining("Heat Score"));
   });
 
   it("displays quorum count in header", async () => {
@@ -142,5 +146,43 @@ describe("EventPage", () => {
     await waitFor(() => {
       expect(screen.getByText(/3 quorums/)).toBeInTheDocument();
     });
+  });
+
+  it("shows View Dashboard link in header", async () => {
+    render(<EventPage />);
+    await waitFor(() => {
+      const dashLink = screen.getByTestId("dashboard-link");
+      expect(dashLink).toBeInTheDocument();
+      expect(dashLink).toHaveTextContent("View Dashboard");
+      expect(dashLink).toHaveAttribute("href", "/display/duke-expo-2026");
+    });
+  });
+
+  it("shows role dropdown on quorum cards with roles", async () => {
+    render(<EventPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId("role-dropdown-q-001")).toBeInTheDocument()
+    );
+    // q-002 has no roles, should not have dropdown
+    expect(screen.queryByTestId("role-dropdown-q-002")).not.toBeInTheDocument();
+  });
+
+  it("opens role menu and navigates with station param on role selection", async () => {
+    render(<EventPage />);
+    await waitFor(() =>
+      expect(screen.getByTestId("role-dropdown-q-001")).toBeInTheDocument()
+    );
+
+    // Open the dropdown
+    fireEvent.click(screen.getByTestId("role-dropdown-q-001"));
+    await waitFor(() =>
+      expect(screen.getByTestId("role-menu-q-001")).toBeInTheDocument()
+    );
+
+    // Select a role
+    fireEvent.click(screen.getByTestId("role-option-r-001"));
+    expect(mockPush).toHaveBeenCalledWith(
+      expect.stringMatching(/^\/event\/duke-expo-2026\/quorum\/q-001\?station=\d+$/)
+    );
   });
 });

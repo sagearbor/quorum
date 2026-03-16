@@ -82,6 +82,22 @@ def _db_contribs_to_llm(contribs_data: list[dict]) -> list[LLMContribution]:
 
 
 # ---------------------------------------------------------------------------
+# GET /events
+# ---------------------------------------------------------------------------
+@router.get("/events")
+async def list_events():
+    """List all events, newest first.
+
+    Returns a flat list of event rows — clients use the slug to navigate to
+    /event/{slug}.  No quorum data is embedded here; the event page fetches
+    quorums separately.
+    """
+    db = get_supabase()
+    result = db.table("events").select("*").order("created_at", desc=True).execute()
+    return result.data or []
+
+
+# ---------------------------------------------------------------------------
 # POST /events
 # ---------------------------------------------------------------------------
 @router.post("/events", response_model=CreateEventResponse)
@@ -145,6 +161,36 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
         db.table("roles").insert(role_row).execute()
 
     share_url = f"/event/{event.data['slug']}/quorum/{quorum_id}"
+
+    # Auto-seed agent documents (non-fatal — quorum is already created)
+    try:
+        seed_path = (
+            pathlib.Path(__file__).resolve().parent.parent.parent
+            / "seed"
+            / "clinical-trial-documents.json"
+        )
+        if seed_path.exists():
+            with seed_path.open() as fh:
+                seed_data = json.load(fh)
+            for doc in seed_data.get("documents", []):
+                doc_id = str(uuid.uuid4())
+                doc_row = {
+                    "id": doc_id,
+                    "quorum_id": quorum_id,
+                    "title": doc["title"],
+                    "doc_type": doc["doc_type"],
+                    "format": "json",
+                    "content": doc["content"],
+                    "status": "active",
+                    "version": 1,
+                    "tags": doc.get("tags", []),
+                    "created_by_role_id": None,
+                }
+                db.table("agent_documents").insert(doc_row).execute()
+            logger.info("Auto-seeded %d documents for quorum %s", len(seed_data.get("documents", [])), quorum_id)
+    except Exception:
+        logger.warning("Auto-seed documents failed for quorum %s (non-fatal)", quorum_id, exc_info=True)
+
     return CreateQuorumResponse(id=quorum_id, status="open", share_url=share_url)
 
 
@@ -284,6 +330,33 @@ async def contribute(quorum_id: str, body: ContributeRequest):
         facilitator_message_id=facilitator_message_id,
         facilitator_tags=facilitator_tags,
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /quorums/{quorum_id}/roles
+# ---------------------------------------------------------------------------
+@router.get("/quorums/{quorum_id}/roles")
+async def list_roles(quorum_id: str):
+    """Return all roles for a quorum.
+
+    Used by clients (including the E2E test script) that need to discover
+    role IDs after quorum creation — CreateQuorumResponse does not include
+    them since role creation is a side-effect of POST /events/{id}/quorums.
+    """
+    db = get_supabase()
+
+    quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
+    if not quorum.data:
+        raise HTTPException(status_code=404, detail="Quorum not found")
+
+    roles = (
+        db.table("roles")
+        .select("id, name, authority_rank, capacity")
+        .eq("quorum_id", quorum_id)
+        .order("authority_rank", desc=True)
+        .execute()
+    )
+    return roles.data or []
 
 
 # ---------------------------------------------------------------------------
@@ -541,8 +614,20 @@ async def list_documents(
     status: str = "active",
     doc_type: str | None = None,
 ):
-    """List agent documents for a quorum."""
+    """List agent documents for a quorum.
+
+    status must be one of: active, superseded, canceled.
+    Returns 400 for an invalid status value (avoids passing arbitrary strings
+    to Supabase which may cause DB-level enum errors).
+    """
     db = get_supabase()
+
+    _VALID_DOC_STATUSES = {"active", "superseded", "canceled"}
+    if status not in _VALID_DOC_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid status '{status}'. Must be one of: {sorted(_VALID_DOC_STATUSES)}",
+        )
 
     query = (
         db.table("agent_documents")
@@ -617,6 +702,23 @@ async def update_document_endpoint(
     """
     db = get_supabase()
 
+    # Verify the document belongs to this quorum before attempting any write.
+    # This prevents cross-quorum document mutations via a crafted quorum_id.
+    doc_check = (
+        db.table("agent_documents")
+        .select("id, quorum_id")
+        .eq("id", doc_id)
+        .single()
+        .execute()
+    )
+    if not doc_check.data:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if doc_check.data["quorum_id"] != quorum_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Document does not belong to this quorum",
+        )
+
     try:
         result = await update_document(
             doc_id=doc_id,
@@ -664,8 +766,22 @@ async def list_insights(
     insight_type: str | None = None,
     limit: int = 20,
 ):
-    """Return cross-station agent insights for a quorum."""
+    """Return cross-station agent insights for a quorum.
+
+    insight_type, when provided, must be a valid InsightType enum value.
+    limit is capped at 100 to prevent runaway queries.
+    """
     db = get_supabase()
+
+    _VALID_INSIGHT_TYPES = {"summary", "conflict", "suggestion", "question", "decision", "escalation"}
+    if insight_type is not None and insight_type not in _VALID_INSIGHT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid insight_type '{insight_type}'. Must be one of: {sorted(_VALID_INSIGHT_TYPES)}",
+        )
+
+    # Cap limit to prevent accidentally fetching unbounded rows
+    limit = min(limit, 100)
 
     query = (
         db.table("agent_insights")

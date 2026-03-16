@@ -52,6 +52,8 @@ export interface ContributeRequest {
   user_token: string;
   content: string;
   structured_fields: Record<string, string>;
+  /** Station identifier. When present, triggers AI facilitator response. */
+  station_id?: string;
 }
 
 export interface ContributeResponse {

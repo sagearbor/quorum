@@ -120,11 +120,14 @@ async def _call_llm(llm_provider, messages: list[dict], agent_def=None) -> str:
                 )
 
     # Standard path: use chat() for full message-list context
-    try:
-        if hasattr(llm_provider, "chat"):
+    if hasattr(llm_provider, "chat"):
+        try:
             return await llm_provider.chat(messages, LLMTier.AGENT_CHAT)
-    except Exception:
-        pass
+        except Exception:
+            logger.warning(
+                "agent_engine: chat() failed, falling back to complete()",
+                exc_info=True,
+            )
 
     # Final fallback: flatten to a single prompt and use complete()
     flat = _flatten_messages(messages)

@@ -19,6 +19,11 @@ let eventCounter = 0;
 let quorumCounter = 0;
 
 export const handlers = [
+  // GET /events — list all events (no path param)
+  http.get(`${API_BASE}/events`, () => {
+    return HttpResponse.json([mockEvent]);
+  }),
+
   // GET /events/:slug
   http.get(`${API_BASE}/events/:slug`, ({ params }) => {
     if (params.slug === mockEvent.slug) {

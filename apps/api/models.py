@@ -149,6 +149,10 @@ class ContributeRequest(BaseModel):
     # Optional: station_id ties the contribution to a specific physical station.
     # When provided, the agent engine fires a facilitator turn for that station.
     station_id: str | None = None
+    # Optional: override the LLM model for this request, bypassing the agent
+    # YAML default.  Useful for power users who want a more capable model for
+    # a specific contribution without changing the global config.
+    model_override: str | None = None
 
 
 class ContributeResponse(BaseModel):
@@ -239,6 +243,9 @@ class StationMessageResponse(BaseModel):
 class AskRequest(BaseModel):
     role_id: str
     content: str
+    # Optional: override the LLM model for this ask, bypassing the agent
+    # YAML default.  Mirrors ContributeRequest.model_override.
+    model_override: str | None = None
 
 
 class AskResponse(BaseModel):

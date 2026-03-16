@@ -109,6 +109,18 @@ function VoiceButton({ onTranscript }: { onTranscript: (text: string) => void })
 }
 
 // ---------------------------------------------------------------------------
+// Available LLM models for the model selector dropdown
+// ---------------------------------------------------------------------------
+
+const AVAILABLE_MODELS = [
+  { value: "gpt-4o-mini", label: "GPT-4o mini" },
+  { value: "gpt-4o", label: "GPT-4o" },
+  { value: "gpt-5-nano", label: "GPT-5 nano" },
+] as const;
+
+type ModelOption = (typeof AVAILABLE_MODELS)[number]["value"];
+
+// ---------------------------------------------------------------------------
 // QuorumPage
 // ---------------------------------------------------------------------------
 
@@ -130,6 +142,10 @@ export default function QuorumPage() {
   const [contributions, setContributions] = useState<Contribution[]>([]);
   const [currentRole, setCurrentRole] = useState<Role | null>(null);
   const [loading, setLoading] = useState(true);
+
+  // Model override — defaults to gpt-4o-mini; persists for the session only.
+  // Changes take effect on the next contribution or ask.
+  const [selectedModel, setSelectedModel] = useState<ModelOption>("gpt-4o-mini");
 
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
@@ -273,6 +289,7 @@ export default function QuorumPage() {
       content,
       structured_fields: { ...fieldValues },
       station_id: stationId,
+      model_override: selectedModel,
     };
 
     try {
@@ -353,6 +370,24 @@ export default function QuorumPage() {
                 Demo Mode
               </span>
             )}
+
+            {/* Model selector — lets power users switch LLM model mid-session.
+                Stored in component state; applied to /contribute and /ask calls. */}
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value as ModelOption)}
+              data-testid="model-selector"
+              title="Select LLM model"
+              aria-label="LLM model"
+              className="text-[10px] bg-slate-800 text-white/70 border border-white/10 rounded px-1.5 py-1 focus:outline-none focus:border-white/30 cursor-pointer hover:bg-slate-700 transition-colors"
+            >
+              {AVAILABLE_MODELS.map((m) => (
+                <option key={m.value} value={m.value}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
+
             {/* Audio mute toggle — suppresses facilitator TTS when muted */}
             <button
               type="button"

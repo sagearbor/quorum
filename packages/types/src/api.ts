@@ -54,6 +54,12 @@ export interface ContributeRequest {
   structured_fields: Record<string, string>;
   /** Station identifier. When present, triggers AI facilitator response. */
   station_id?: string;
+  /**
+   * Override the LLM model for this request.
+   * When provided, takes precedence over the agent YAML's default model.
+   * Supported values: "gpt-4o-mini" | "gpt-4o" | "gpt-5-nano"
+   */
+  model_override?: string;
 }
 
 export interface ContributeResponse {
@@ -83,4 +89,21 @@ export interface ResolveRequest {
 export interface ResolveResponse {
   artifact_id: string;
   download_url: string;
+}
+
+// POST /quorums/{quorum_id}/stations/{station_id}/ask
+export interface AskRequest {
+  role_id: string;
+  content: string;
+  /**
+   * Override the LLM model for this ask.
+   * When provided, takes precedence over the agent YAML's default model.
+   */
+  model_override?: string;
+}
+
+export interface AskResponse {
+  reply: string;
+  message_id: string;
+  tags: string[];
 }

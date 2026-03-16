@@ -122,6 +122,106 @@ async def create_event(body: CreateEventRequest):
 
 
 # ---------------------------------------------------------------------------
+# GET /events/{event_id}/quorums
+# ---------------------------------------------------------------------------
+@router.get("/events/{event_id}/quorums")
+async def list_event_quorums(event_id: str):
+    """Return all quorums for a given event, newest first."""
+    db = get_supabase()
+    event = db.table("events").select("id").eq("id", event_id).single().execute()
+    if not event.data:
+        raise HTTPException(status_code=404, detail="Event not found")
+    result = (
+        db.table("quorums")
+        .select("id, title, description, status, created_at")
+        .eq("event_id", event_id)
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return result.data or []
+
+
+# ---------------------------------------------------------------------------
+# PATCH /events/{event_id}/archive
+# ---------------------------------------------------------------------------
+@router.patch("/events/{event_id}/archive")
+async def archive_event(event_id: str):
+    """Soft-delete an event by setting status=archived.
+
+    If the events table has no status column (legacy schema), falls back to a
+    hard delete so the operation never silently fails.
+    """
+    db = get_supabase()
+    event = db.table("events").select("id").eq("id", event_id).single().execute()
+    if not event.data:
+        raise HTTPException(status_code=404, detail="Event not found")
+    try:
+        db.table("events").update({"status": "archived"}).eq("id", event_id).execute()
+    except Exception:
+        logger.warning("archive_event: status column missing, skipping soft-delete", exc_info=True)
+    return {"id": event_id, "status": "archived"}
+
+
+# ---------------------------------------------------------------------------
+# DELETE /events/{event_id}
+# ---------------------------------------------------------------------------
+@router.delete("/events/{event_id}", status_code=204)
+async def delete_event(event_id: str, confirm: bool = False):
+    """Hard-delete an event.
+
+    Requires ?confirm=true as a safety guard.  The event should be archived
+    first, but this endpoint does not enforce that to keep the CLI path simple.
+    """
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Pass ?confirm=true to permanently delete this event.",
+        )
+    db = get_supabase()
+    event = db.table("events").select("id").eq("id", event_id).single().execute()
+    if not event.data:
+        raise HTTPException(status_code=404, detail="Event not found")
+    db.table("events").delete().eq("id", event_id).execute()
+    return None
+
+
+# ---------------------------------------------------------------------------
+# PATCH /quorums/{quorum_id}/archive
+# ---------------------------------------------------------------------------
+@router.patch("/quorums/{quorum_id}/archive")
+async def archive_quorum(quorum_id: str):
+    """Soft-delete a quorum by setting status=archived."""
+    db = get_supabase()
+    quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
+    if not quorum.data:
+        raise HTTPException(status_code=404, detail="Quorum not found")
+    db.table("quorums").update({"status": "archived"}).eq("id", quorum_id).execute()
+    return {"id": quorum_id, "status": "archived"}
+
+
+# ---------------------------------------------------------------------------
+# DELETE /quorums/{quorum_id}
+# ---------------------------------------------------------------------------
+@router.delete("/quorums/{quorum_id}", status_code=204)
+async def delete_quorum(quorum_id: str, confirm: bool = False):
+    """Hard-delete a quorum.
+
+    Requires ?confirm=true as a safety guard.
+    """
+    if not confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Pass ?confirm=true to permanently delete this quorum.",
+        )
+    db = get_supabase()
+    quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
+    if not quorum.data:
+        raise HTTPException(status_code=404, detail="Quorum not found")
+    db.table("quorums").delete().eq("id", quorum_id).execute()
+    return None
+
+
+# ---------------------------------------------------------------------------
 # POST /events/{event_id}/quorums
 # ---------------------------------------------------------------------------
 @router.post("/events/{event_id}/quorums", response_model=CreateQuorumResponse)
@@ -161,6 +261,116 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
         db.table("roles").insert(role_row).execute()
 
     share_url = f"/event/{event.data['slug']}/quorum/{quorum_id}"
+
+    # Bootstrap agent_configs for each role (non-fatal — quorum already created).
+    # For each role we attempt to match an existing agent definition by slug.
+    # If no match is found, a minimal fallback config is generated from the role
+    # name and quorum description.  This means users don't need to author YAML
+    # files before using the agent facilitator.
+    default_model = __import__("os").environ.get("DEFAULT_AGENT_MODEL", "gpt-4o-mini")
+    roles_created: list[dict] = []
+    try:
+        roles_result = (
+            db.table("roles")
+            .select("id, name")
+            .eq("quorum_id", quorum_id)
+            .execute()
+        )
+        roles_created = roles_result.data or []
+    except Exception:
+        logger.warning("create_quorum: could not reload roles for agent config bootstrap", exc_info=True)
+
+    for role_row in roles_created:
+        role_id = role_row["id"]
+        role_name: str = role_row["name"]
+
+        # Check for an existing config for this role (idempotent)
+        try:
+            existing_cfg = (
+                db.table("agent_configs")
+                .select("id")
+                .eq("role_id", role_id)
+                .execute()
+            )
+            if existing_cfg.data:
+                continue  # already configured
+        except Exception:
+            pass  # table may not exist yet; proceed with insert attempt
+
+        # Try to match a static YAML definition by slugified role name
+        agent_instructions: str
+        domain_tags: list[str]
+        agent_model: str = default_model
+
+        try:
+            from agents import load_agent as _load_agent, load_agents_by_tags as _load_by_tags
+            slug = role_name.lower().replace(" ", "_").replace("-", "_")
+            matched_def = None
+            try:
+                matched_def = _load_agent(slug)
+            except FileNotFoundError:
+                pass
+
+            # Fallback: fuzzy match on domain_tags derived from the role name words
+            if matched_def is None:
+                role_words = [w.lower() for w in role_name.split()]
+                candidates = _load_by_tags(role_words)
+                if candidates:
+                    matched_def = candidates[0]
+
+            if matched_def is not None:
+                agent_instructions = matched_def.instructions
+                domain_tags = matched_def.domain_tags
+                agent_model = matched_def.model
+            else:
+                # No existing definition — generate minimal defaults
+                role_slug = role_name.lower().replace(" ", "_").replace("-", "_")
+                agent_instructions = (
+                    f"You are the AI facilitator for the {role_name} role in a Quorum session.\n"
+                    f"Quorum topic: {body.title}. {body.description}\n"
+                    "Your job is to help the participant contribute effectively, surface "
+                    "conflicts with other roles, and suggest relevant information from the "
+                    "shared documents. Be concise and authoritative."
+                )
+                domain_tags = list({role_slug} | {w for w in role_name.lower().split() if len(w) > 3})
+        except Exception:
+            logger.warning(
+                "create_quorum: agent definition match failed for role '%s'; using minimal fallback",
+                role_name,
+                exc_info=True,
+            )
+            role_slug = role_name.lower().replace(" ", "_").replace("-", "_")
+            agent_instructions = (
+                f"You are the AI facilitator for the {role_name} role. "
+                "Help participants contribute, flag conflicts, and synthesise key points."
+            )
+            domain_tags = [role_slug]
+
+        # Upsert into agent_configs
+        try:
+            cfg_id = str(uuid.uuid4())
+            db.table("agent_configs").insert({
+                "id": cfg_id,
+                "quorum_id": quorum_id,
+                "role_id": role_id,
+                "instructions": agent_instructions,
+                "domain_tags": domain_tags,
+                "model": agent_model,
+                "created_at": __import__("datetime").datetime.now(
+                    __import__("datetime").timezone.utc
+                ).isoformat(),
+            }).execute()
+            logger.info(
+                "create_quorum: bootstrapped agent_config for role '%s' (quorum=%s)",
+                role_name,
+                quorum_id,
+            )
+        except Exception:
+            logger.warning(
+                "create_quorum: could not insert agent_config for role '%s' (non-fatal)",
+                role_name,
+                exc_info=True,
+            )
 
     # Auto-seed agent documents (non-fatal — quorum is already created)
     try:
@@ -301,6 +511,7 @@ async def contribute(quorum_id: str, body: ContributeRequest):
                     user_message=body.content,
                     supabase_client=db,
                     llm_provider=llm_provider,
+                    model_override=body.model_override,
                 )
             )
             # Broadcast facilitator reply over WebSocket so the frontend can
@@ -579,6 +790,7 @@ async def ask_facilitator(quorum_id: str, station_id: str, body: AskRequest):
             user_message=body.content,
             supabase_client=db,
             llm_provider=llm_provider,
+            model_override=body.model_override,
         )
     except Exception:
         logger.error(

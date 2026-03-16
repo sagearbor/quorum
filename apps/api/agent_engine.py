@@ -145,6 +145,7 @@ async def process_agent_turn(
     user_message: str,
     supabase_client,
     llm_provider,
+    model_override: str | None = None,
 ) -> tuple[str, str, list[str]]:
     """Run one agent turn for a station.
 
@@ -206,8 +207,25 @@ async def process_agent_turn(
     )
 
     # --- 8. Call LLM (routing: gpt-5 → Responses API, others → chat()) ---
+    # When a model_override is provided, temporarily shadow the agent_def model
+    # so _call_llm routes correctly (e.g. a gpt-5-nano override triggers the
+    # Responses API path without permanently mutating the agent definition).
+    effective_agent_def = agent_def
+    if model_override and agent_def is not None:
+        import copy
+        effective_agent_def = copy.copy(agent_def)
+        effective_agent_def.model = model_override
+    elif model_override:
+        # No agent_def loaded — create a minimal stand-in so the override is honoured
+        class _ModelStub:
+            model = model_override
+            domain_tags: list[str] = []
+            instructions: str = ""
+            name: str = role_name
+        effective_agent_def = _ModelStub()
+
     try:
-        reply = await _call_llm(llm_provider, messages, agent_def=agent_def)
+        reply = await _call_llm(llm_provider, messages, agent_def=effective_agent_def)
     except Exception:
         logger.error(
             "agent_engine: LLM call failed for role=%s station=%s",

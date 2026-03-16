@@ -74,9 +74,10 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x0f172a);
 
-        const camera = new THREE.PerspectiveCamera(35, width / height, 0.1, 100);
-        camera.position.set(0, 1.2, 3);
-        camera.lookAt(0, 1, 0);
+        const camera = new THREE.PerspectiveCamera(30, width / height, 0.1, 100);
+        // Bust/torso framing — closer and higher for natural conversation view
+        camera.position.set(0, 1.5, 1.8);
+        camera.lookAt(0, 1.35, 0);
 
         const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
         renderer.setSize(width, height);

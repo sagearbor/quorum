@@ -141,6 +141,12 @@ export default function QuorumPage() {
   const [roles, setRoles] = useState<Role[]>([]);
   const [contributions, setContributions] = useState<Contribution[]>([]);
   const [currentRole, setCurrentRole] = useState<Role | null>(null);
+  // avatarRole tracks which role the AI facilitator is playing.
+  // Defaults to match currentRole when first selected, but can be changed
+  // independently so users can ask the AI to respond from a different perspective.
+  const [avatarRole, setAvatarRole] = useState<Role | null>(null);
+  // Controls whether the full role list is shown or collapsed to a compact badge.
+  const [roleListExpanded, setRoleListExpanded] = useState(true);
   const [loading, setLoading] = useState(true);
 
   // Model override — defaults to gpt-4o-mini; persists for the session only.
@@ -247,10 +253,20 @@ export default function QuorumPage() {
     return () => { cancelled = true; };
   }, [quorumId]);
 
+  // When currentRole is first set (or cleared), sync avatarRole to match so
+  // the AI facilitator defaults to speaking as the same role the human picked.
+  useEffect(() => {
+    if (currentRole && !avatarRole) {
+      setAvatarRole(currentRole);
+    }
+  }, [currentRole, avatarRole]);
+
   const selectRole = (role: Role) => {
     setCurrentRole(role);
     setFieldValues({});
     setSubmitSuccess(false);
+    // Collapse the role list once a selection is made
+    setRoleListExpanded(false);
   };
 
   const handleFieldChange = (fieldName: string, value: string) => {
@@ -354,9 +370,11 @@ export default function QuorumPage() {
   }
 
   return (
-    <div className="min-h-screen flex flex-col lg:flex-row">
-      {/* Left panel: Avatar facilitator */}
-      <div className="lg:w-1/3 lg:min-h-screen bg-slate-900 p-4 flex flex-col">
+    <div className="min-h-screen flex flex-col lg:flex-row lg:items-start">
+      {/* Left panel: Avatar facilitator — sticky so it stays in the top-left
+          quarter of the screen while the right panel scrolls independently.
+          On mobile it collapses to a narrow strip at the top. */}
+      <div className="lg:w-1/3 lg:sticky lg:top-12 lg:h-[calc(100vh-3rem)] bg-slate-900 p-4 flex flex-col overflow-hidden">
         <div className="flex items-center justify-between mb-3">
           <Link
             href={`/event/${slug}`}
@@ -421,20 +439,46 @@ export default function QuorumPage() {
           </div>
         </div>
 
+        {/* Avatar role badge + independent role selector.
+            On mobile this section is hidden to conserve vertical space. */}
+        <div className="hidden lg:flex items-center gap-2 mb-2 text-xs text-white/70">
+          <span className="shrink-0">AI:</span>
+          <select
+            value={avatarRole?.id ?? ""}
+            onChange={(e) => {
+              const found = roles.find((r) => r.id === e.target.value);
+              setAvatarRole(found ?? null);
+            }}
+            data-testid="avatar-role-selector"
+            aria-label="Avatar role"
+            className="flex-1 min-w-0 truncate bg-slate-800 text-white/80 border border-white/10 rounded px-2 py-1 focus:outline-none focus:border-white/30 cursor-pointer hover:bg-slate-700 transition-colors text-xs"
+          >
+            <option value="">Select role…</option>
+            {roles.map((r) => (
+              <option key={r.id} value={r.id}>
+                {r.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
         {/* 3D Avatar — synthesisText is wired to the latest facilitator reply.
-            When audioMuted is true, we pass undefined so TTS never fires. */}
-        <div className="flex-1 min-h-[300px]">
+            When audioMuted is true, we pass undefined so TTS never fires.
+            On mobile the avatar is compact (fixed height); on desktop it fills
+            the remaining sticky column height. */}
+        <div className="h-[180px] lg:flex-1 lg:min-h-0">
           <AvatarPanel
             quorumId={quorumId}
             showDirectionIndicator
-            roleName={currentRole?.name}
+            roleName={avatarRole?.name ?? currentRole?.name}
             staticSynthesisText={audioMuted ? undefined : synthesisText}
           />
         </div>
       </div>
 
-      {/* Right panel: Quorum interaction */}
-      <div className="flex-1 p-4 sm:p-6 max-w-2xl flex flex-col min-h-screen lg:min-h-0">
+      {/* Right panel: Quorum interaction — scrolls independently while the
+          left avatar panel stays pinned in the viewport on desktop. */}
+      <div className="flex-1 p-4 sm:p-6 max-w-2xl flex flex-col lg:overflow-y-auto lg:h-screen">
         {/* A2A activity toast — visible whenever there are undismissed A2A notifications
             and the user is not already on the Conversation tab.  Clicking it switches
             the tab so the user can see the full notification in context. */}
@@ -515,35 +559,67 @@ export default function QuorumPage() {
           )}
         </header>
 
-        {/* Role selection */}
+        {/* Role selection — collapses to a compact badge after a role is chosen.
+            The full list is always rendered (for data-testid accessibility in tests)
+            but visually hidden when collapsed so tests can still find role buttons. */}
         {roles.length > 0 && (
           <section className="mb-6">
-            <h2 className="text-sm font-semibold text-gray-700 mb-2">
-              Select your role
-            </h2>
-            <div className="flex flex-col gap-2">
-              {roles.map((role) => {
-                const isSelected = currentRole?.id === role.id;
-                return (
-                  <button
-                    key={role.id}
-                    data-testid={`role-select-${role.id}`}
-                    onClick={() => selectRole(role)}
-                    className="w-full flex items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-medium transition-all"
-                    style={{
-                      backgroundColor: isSelected
-                        ? `${role.color ?? "#6b7280"}20`
-                        : `${role.color ?? "#6b7280"}08`,
-                      color: role.color ?? "#6b7280",
-                      ...(isSelected
-                        ? { boxShadow: `0 0 0 2px ${role.color ?? "#6b7280"}` }
-                        : {}),
-                    }}
-                  >
-                    <span>{role.name}</span>
-                  </button>
-                );
-              })}
+            {/* Collapsed badge: shown after selecting a role */}
+            {currentRole && !roleListExpanded && (
+              <div className="flex items-center gap-2 mb-2">
+                <span
+                  className="text-xs font-semibold px-3 py-1 rounded-full"
+                  style={{
+                    backgroundColor: `${currentRole.color ?? "#6b7280"}15`,
+                    color: currentRole.color ?? "#6b7280",
+                    boxShadow: `0 0 0 1.5px ${currentRole.color ?? "#6b7280"}`,
+                  }}
+                  data-testid="current-role-badge"
+                >
+                  You: {currentRole.name}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setRoleListExpanded(true)}
+                  className="text-xs text-gray-400 hover:text-gray-600 transition-colors underline"
+                  data-testid="change-role-button"
+                >
+                  Change
+                </button>
+              </div>
+            )}
+
+            {/* Full role list — shown when no role selected, or when user clicks Change */}
+            <div className={roleListExpanded ? "block" : "hidden"}>
+              {!currentRole && (
+                <h2 className="text-sm font-semibold text-gray-700 mb-2">
+                  Select your role
+                </h2>
+              )}
+              <div className="flex flex-col gap-2">
+                {roles.map((role) => {
+                  const isSelected = currentRole?.id === role.id;
+                  return (
+                    <button
+                      key={role.id}
+                      data-testid={`role-select-${role.id}`}
+                      onClick={() => selectRole(role)}
+                      className="w-full flex items-center justify-between rounded-xl px-4 py-3 text-left text-sm font-medium transition-all"
+                      style={{
+                        backgroundColor: isSelected
+                          ? `${role.color ?? "#6b7280"}20`
+                          : `${role.color ?? "#6b7280"}08`,
+                        color: role.color ?? "#6b7280",
+                        ...(isSelected
+                          ? { boxShadow: `0 0 0 2px ${role.color ?? "#6b7280"}` }
+                          : {}),
+                      }}
+                    >
+                      <span>{role.name}</span>
+                    </button>
+                  );
+                })}
+              </div>
             </div>
           </section>
         )}
@@ -696,6 +772,9 @@ export default function QuorumPage() {
                 loading={conversation.loading}
                 sending={conversation.sending}
                 onSend={conversation.sendMessage}
+                roleName={currentRole?.name}
+                avatarRoleName={avatarRole?.name}
+                currentModel={selectedModel}
               />
             )}
 

@@ -4,8 +4,8 @@
  * ConversationThread — chat bubble UI for a per-station facilitator conversation.
  *
  * Layout:
- * - User messages aligned right (blue bubble)
- * - Assistant/system messages aligned left (gray bubble) with tag pills
+ * - User messages aligned right (blue bubble) with role name prepended
+ * - Assistant/system messages aligned left (gray bubble) with "AI {role} [model]" label + tag pills
  * - Typing indicator while sending
  * - Input field pinned to bottom
  * - Auto-scrolls to latest message on new insertions
@@ -23,6 +23,12 @@ export interface ConversationThreadProps {
   sending: boolean;
   /** Called when the user submits a new message. */
   onSend: (content: string) => Promise<void>;
+  /** Human participant's role name, shown as prefix on user messages. */
+  roleName?: string;
+  /** Avatar/AI role name, shown as "AI {avatarRoleName}" on assistant messages. */
+  avatarRoleName?: string;
+  /** LLM model currently in use — shown as a small badge on assistant messages. */
+  currentModel?: string;
 }
 
 export function ConversationThread({
@@ -30,6 +36,9 @@ export function ConversationThread({
   loading,
   sending,
   onSend,
+  roleName,
+  avatarRoleName,
+  currentModel,
 }: ConversationThreadProps) {
   const [draft, setDraft] = useState("");
   const [sendError, setSendError] = useState<string | null>(null);
@@ -148,12 +157,42 @@ export function ConversationThread({
             );
           }
 
+          // Derive the sender label shown above the bubble.
+          // User messages show the human's role name; assistant messages show
+          // "AI {role}" with an optional model badge.
+          const senderLabel = isUser
+            ? (roleName ?? null)
+            : (avatarRoleName ?? roleName)
+              ? `AI ${avatarRoleName ?? roleName}`
+              : "AI Facilitator";
+
           return (
             <div
               key={msg.id}
               className={`flex flex-col gap-1 ${isUser ? "items-end" : "items-start"}`}
               data-testid={`msg-${msg.id}`}
             >
+              {/* Sender label row */}
+              {senderLabel && (
+                <div className={`flex items-center gap-1.5 ${isUser ? "flex-row-reverse" : "flex-row"}`}>
+                  <span
+                    className="text-[11px] font-semibold text-gray-600"
+                    data-testid={isUser ? `msg-user-label-${msg.id}` : `msg-ai-label-${msg.id}`}
+                  >
+                    {senderLabel}
+                  </span>
+                  {/* Model badge — only on assistant messages when model is known */}
+                  {!isUser && currentModel && (
+                    <span
+                      className="text-[10px] bg-gray-100 text-gray-400 px-1.5 py-0.5 rounded font-mono"
+                      data-testid={`msg-model-badge-${msg.id}`}
+                    >
+                      [{currentModel}]
+                    </span>
+                  )}
+                </div>
+              )}
+
               <div
                 className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
                   isUser

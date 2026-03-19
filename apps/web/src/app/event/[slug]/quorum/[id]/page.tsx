@@ -527,7 +527,7 @@ export default function QuorumPage() {
               {quorumTitle || `Quorum ${quorumId}`}
             </h1>
             <Link
-              href={`/display/${slug}`}
+              href={`/event/${slug}/dashboard`}
               data-testid="dashboard-link"
               className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 text-indigo-600 px-3 py-1.5 text-xs font-medium hover:bg-indigo-100 transition-colors flex-shrink-0"
             >

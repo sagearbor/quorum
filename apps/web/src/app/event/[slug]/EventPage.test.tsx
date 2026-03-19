@@ -154,7 +154,7 @@ describe("EventPage", () => {
       const dashLink = screen.getByTestId("dashboard-link");
       expect(dashLink).toBeInTheDocument();
       expect(dashLink).toHaveTextContent("View Dashboard");
-      expect(dashLink).toHaveAttribute("href", "/display/duke-expo-2026");
+      expect(dashLink).toHaveAttribute("href", "/event/duke-expo-2026/dashboard");
     });
   });
 

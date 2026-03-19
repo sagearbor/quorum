@@ -1,0 +1,162 @@
+# Developer Checklist — Quorum Platform
+# Track tasks, priorities, and status. Review at start of each session.
+
+project: Quorum
+updated: 2026-03-19
+
+# ─── Deployment (Tech Expo) ───────────────────────────────────────
+
+deployment:
+  - id: D-001
+    title: Deploy for tech expo (accessible on network)
+    status: not_started
+    priority: high
+    options:
+      quick_demo:
+        method: "ngrok http 3004 (public tunnel to localhost)"
+        pros: "5-minute setup, no infra changes"
+        cons: "Single machine, ngrok free tier limits"
+      azure_deploy:
+        method: "Next.js → Azure Static Web Apps, FastAPI → Azure App Service"
+        pros: "Production-grade, scalable"
+        cons: "Requires Azure setup, CI/CD pipeline"
+      docker:
+        method: "Docker compose with Caddy reverse proxy"
+        pros: "Portable, works on any machine on expo network"
+        cons: "Requires Docker setup"
+    notes: |
+      Supabase options:
+      - Supabase Cloud (supabase.com) — swap URL/keys, easiest
+      - Self-host on Azure VM via Docker
+      - Replace with Azure Database for PostgreSQL + Azure SignalR
+      Azure does NOT natively host Supabase, but Supabase Cloud is the
+      practical choice for the expo.
+
+  - id: D-002
+    title: Create Docker compose for local deployment
+    status: not_started
+    priority: medium
+    files: ["docker-compose.yml", "Dockerfile.web", "Dockerfile.api"]
+
+  - id: D-003
+    title: Supabase Cloud migration
+    status: not_started
+    priority: medium
+    notes: "Create project on supabase.com, apply migrations, update env vars"
+
+# ─── UX / Frontend ───────────────────────────────────────────────
+
+ux:
+  - id: UX-001
+    title: Move dashboard route to /event/{slug}/dashboard
+    status: in_progress
+    priority: high
+    notes: "Currently at /display/{slug}. Should be nested under event with URL params for dashboard selection"
+
+  - id: UX-002
+    title: Wire agent document dashboards into carousel/display view
+    status: not_started
+    priority: high
+    notes: "Seed docs (Gantt, budget, protocol) should render in dashboard view, not just Documents tab"
+
+  - id: UX-003
+    title: Dashboard URL params for controlling which dashboards show
+    status: not_started
+    priority: medium
+    notes: "e.g., /event/{slug}/dashboard?type=gantt&quorum={id}"
+
+  - id: UX-004
+    title: Carousel responsiveness and arrow navigation
+    status: not_started
+    priority: medium
+    notes: "User reported slow transitions, arrows not obviously clickable"
+
+  - id: UX-005
+    title: Avatar arms still look unnatural
+    status: open
+    priority: low
+    notes: "Arms hang statically. Need idle animation or subtle sway"
+
+  - id: UX-006
+    title: Avatar lip sync
+    status: not_started
+    priority: low
+    notes: "No lip movement during TTS. Would need viseme mapping from audio"
+
+# ─── Agent System ─────────────────────────────────────────────────
+
+agents:
+  - id: A-001
+    title: Test GPT-5-nano end-to-end with Azure deployment
+    status: not_started
+    priority: high
+    notes: |
+      Requires AZURE_OPENAI_DEPLOYMENT_T5 env var.
+      Verify respond() works, no temperature/top_p errors.
+      Test reasoning effort levels: minimal, low, medium, high.
+
+  - id: A-002
+    title: A2A cross-station visibility improvements
+    status: partially_done
+    priority: high
+    notes: "Amber toast + badge added. Need to verify agents actually wake each other in real usage."
+
+  - id: A-003
+    title: Agent auto-greet with shared document awareness
+    status: done
+    priority: medium
+    notes: "Auto-greet fires on role selection. Mentions quorum topic + role."
+
+  - id: A-004
+    title: Oscillation detection E2E test
+    status: not_started
+    priority: medium
+    notes: "Need to verify A→B→A→B detection triggers escalation in practice"
+
+  - id: A-005
+    title: Agent affinity graph visualization
+    status: partially_done
+    priority: low
+    notes: "Circle-layout SVG exists. D3 force layout deferred."
+
+  - id: A-006
+    title: Archive/cleanup auto-schedule (30d default, configurable)
+    status: not_started
+    priority: low
+    notes: "Admin page has manual archive. Need cron or scheduled cleanup."
+
+# ─── Backend / API ────────────────────────────────────────────────
+
+backend:
+  - id: B-001
+    title: WebSocket broadcast reliability
+    status: open
+    priority: medium
+    notes: "Display page showed 'connecting...' — realtime subscription may drop"
+
+  - id: B-002
+    title: Rate limiting on LLM calls
+    status: not_started
+    priority: medium
+    notes: "60 agents × 20 turns = 1200 calls. Need per-quorum budget cap."
+
+  - id: B-003
+    title: Supabase RLS policies (production hardening)
+    status: not_started
+    priority: medium
+    notes: "Currently open RLS. Need proper policies before production."
+
+# ─── Documentation ────────────────────────────────────────────────
+
+docs:
+  - id: DOC-001
+    title: AGENT_SYSTEM.md — comprehensive (done)
+    status: done
+  - id: DOC-002
+    title: Deployment guide for tech expo
+    status: not_started
+    priority: high
+  - id: DOC-003
+    title: User guide for station participants
+    status: not_started
+    priority: medium

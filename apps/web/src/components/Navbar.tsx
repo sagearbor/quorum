@@ -26,7 +26,7 @@ export function Navbar() {
       <div className="flex items-center gap-1 flex-1">
         <NavLink href="/">Home</NavLink>
         <NavLink href="/events">Events</NavLink>
-        <NavLink href="/architect">Architect</NavLink>
+        <NavLink href="/architect">+ New Session</NavLink>
       </div>
 
       {/* Version badge — subtle admin entry point */}

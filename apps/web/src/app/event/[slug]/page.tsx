@@ -183,7 +183,7 @@ export default function EventPage() {
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold">{slug}</h1>
           <Link
-            href={`/display/${slug}`}
+            href={`/event/${slug}/dashboard`}
             data-testid="dashboard-link"
             className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-medium hover:bg-indigo-700 transition-colors"
           >

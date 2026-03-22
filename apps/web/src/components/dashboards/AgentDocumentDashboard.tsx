@@ -28,7 +28,7 @@ import {
   ResponsiveContainer,
   Cell,
 } from "recharts";
-import type { AgentDocumentDashboardProps } from "@quorum/types/src/dashboard";
+// AgentDocumentDashboardProps from @quorum/types used for external callers; props handled inline below
 import { useAgentDocuments } from "@/hooks/useAgentDocuments";
 
 // ---------------------------------------------------------------------------

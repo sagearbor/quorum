@@ -38,11 +38,11 @@ export interface IdleSceneProps {
 export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
   function IdleScene(props, ref) {
     const containerRef = useRef<HTMLDivElement>(null);
-    const sceneRef = useRef<any>(null);
+    const sceneRef = useRef<unknown>(null);
     const gazeRef = useRef(0);
     const pitchRef = useRef(0);
     const emotionRef = useRef<DetectedEmotion>("neutral");
-    const [loaded, setLoaded] = useState(false);
+    const [, setLoaded] = useState(false);
 
     useImperativeHandle(ref, () => ({
       setGaze: (y: number, p?: number) => {
@@ -103,6 +103,7 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
         if (props.glbUrl) {
           const loader = new GLTFLoader();
           try {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const gltf = await new Promise<any>((resolve, reject) => {
               loader.load(props.glbUrl!, resolve, undefined, reject);
             });
@@ -112,6 +113,7 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
             scene.add(gltf.scene);
 
             // Find bones for gaze control
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
             gltf.scene.traverse((child: any) => {
               if (child.isBone) {
                 if (/head/i.test(child.name) && !headBone) {
@@ -139,6 +141,7 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
               // Detect by checking if LeftArm/RightArm quaternion is near-identity
               // (= T-pose, e.g. Avaturn) vs already rotated (= arms-down, e.g. MakeHuman).
               // Quaternion values computed analytically per skeleton type.
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
               gltf.scene.traverse((bone: any) => {
                 if (!bone.isBone) return;
                 const name = bone.name;

@@ -12,6 +12,7 @@
     {
       "id": "00000000-0000-0000-0000-000000000010",
       "event_id": "00000000-0000-0000-0000-000000000001",
+      "created_at": "2026-03-20T10:00:00Z",
       "title": "Phase III Trial NCT-2026-FAKE-001 — Site Enrollment Rescue",
       "description": "Multi-site Phase III cardiovascular outcomes trial (BEACON-CV) has stalled at 47% enrollment across 12 sites after 18 months. Three sites are below 20% target. Protocol amendment under consideration. IRB approval needed for revised consent language. Sponsor threatening to pull two underperforming sites.",
       "status": "active",
@@ -274,6 +275,7 @@
     {
       "id": "00000000-0000-0000-0000-000000000020",
       "event_id": "00000000-0000-0000-0000-000000000001",
+      "created_at": "2026-03-20T11:00:00Z",
       "title": "Medical Device Recall Coordination",
       "description": "Class II recall of cardiac monitoring patch (Model CM-400) affecting 3 hospitals. Coordination needed between manufacturer, clinical engineering, and patient safety.",
       "status": "open",
@@ -324,6 +326,7 @@
     {
       "id": "00000000-0000-0000-0000-000000000030",
       "event_id": "00000000-0000-0000-0000-000000000001",
+      "created_at": "2026-03-20T12:00:00Z",
       "title": "Emergency Department Overcrowding Response",
       "description": "Regional surge in respiratory illness has pushed ED capacity to 140%. Need coordination between ED, inpatient, outpatient clinics, and EMS for diversion and discharge planning.",
       "status": "open",

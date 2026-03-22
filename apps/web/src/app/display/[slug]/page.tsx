@@ -66,7 +66,7 @@ export default function DisplayPage() {
             const msg = JSON.parse(event.data);
             if (msg.type === "role_unblocked") {
               // Flash animation: add to unblocked set, remove after 2s
-              setUnblockedIds((prev) => new Set([...prev, msg.role_id]));
+              setUnblockedIds((prev) => new Set([...Array.from(prev), msg.role_id]));
               setTimeout(() => {
                 setUnblockedIds((prev) => {
                   const next = new Set(prev);

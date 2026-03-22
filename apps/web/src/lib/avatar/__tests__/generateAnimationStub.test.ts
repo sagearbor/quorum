@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   generateAnimationStub,
   ANIMATION_TYPES,
-  type AnimationType,
+
 } from '../generateAnimationStub';
 
 describe('ANIMATION_TYPES', () => {

@@ -38,6 +38,7 @@ export class EmotionDetector {
   private mock: boolean;
   private intervalMs: number;
   private smoothingMs: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private landmarker: any = null;
   private video: HTMLVideoElement | null = null;
   private stream: MediaStream | null = null;

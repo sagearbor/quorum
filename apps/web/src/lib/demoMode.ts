@@ -62,6 +62,7 @@ interface DemoQuorum {
   heat_score: number;
   dashboard_types: string[];
   carousel_mode: string;
+  created_at: string;
   roles: DemoRole[];
   contributions: DemoContribution[];
   artifact: DemoArtifact | null;

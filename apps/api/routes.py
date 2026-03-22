@@ -19,6 +19,7 @@ from quorum_llm import (
 )
 
 # TODO: migrate to DatabaseProvider from db/factory.py
+from .coordination.factory import get_coordination_backend
 from .database import get_supabase
 from .health import calculate_health_score
 from .llm import llm_provider
@@ -157,17 +158,16 @@ async def contribute(quorum_id: str, body: ContributeRequest):
     tier = 1
     await llm_provider.complete(body.content, tier=LLMTier.KEYWORD)
 
-    contribution_id = str(uuid.uuid4())
-    contrib_row = {
-        "id": contribution_id,
-        "quorum_id": quorum_id,
-        "role_id": body.role_id,
-        "user_token": body.user_token,
-        "content": body.content,
-        "structured_fields": body.structured_fields,
-        "tier_processed": tier,
-    }
-    db.table("contributions").insert(contrib_row).execute()
+    # Submit via coordination backend (supabase or a2a)
+    backend = get_coordination_backend()
+    contrib_row = await backend.submit_contribution(
+        quorum_id=quorum_id,
+        role_id=body.role_id,
+        user_token=body.user_token,
+        content=body.content,
+        structured_fields=body.structured_fields,
+    )
+    contribution_id = contrib_row["id"]
 
     # Broadcast contribution
     await manager.broadcast(quorum_id, {
@@ -372,6 +372,11 @@ async def resolve_quorum(quorum_id: str, body: ResolveRequest):
         }
         db.table("artifacts").insert(artifact_row).execute()
 
+    # Write compressed state snapshot
+    _write_state_snapshot(
+        db, quorum_id, roles_data.data, contributions.data, sections_json,
+    )
+
     # Mark quorum resolved
     db.table("quorums").update({"status": "resolved"}).eq("id", quorum_id).execute()
 
@@ -388,6 +393,73 @@ async def resolve_quorum(quorum_id: str, body: ResolveRequest):
 
     download_url = f"/artifacts/{artifact_id}/download"
     return ResolveResponse(artifact_id=artifact_id, download_url=download_url)
+
+
+# ---------------------------------------------------------------------------
+# State snapshot helpers
+# ---------------------------------------------------------------------------
+
+def _write_state_snapshot(
+    db, quorum_id: str, roles: list, contributions: list, sections: list,
+) -> None:
+    """Write a compressed state snapshot after synthesis."""
+    contributing_role_ids = {c["role_id"] for c in contributions}
+    all_role_ids = {r["id"] for r in roles}
+    blocked_roles = [
+        r["name"] for r in roles
+        if r["id"] not in contributing_role_ids
+        and r.get("capacity") != "unlimited"
+        and str(r.get("capacity", "")) == "1"
+    ]
+
+    role_health = {}
+    for r in roles:
+        rid = r["id"]
+        count = sum(1 for c in contributions if c["role_id"] == rid)
+        role_health[r["name"]] = {"contributions": count, "active": rid in contributing_role_ids}
+
+    last_excerpt = ""
+    if sections:
+        last_excerpt = (sections[-1].get("content") or "")[:200]
+
+    # Detect key tensions from conflicts (simplified: roles with competing contributions)
+    key_tensions: list[str] = []
+
+    snapshot = {
+        "role_health": role_health,
+        "key_tensions": key_tensions,
+        "contributions_count": len(contributions),
+        "last_synthesis_excerpt": last_excerpt,
+        "blocked_roles": blocked_roles,
+    }
+
+    try:
+        db.table("quorum_state_snapshots").insert({
+            "quorum_id": quorum_id,
+            "snapshot": snapshot,
+        }).execute()
+    except Exception:
+        logger.warning("Failed to write state snapshot for quorum %s", quorum_id, exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# GET /api/quorums/{quorum_id}/state-snapshot
+# ---------------------------------------------------------------------------
+@router.get("/api/quorums/{quorum_id}/state-snapshot")
+async def get_state_snapshot(quorum_id: str):
+    """Return the latest compressed state snapshot for a quorum."""
+    db = get_supabase()
+    result = (
+        db.table("quorum_state_snapshots")
+        .select("*")
+        .eq("quorum_id", quorum_id)
+        .order("updated_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not result.data:
+        raise HTTPException(status_code=404, detail="No snapshot found")
+    return result.data[0]
 
 
 # ---------------------------------------------------------------------------

@@ -8,8 +8,10 @@ from quorum_llm.interface import LLMProvider
 
 # Registry of known providers — lazy imports to avoid pulling in unused SDKs
 _PROVIDERS: dict[str, str] = {
+    "openai": "quorum_llm.providers.openai:OpenAIProvider",
     "azure": "quorum_llm.providers.azure:AzureOpenAIProvider",
     "anthropic": "quorum_llm.providers.anthropic:AnthropicProvider",
+    "local": "quorum_llm.providers.local:LocalOllamaProvider",
     "mock": "quorum_llm.providers.mock:MockLLMProvider",
 }
 
@@ -21,7 +23,7 @@ def get_llm_provider(provider_name: str = "azure", **kwargs) -> LLMProvider:
     regardless of provider_name.
 
     Args:
-        provider_name: One of "azure", "anthropic", "mock".
+        provider_name: One of "openai", "azure", "anthropic", "local", "mock".
         **kwargs: Forwarded to the provider constructor.
 
     Returns:

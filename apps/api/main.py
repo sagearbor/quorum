@@ -1,10 +1,13 @@
 """FastAPI application entry point."""
 
 import logging
+import os
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from .routes import router
 from .seed_loader import load_seed_quorum
@@ -38,6 +41,12 @@ app.add_middleware(
 )
 
 app.include_router(router)
+
+# Serve local uploads when STORAGE_PROVIDER=local (default)
+if os.environ.get("STORAGE_PROVIDER", "local").lower() == "local":
+    _uploads = Path("uploads")
+    _uploads.mkdir(exist_ok=True)
+    app.mount("/static", StaticFiles(directory=str(_uploads)), name="static")
 
 
 @app.get("/health")

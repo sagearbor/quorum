@@ -16,10 +16,10 @@ try:
 except ImportError:
     _HAS_POSTGREST_EXC = False
 
-from .a2a.a2a_server import a2a_router
-from .coordination.factory import get_backend_name
-from .routes import router
-from .seed_loader import load_seed_quorum
+from a2a.a2a_server import a2a_router
+from coordination.factory import get_backend_name
+from routes import router
+from seed_loader import load_seed_quorum
 
 logger = logging.getLogger(__name__)
 

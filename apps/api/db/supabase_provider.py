@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..database import get_supabase
-from .provider import DatabaseProvider
+from provider import DatabaseProvider
 
 
 class SupabaseDatabaseProvider(DatabaseProvider):

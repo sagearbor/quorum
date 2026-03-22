@@ -9,7 +9,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from ..database import get_supabase
+from database import get_supabase
 from .a2a_client import A2AClient
 
 logger = logging.getLogger(__name__)

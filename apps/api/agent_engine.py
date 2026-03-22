@@ -27,7 +27,7 @@ from quorum_llm.affinity import (
     extract_tags_from_text,
     find_relevant_agents,
 )
-from .tag_vocabulary import get_vocabulary, update_vocabulary
+from tag_vocabulary import get_vocabulary, update_vocabulary
 
 logger = logging.getLogger(__name__)
 

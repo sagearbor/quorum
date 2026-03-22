@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from ..database import get_supabase
+from database import get_supabase
 from .backend import CoordinationBackend
 
 

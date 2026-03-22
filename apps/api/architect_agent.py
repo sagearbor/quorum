@@ -13,8 +13,8 @@ from quorum_llm import get_llm_provider
 from quorum_llm.interface import LLMProvider
 from quorum_llm.models import LLMTier
 
-from .a2a.a2a_client import A2AClient
-from .database import get_supabase
+from a2a.a2a_client import A2AClient
+from database import get_supabase
 
 logger = logging.getLogger(__name__)
 

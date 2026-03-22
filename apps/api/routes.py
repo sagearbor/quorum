@@ -20,12 +20,12 @@ from quorum_llm import (
 )
 
 # TODO: migrate to DatabaseProvider from db/factory.py
-from .coordination.factory import get_coordination_backend
-from .database import get_supabase
-from .health import calculate_health_score
-from .llm import llm_provider
-from .architect_agent import generate_roles, send_guidance
-from .models import (
+from coordination.factory import get_coordination_backend
+from database import get_supabase
+from health import calculate_health_score
+from llm import llm_provider
+from architect_agent import generate_roles, send_guidance
+from models import (
     A2ARequestCreate,
     A2ARequestResponse,
     AIStartRequest,
@@ -52,9 +52,9 @@ from .models import (
     ResolveResponse,
     StationMessageResponse,
 )
-from .agent_engine import process_a2a_request, process_agent_turn
-from .document_engine import create_document, detect_oscillation, update_document
-from .ws_manager import manager
+from agent_engine import process_a2a_request, process_agent_turn
+from document_engine import create_document, detect_oscillation, update_document
+from ws_manager import manager
 
 logger = logging.getLogger(__name__)
 

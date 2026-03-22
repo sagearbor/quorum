@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import os
 
-from .provider import StorageProvider
+from provider import StorageProvider
 
 _DEFAULT_CONTAINER = "quorum-files"
 

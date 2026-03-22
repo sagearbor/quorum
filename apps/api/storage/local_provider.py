@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from .provider import StorageProvider
+from provider import StorageProvider
 
 # Default upload directory, relative to working directory
 _DEFAULT_UPLOAD_DIR = os.path.join(".", "uploads")

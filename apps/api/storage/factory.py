@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 
-from .provider import StorageProvider
+from provider import StorageProvider
 
 _provider: StorageProvider | None = None
 
@@ -21,10 +21,10 @@ def get_storage_provider() -> StorageProvider:
     backend = os.environ.get("STORAGE_PROVIDER", "local").lower()
 
     if backend == "local":
-        from .local_provider import LocalStorageProvider
+        from local_provider import LocalStorageProvider
         _provider = LocalStorageProvider()
     elif backend == "azure_blob":
-        from .azure_blob_provider import AzureBlobStorageProvider
+        from azure_blob_provider import AzureBlobStorageProvider
         _provider = AzureBlobStorageProvider()
     else:
         raise ValueError(

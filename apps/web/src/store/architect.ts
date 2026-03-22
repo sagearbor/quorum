@@ -13,6 +13,7 @@ export interface RoleDraft {
   capacity: RoleCapacity;
   authority_rank: number;
   color: string;
+  blocked_by: string[]; // IDs of other RoleDrafts this role depends on
 }
 
 export interface QuorumDraft {

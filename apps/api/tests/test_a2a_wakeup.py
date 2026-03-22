@@ -38,6 +38,13 @@ import pytest
 # Helpers — reuse the same fake DB builder from test_agent_endpoints
 # ---------------------------------------------------------------------------
 
+def _wrap_as_provider(fake_db: MagicMock) -> MagicMock:
+    """Wrap a fake Supabase client in a mock DatabaseProvider."""
+    provider = MagicMock()
+    provider.get_client.return_value = fake_db
+    return provider
+
+
 def _make_fake_supabase(overrides: dict[str, Any] | None = None) -> MagicMock:
     """Minimal fluent Supabase mock with configurable table data."""
     overrides = overrides or {}
@@ -131,8 +138,10 @@ def a2a_client():
     fake_llm.complete = AsyncMock(return_value="Mock LLM response")
     fake_llm.chat = AsyncMock(return_value="A2A mock response from IRB officer")
 
+    fake_provider = _wrap_as_provider(fake_db)
+
     with (
-        patch("apps.api.routes.get_supabase", return_value=fake_db),
+        patch("apps.api.routes.get_database_provider", return_value=fake_provider),
         patch("apps.api.routes.llm_provider", fake_llm),
         patch("apps.api.routes.process_agent_turn", new=AsyncMock(
             return_value=("reply", str(uuid.uuid4()), [])
@@ -241,9 +250,10 @@ class TestA2ARequestEndpoint:
         })
         fake_llm = MagicMock()
         fake_llm.chat = AsyncMock(return_value="mock")
+        fake_provider = _wrap_as_provider(empty_db)
 
         with (
-            patch("apps.api.routes.get_supabase", return_value=empty_db),
+            patch("apps.api.routes.get_database_provider", return_value=fake_provider),
             patch("apps.api.routes.llm_provider", fake_llm),
             patch("apps.api.routes.process_agent_turn", new=AsyncMock(return_value=("r", "id", []))),
             patch("apps.api.routes.process_a2a_request", new=AsyncMock(return_value="resp")),

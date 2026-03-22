@@ -29,6 +29,13 @@ import pytest
 # Helpers: build a minimal fake Supabase client
 # ---------------------------------------------------------------------------
 
+def _wrap_as_provider(fake_db: MagicMock) -> MagicMock:
+    """Wrap a fake Supabase client in a mock DatabaseProvider."""
+    provider = MagicMock()
+    provider.get_client.return_value = fake_db
+    return provider
+
+
 def _make_fake_supabase(overrides: dict[str, Any] | None = None) -> MagicMock:
     """Return a MagicMock that mimics the fluent Supabase Python client.
 
@@ -161,9 +168,10 @@ def client():
         "agent_requests": [],
     })
     fake_llm = _make_fake_llm_provider()
+    fake_provider = _wrap_as_provider(fake_db)
 
     with (
-        patch("apps.api.routes.get_supabase", return_value=fake_db),
+        patch("apps.api.routes.get_database_provider", return_value=fake_provider),
         patch("apps.api.routes.llm_provider", fake_llm),
         patch("apps.api.routes.process_agent_turn", new=AsyncMock(
             return_value=("Mock agent reply [tags: test, mock]", str(uuid.uuid4()), ["test", "mock"])
@@ -207,9 +215,10 @@ def empty_client():
 
     fake_db = _make_fake_supabase(_EMPTY_OVERRIDES)
     fake_llm = _make_fake_llm_provider()
+    fake_provider = _wrap_as_provider(fake_db)
 
     with (
-        patch("apps.api.routes.get_supabase", return_value=fake_db),
+        patch("apps.api.routes.get_database_provider", return_value=fake_provider),
         patch("apps.api.routes.llm_provider", fake_llm),
         patch("apps.api.routes.process_agent_turn", new=AsyncMock(
             return_value=("reply", str(uuid.uuid4()), [])
@@ -788,9 +797,10 @@ class TestDocumentOwnershipCheck:
             "agent_documents": [doc_row],
         })
         fake_llm = _make_fake_llm_provider()
+        fake_provider = _wrap_as_provider(fake_db)
 
         with (
-            patch("apps.api.routes.get_supabase", return_value=fake_db),
+            patch("apps.api.routes.get_database_provider", return_value=fake_provider),
             patch("apps.api.routes.llm_provider", fake_llm),
             patch("apps.api.routes.process_agent_turn", new=AsyncMock(
                 return_value=("reply", "msg-id", [])

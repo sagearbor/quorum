@@ -18,6 +18,7 @@ from quorum_llm import (
     synthesize_contributions,
 )
 
+# TODO: migrate to DatabaseProvider from db/factory.py
 from .database import get_supabase
 from .health import calculate_health_score
 from .llm import llm_provider

@@ -32,6 +32,9 @@ export function CreateQuorumForm() {
           authority_rank: r.authority_rank,
           prompt_template: [],
           fallback_chain: [],
+          blocked_by: r.blocked_by.map((depId) =>
+            String(quorumDraft.roles.findIndex((role) => role.id === depId))
+          ),
         })),
         dashboard_types: quorumDraft.dashboard_types,
         carousel_mode: quorumDraft.carousel_mode,

@@ -18,6 +18,7 @@ from quorum_llm import (
     synthesize_contributions,
 )
 
+from .coordination.factory import get_coordination_backend
 from .database import get_supabase
 from .health import calculate_health_score
 from .llm import llm_provider
@@ -156,17 +157,16 @@ async def contribute(quorum_id: str, body: ContributeRequest):
     tier = 1
     await llm_provider.complete(body.content, tier=LLMTier.KEYWORD)
 
-    contribution_id = str(uuid.uuid4())
-    contrib_row = {
-        "id": contribution_id,
-        "quorum_id": quorum_id,
-        "role_id": body.role_id,
-        "user_token": body.user_token,
-        "content": body.content,
-        "structured_fields": body.structured_fields,
-        "tier_processed": tier,
-    }
-    db.table("contributions").insert(contrib_row).execute()
+    # Submit via coordination backend (supabase or a2a)
+    backend = get_coordination_backend()
+    contrib_row = await backend.submit_contribution(
+        quorum_id=quorum_id,
+        role_id=body.role_id,
+        user_token=body.user_token,
+        content=body.content,
+        structured_fields=body.structured_fields,
+    )
+    contribution_id = contrib_row["id"]
 
     # Broadcast contribution
     await manager.broadcast(quorum_id, {

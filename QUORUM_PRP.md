@@ -223,7 +223,7 @@ All services deployable to Azure, toggled via env vars, no code changes required
 - [ ] **Track E Avatar integration** — wire IdleScene, VisionTracker, archetypes, transitions into AvatarPanel
 - [ ] **Migrate routes.py to DatabaseProvider** — remove direct Supabase calls, use `db/factory.py`
 - [ ] **Azure deploy templates** — Bicep + Dockerfiles + CI/CD
-- [ ] **Merge all feature branches to main** — feature/a2a-wire, feature/blocked-by, feature/ai-architect, feature/provider-abstraction
+- [x] **Merge all feature branches to main** — feature/a2a-wire, feature/blocked-by, feature/ai-architect, feature/provider-abstraction
 - [ ] **End-to-end test** — `AVATAR_MOCK=true QUORUM_TEST_MODE=true pnpm dev` → verify all features work together
 
 ---

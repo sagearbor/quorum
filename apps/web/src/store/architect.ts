@@ -30,12 +30,23 @@ export interface EventDraft {
   max_active_quorums: number;
 }
 
+export interface RoleSuggestion {
+  name: string;
+  description: string;
+  authority_rank: number;
+  capacity: string | number;
+  suggested_prompt_focus: string;
+}
+
 export interface ArchitectState {
   step: number;
   eventDraft: EventDraft;
   eventId: string | null;
   quorumDraft: QuorumDraft;
   createdQuorums: Array<Quorum & { roles: Role[] }>;
+  aiMode: boolean;
+  problemDescription: string;
+  generatedRoles: RoleSuggestion[];
 
   setStep: (step: number) => void;
   setEventDraft: (draft: Partial<EventDraft>) => void;
@@ -47,6 +58,9 @@ export interface ArchitectState {
   reorderRoles: (roles: RoleDraft[]) => void;
   addCreatedQuorum: (quorum: Quorum & { roles: Role[] }) => void;
   resetQuorumDraft: () => void;
+  setAIMode: (aiMode: boolean) => void;
+  setProblemDescription: (problem: string) => void;
+  setGeneratedRoles: (roles: RoleSuggestion[]) => void;
 }
 
 const defaultQuorumDraft: QuorumDraft = {
@@ -63,6 +77,9 @@ export const useArchitectStore = create<ArchitectState>((set) => ({
   eventId: null,
   quorumDraft: { ...defaultQuorumDraft },
   createdQuorums: [],
+  aiMode: false,
+  problemDescription: "",
+  generatedRoles: [],
 
   setStep: (step) => set({ step }),
   setEventDraft: (draft) =>
@@ -102,4 +119,7 @@ export const useArchitectStore = create<ArchitectState>((set) => ({
       createdQuorums: [...state.createdQuorums, quorum],
     })),
   resetQuorumDraft: () => set({ quorumDraft: { ...defaultQuorumDraft } }),
+  setAIMode: (aiMode) => set({ aiMode }),
+  setProblemDescription: (problemDescription) => set({ problemDescription }),
+  setGeneratedRoles: (generatedRoles) => set({ generatedRoles }),
 }));

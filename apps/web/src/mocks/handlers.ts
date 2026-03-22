@@ -106,4 +106,69 @@ export const handlers = [
       download_url: "#",
     });
   }),
+
+  // POST /events/:event_id/architect/generate-roles
+  http.post(
+    `${API_BASE}/events/:event_id/architect/generate-roles`,
+    async () => {
+      return HttpResponse.json({
+        roles: [
+          {
+            name: "Researcher",
+            description: "Domain expert for evidence quality",
+            authority_rank: 3,
+            capacity: "unlimited",
+            suggested_prompt_focus: "Evaluate evidence base",
+          },
+          {
+            name: "Ethicist",
+            description: "Ethics specialist for regulatory standards",
+            authority_rank: 4,
+            capacity: 1,
+            suggested_prompt_focus: "Identify ethical implications",
+          },
+          {
+            name: "Administrator",
+            description: "Operations lead for resources",
+            authority_rank: 2,
+            capacity: 1,
+            suggested_prompt_focus: "Assess resource requirements",
+          },
+          {
+            name: "Patient Advocate",
+            description: "Representative for participant welfare",
+            authority_rank: 5,
+            capacity: "unlimited",
+            suggested_prompt_focus: "Champion participant safety",
+          },
+        ],
+        problem_summary: "Test problem description",
+      });
+    }
+  ),
+
+  // POST /events/:event_id/architect/ai-start
+  http.post(
+    `${API_BASE}/events/:event_id/architect/ai-start`,
+    async ({ params }) => {
+      return HttpResponse.json({
+        quorum_id: `q-ai-${Date.now()}`,
+        share_url: `/event/${params.event_id}/quorum/q-ai-001`,
+        mode: "approved",
+      });
+    }
+  ),
+
+  // POST /quorums/:quorumId/architect/guidance
+  http.post(
+    `${API_BASE}/quorums/:quorumId/architect/guidance`,
+    async ({ params }) => {
+      return HttpResponse.json({
+        quorum_id: params.quorumId,
+        deliveries: [
+          { role_id: "role-1", delivery: "supabase_fallback", status: "stored" },
+        ],
+      });
+    }
+  ),
 ];

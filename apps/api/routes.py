@@ -23,13 +23,20 @@ from .coordination.factory import get_coordination_backend
 from .database import get_supabase
 from .health import calculate_health_score
 from .llm import llm_provider
+from .architect_agent import generate_roles, send_guidance
 from .models import (
+    AIStartRequest,
+    AIStartResponse,
     ContributeRequest,
     ContributeResponse,
     CreateEventRequest,
     CreateEventResponse,
     CreateQuorumRequest,
     CreateQuorumResponse,
+    GenerateRolesRequest,
+    GenerateRolesResponse,
+    GuidanceRequest,
+    GuidanceResponse,
     QuorumStateResponse,
     ResolveRequest,
     ResolveResponse,
@@ -545,6 +552,99 @@ async def get_state_snapshot(quorum_id: str):
     if not result.data:
         raise HTTPException(status_code=404, detail="No snapshot found")
     return result.data[0]
+
+
+# ---------------------------------------------------------------------------
+# POST /events/{event_id}/architect/generate-roles
+# ---------------------------------------------------------------------------
+@router.post(
+    "/events/{event_id}/architect/generate-roles",
+    response_model=GenerateRolesResponse,
+)
+async def architect_generate_roles(event_id: str, body: GenerateRolesRequest):
+    db = get_supabase()
+
+    # Verify event exists
+    event = db.table("events").select("id").eq("id", event_id).single().execute()
+    if not event.data:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    roles = await generate_roles(body.problem)
+    return GenerateRolesResponse(
+        roles=[r.model_dump() for r in roles],
+        problem_summary=body.problem[:100],
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /events/{event_id}/architect/ai-start
+# ---------------------------------------------------------------------------
+@router.post(
+    "/events/{event_id}/architect/ai-start",
+    response_model=AIStartResponse,
+)
+async def architect_ai_start(event_id: str, body: AIStartRequest):
+    db = get_supabase()
+
+    # Verify event exists
+    event = db.table("events").select("id, slug").eq("id", event_id).single().execute()
+    if not event.data:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    quorum_id = str(uuid.uuid4())
+    quorum_row = {
+        "id": quorum_id,
+        "event_id": event_id,
+        "title": body.quorum_title,
+        "description": body.problem[:500],
+        "status": "open",
+        "carousel_mode": "multi-view",
+    }
+    db.table("quorums").insert(quorum_row).execute()
+
+    # Insert roles from AI suggestions
+    for role_def in body.roles:
+        role_id = str(uuid.uuid4())
+        role_row = {
+            "id": role_id,
+            "quorum_id": quorum_id,
+            "name": role_def.name,
+            "capacity": (
+                str(role_def.capacity) if role_def.capacity != "unlimited" else "unlimited"
+            ),
+            "authority_rank": role_def.authority_rank,
+            "prompt_template": [
+                {"field_name": "focus", "prompt": role_def.suggested_prompt_focus}
+            ],
+            "fallback_chain": [],
+        }
+        db.table("roles").insert(role_row).execute()
+
+    # Auto-activate if mode is "auto"
+    if body.mode == "auto":
+        db.table("quorums").update({"status": "active"}).eq("id", quorum_id).execute()
+
+    share_url = f"/event/{event.data['slug']}/quorum/{quorum_id}"
+    return AIStartResponse(quorum_id=quorum_id, share_url=share_url, mode=body.mode)
+
+
+# ---------------------------------------------------------------------------
+# POST /quorums/{quorum_id}/architect/guidance
+# ---------------------------------------------------------------------------
+@router.post(
+    "/quorums/{quorum_id}/architect/guidance",
+    response_model=GuidanceResponse,
+)
+async def architect_guidance(quorum_id: str, body: GuidanceRequest):
+    db = get_supabase()
+
+    # Verify quorum exists
+    quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
+    if not quorum.data:
+        raise HTTPException(status_code=404, detail="Quorum not found")
+
+    result = await send_guidance(quorum_id, body.message, body.target_role_id)
+    return GuidanceResponse(**result)
 
 
 # ---------------------------------------------------------------------------

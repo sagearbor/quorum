@@ -4,6 +4,7 @@ import { useArchitectStore } from "@/store/architect";
 import { CreateEventForm } from "./components/CreateEventForm";
 import { CreateQuorumForm } from "./components/CreateQuorumForm";
 import { LiveEventDashboard } from "./components/LiveEventDashboard";
+import { AIArchitectPanel } from "./components/AIArchitectPanel";
 
 const STEPS = [
   { number: 1, label: "Create Event" },
@@ -11,8 +12,13 @@ const STEPS = [
   { number: 3, label: "Live Dashboard" },
 ];
 
+const TABS = [
+  { id: "manual", label: "Manual Setup" },
+  { id: "ai", label: "AI Architect" },
+] as const;
+
 export default function ArchitectPage() {
-  const { step, setStep, eventId } = useArchitectStore();
+  const { step, setStep, eventId, aiMode, setAIMode } = useArchitectStore();
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -72,7 +78,28 @@ export default function ArchitectPage() {
         {/* Step content */}
         <main className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
           {step === 1 && <CreateEventForm />}
-          {step === 2 && <CreateQuorumForm />}
+          {step === 2 && (
+            <>
+              {/* Tab toggle for step 2 */}
+              <div className="flex border-b border-gray-200 mb-6">
+                {TABS.map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setAIMode(tab.id === "ai")}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                      (tab.id === "ai") === aiMode
+                        ? "border-blue-600 text-blue-600"
+                        : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
+                    }`}
+                  >
+                    {tab.label}
+                  </button>
+                ))}
+              </div>
+
+              {aiMode ? <AIArchitectPanel /> : <CreateQuorumForm />}
+            </>
+          )}
           {step === 3 && <LiveEventDashboard />}
         </main>
       </div>

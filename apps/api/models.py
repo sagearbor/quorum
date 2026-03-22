@@ -141,6 +141,52 @@ class ResolveResponse(BaseModel):
 # --- WebSocket message types ---
 
 
+# --- AI Architect Models ---
+
+
+class GenerateRolesRequest(BaseModel):
+    problem: str
+
+
+class RoleSuggestionResponse(BaseModel):
+    name: str
+    description: str
+    authority_rank: int
+    capacity: str | int = "unlimited"
+    suggested_prompt_focus: str
+
+
+class GenerateRolesResponse(BaseModel):
+    roles: list[RoleSuggestionResponse]
+    problem_summary: str
+
+
+class AIStartRequest(BaseModel):
+    problem: str
+    roles: list[RoleSuggestionResponse]
+    mode: str  # "auto" | "approved"
+    quorum_title: str
+
+
+class AIStartResponse(BaseModel):
+    quorum_id: str
+    share_url: str
+    mode: str
+
+
+class GuidanceRequest(BaseModel):
+    message: str
+    target_role_id: str | None = None
+
+
+class GuidanceResponse(BaseModel):
+    quorum_id: str
+    deliveries: list[dict[str, Any]]
+
+
+# --- WebSocket message types ---
+
+
 class WSContributionMessage(BaseModel):
     type: str = "contribution"
     data: dict[str, Any]

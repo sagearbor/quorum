@@ -43,6 +43,41 @@ router = APIRouter()
 # Helpers: convert DB rows → quorum_llm data models
 # ---------------------------------------------------------------------------
 
+async def resolve_dependencies(quorum_id: str, completed_role_id: str, db) -> None:
+    """Check if any blocked roles can now be unblocked.
+
+    For each role in the quorum whose blocked_by list contains completed_role_id,
+    check if ALL items in its blocked_by now have >= 1 accepted contribution.
+    If yes, update role status to 'active' and broadcast a WebSocket event.
+    """
+    roles = db.table("roles").select("*").eq("quorum_id", quorum_id).execute()
+    contributions = (
+        db.table("contributions").select("*").eq("quorum_id", quorum_id).execute()
+    )
+
+    # Build set of role_ids that have at least one contribution
+    roles_with_contributions = {c["role_id"] for c in contributions.data}
+
+    for role in roles.data:
+        blocked_by = role.get("blocked_by") or []
+        if not blocked_by:
+            continue
+        if role.get("status") != "blocked":
+            continue
+        if completed_role_id not in blocked_by:
+            continue
+
+        # Check if ALL blocking roles now have contributions
+        all_satisfied = all(dep_id in roles_with_contributions for dep_id in blocked_by)
+        if all_satisfied:
+            db.table("roles").update({"status": "active"}).eq("id", role["id"]).execute()
+            await manager.broadcast(quorum_id, {
+                "type": "role_unblocked",
+                "role_id": role["id"],
+                "role_name": role["name"],
+            })
+
+
 def _db_roles_to_llm(roles_data: list[dict]) -> list[LLMRole]:
     return [
         LLMRole(
@@ -114,11 +149,20 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
     }
     db.table("quorums").insert(quorum_row).execute()
 
-    # Insert roles
-    for role_def in body.roles:
-        role_id = str(uuid.uuid4())
+    # Insert roles — two passes: first create all roles to get IDs, then insert.
+    # blocked_by values arrive as position indices (integers) referencing other
+    # roles in the request list.  We resolve them to real UUIDs after assigning IDs.
+    role_ids: list[str] = []
+    for _ in body.roles:
+        role_ids.append(str(uuid.uuid4()))
+
+    for idx, role_def in enumerate(body.roles):
+        # Resolve index-based blocked_by to real UUIDs
+        resolved_blocked_by = [role_ids[int(i)] for i in role_def.blocked_by]
+        status = "blocked" if resolved_blocked_by else "active"
+
         role_row = {
-            "id": role_id,
+            "id": role_ids[idx],
             "quorum_id": quorum_id,
             "name": role_def.name,
             "capacity": (
@@ -127,6 +171,8 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
             "authority_rank": role_def.authority_rank,
             "prompt_template": [f.model_dump() for f in role_def.prompt_template],
             "fallback_chain": role_def.fallback_chain,
+            "blocked_by": resolved_blocked_by,
+            "status": status,
         }
         db.table("roles").insert(role_row).execute()
 
@@ -173,6 +219,9 @@ async def contribute(quorum_id: str, body: ContributeRequest):
         "type": "contribution",
         "data": contrib_row,
     })
+
+    # --- Resolve blocked_by dependencies ---
+    await resolve_dependencies(quorum_id, body.role_id, db)
 
     # --- Tier 2: conflict detection if >=2 contributions on same field ---
     all_contribs = (
@@ -276,6 +325,42 @@ async def get_quorum_state(quorum_id: str):
         health_score=health_score,
         active_roles=active_roles,
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /quorums/{quorum_id}/role-status
+# ---------------------------------------------------------------------------
+@router.get("/quorums/{quorum_id}/role-status")
+async def get_role_status(quorum_id: str):
+    db = get_supabase()
+
+    roles = db.table("roles").select("*").eq("quorum_id", quorum_id).execute()
+    if not roles.data:
+        raise HTTPException(status_code=404, detail="No roles found for quorum")
+
+    contributions = (
+        db.table("contributions").select("*").eq("quorum_id", quorum_id).execute()
+    )
+
+    # Build role_id -> name lookup and contribution counts
+    role_map = {r["id"]: r for r in roles.data}
+    contrib_counts: dict[str, int] = {}
+    for c in contributions.data:
+        contrib_counts[c["role_id"]] = contrib_counts.get(c["role_id"], 0) + 1
+
+    result = []
+    for role in roles.data:
+        blocked_by = role.get("blocked_by") or []
+        blocked_by_names = [role_map[bid]["name"] for bid in blocked_by if bid in role_map]
+        result.append({
+            "role_id": role["id"],
+            "name": role["name"],
+            "status": role.get("status", "active"),
+            "blocked_by_names": blocked_by_names,
+            "contributions_count": contrib_counts.get(role["id"], 0),
+        })
+
+    return result
 
 
 # ---------------------------------------------------------------------------

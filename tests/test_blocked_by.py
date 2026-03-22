@@ -135,6 +135,9 @@ def mock_db(monkeypatch):
     monkeypatch.setattr(db_mod, "_client", db)
     monkeypatch.setattr(db_mod, "get_supabase", lambda: db)
     monkeypatch.setattr(routes_mod, "get_supabase", lambda: db)
+    # Patch coordination backend's get_supabase reference too
+    import api.coordination.supabase_backend as sb_mod
+    monkeypatch.setattr(sb_mod, "get_supabase", lambda: db)
     return db
 
 

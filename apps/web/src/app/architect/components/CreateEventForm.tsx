@@ -34,7 +34,7 @@ export function CreateEventForm() {
   const isValid =
     eventDraft.name.trim() !== "" &&
     eventDraft.slug.trim() !== "" &&
-    eventDraft.access_code.trim() !== "" &&
+    
     eventDraft.max_active_quorums > 0;
 
   return (

@@ -88,6 +88,10 @@ if _HAS_POSTGREST_EXC:
         )
 
 
+@app.get("/")
+async def root():
+    return {"name": "Quorum API", "status": "ok", "docs": "/docs", "version": "2.0"}
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}

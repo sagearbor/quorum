@@ -19,9 +19,8 @@ from quorum_llm import (
     synthesize_contributions,
 )
 
-# TODO: migrate to DatabaseProvider from db/factory.py
 from .coordination.factory import get_coordination_backend
-from .database import get_supabase
+from .db.factory import get_database_provider
 from .health import calculate_health_score
 from .llm import llm_provider
 from .architect_agent import generate_roles, send_guidance
@@ -136,7 +135,7 @@ async def list_events():
     /event/{slug}.  No quorum data is embedded here; the event page fetches
     quorums separately.
     """
-    db = get_supabase()
+    db = get_database_provider().get_client()
     result = db.table("events").select("*").order("created_at", desc=True).execute()
     return result.data or []
 
@@ -146,7 +145,7 @@ async def list_events():
 # ---------------------------------------------------------------------------
 @router.post("/events", response_model=CreateEventResponse)
 async def create_event(body: CreateEventRequest):
-    db = get_supabase()
+    db = get_database_provider().get_client()
     event_id = str(uuid.uuid4())
     row = {
         "id": event_id,
@@ -170,7 +169,7 @@ async def create_event(body: CreateEventRequest):
 # ---------------------------------------------------------------------------
 @router.post("/events/{event_id}/quorums", response_model=CreateQuorumResponse)
 async def create_quorum(event_id: str, body: CreateQuorumRequest):
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     # Verify event exists
     event = db.table("events").select("id, slug").eq("id", event_id).single().execute()
@@ -254,7 +253,7 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
 # ---------------------------------------------------------------------------
 @router.post("/quorums/{quorum_id}/contribute", response_model=ContributeResponse)
 async def contribute(quorum_id: str, body: ContributeRequest):
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     # Verify quorum exists and is not resolved/archived
     quorum = db.table("quorums").select("id, status").eq("id", quorum_id).single().execute()
@@ -400,7 +399,7 @@ async def list_roles(quorum_id: str):
     role IDs after quorum creation — CreateQuorumResponse does not include
     them since role creation is a side-effect of POST /events/{id}/quorums.
     """
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
     if not quorum.data:
@@ -421,7 +420,7 @@ async def list_roles(quorum_id: str):
 # ---------------------------------------------------------------------------
 @router.get("/quorums/{quorum_id}/state", response_model=QuorumStateResponse)
 async def get_quorum_state(quorum_id: str):
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     quorum = db.table("quorums").select("*").eq("id", quorum_id).single().execute()
     if not quorum.data:
@@ -470,7 +469,7 @@ async def get_quorum_state(quorum_id: str):
 # ---------------------------------------------------------------------------
 @router.get("/quorums/{quorum_id}/role-status")
 async def get_role_status(quorum_id: str):
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     roles = db.table("roles").select("*").eq("quorum_id", quorum_id).execute()
     if not roles.data:
@@ -506,7 +505,7 @@ async def get_role_status(quorum_id: str):
 # ---------------------------------------------------------------------------
 @router.post("/quorums/{quorum_id}/resolve", response_model=ResolveResponse)
 async def resolve_quorum(quorum_id: str, body: ResolveRequest):
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     quorum_result = (
         db.table("quorums").select("*").eq("id", quorum_id).single().execute()
@@ -670,7 +669,7 @@ def _write_state_snapshot(
 @router.get("/api/quorums/{quorum_id}/state-snapshot")
 async def get_state_snapshot(quorum_id: str):
     """Return the latest compressed state snapshot for a quorum."""
-    db = get_supabase()
+    db = get_database_provider().get_client()
     result = (
         db.table("quorum_state_snapshots")
         .select("*")
@@ -692,7 +691,7 @@ async def get_state_snapshot(quorum_id: str):
     response_model=GenerateRolesResponse,
 )
 async def architect_generate_roles(event_id: str, body: GenerateRolesRequest):
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     # Verify event exists
     event = db.table("events").select("id").eq("id", event_id).single().execute()
@@ -714,7 +713,7 @@ async def architect_generate_roles(event_id: str, body: GenerateRolesRequest):
     response_model=AIStartResponse,
 )
 async def architect_ai_start(event_id: str, body: AIStartRequest):
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     # Verify event exists
     event = db.table("events").select("id, slug").eq("id", event_id).single().execute()
@@ -766,7 +765,7 @@ async def architect_ai_start(event_id: str, body: AIStartRequest):
     response_model=GuidanceResponse,
 )
 async def architect_guidance(quorum_id: str, body: GuidanceRequest):
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     # Verify quorum exists
     quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
@@ -791,7 +790,7 @@ async def get_station_messages(
     before: str | None = None,
 ):
     """Return conversation history for a given station (newest-first)."""
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     query = (
         db.table("station_messages")
@@ -822,7 +821,7 @@ async def ask_facilitator(quorum_id: str, station_id: str, body: AskRequest):
     pipeline and returns the reply.  The exchange is persisted in
     station_messages for context continuity.
     """
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     # Verify quorum exists
     quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
@@ -877,7 +876,7 @@ async def list_documents(
     Returns 400 for an invalid status value (avoids passing arbitrary strings
     to Supabase which may cause DB-level enum errors).
     """
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     _VALID_DOC_STATUSES = {"active", "superseded", "canceled"}
     if status not in _VALID_DOC_STATUSES:
@@ -910,7 +909,7 @@ async def list_documents(
 )
 async def create_document_endpoint(quorum_id: str, body: DocumentCreateRequest):
     """Create a new agent document for a quorum."""
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
     if not quorum.data:
@@ -957,7 +956,7 @@ async def update_document_endpoint(
     re-fetch and retry.  When the update merges (i.e., another agent edited
     concurrently), ``merged=True`` is returned with the current version.
     """
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     # Verify the document belongs to this quorum before attempting any write.
     # This prevents cross-quorum document mutations via a crafted quorum_id.
@@ -1028,7 +1027,7 @@ async def list_insights(
     insight_type, when provided, must be a valid InsightType enum value.
     limit is capped at 100 to prevent runaway queries.
     """
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     _VALID_INSIGHT_TYPES = {"summary", "conflict", "suggestion", "question", "decision", "escalation"}
     if insight_type is not None and insight_type not in _VALID_INSIGHT_TYPES:
@@ -1070,7 +1069,7 @@ async def create_a2a_request(quorum_id: str, body: A2ARequestCreate):
     The target agent automatically processes the request and its response
     is included in the return payload as ``target_response``.
     """
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     # Verify quorum exists
     quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
@@ -1158,7 +1157,7 @@ async def seed_documents(event_id: str, quorum_id: str):
     This endpoint is intended for development and demo setup only.  In
     production, use scripts/seed-agent-documents.py with the service role key.
     """
-    db = get_supabase()
+    db = get_database_provider().get_client()
 
     # Verify event + quorum exist and are related
     quorum = (

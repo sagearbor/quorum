@@ -2,7 +2,6 @@
 
 import { useState } from "react";
 import { useArchitectStore } from "@/store/architect";
-import { useRouter } from "next/navigation";
 
 interface RoleSuggestion {
   name: string;
@@ -22,7 +21,6 @@ const RANK_COLORS: Record<number, string> = {
 
 export function AIArchitectPanel() {
   const { eventId, eventDraft } = useArchitectStore();
-  const router = useRouter();
 
   const [problem, setProblem] = useState("");
   const [mode, setMode] = useState<"auto" | "approved">("approved");
@@ -88,7 +86,7 @@ export function AIArchitectPanel() {
         throw new Error(detail || "Failed to start quorum");
       }
       const data = await res.json();
-      router.push(data.share_url);
+      window.location.href = data.share_url;
     } catch (err) {
       setError(err instanceof Error ? err.message : "Start failed");
     } finally {

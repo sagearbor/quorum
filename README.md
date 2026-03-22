@@ -27,31 +27,56 @@ Even if only 2 of 10 parties use it, Quorum creates value. Absent roles trigger 
 
 - **Frontend:** Next.js (Vercel)
 - **Backend:** FastAPI + WebSockets (Railway)
-- **Database:** Supabase (Postgres + Realtime)
-- **LLM:** Azure OpenAI (pluggable — swap for Anthropic or local)
+- **Database:** Supabase (Postgres + Realtime) — or any Postgres
+- **LLM:** OpenAI (default), Azure OpenAI, Anthropic, or Ollama (local)
+- **Storage:** Local filesystem (default) or Azure Blob
 - **Visualizations:** React Flow, Recharts, Framer Motion
 
 ---
 
-## Quick Start
+## Local Quickstart
+
+**Prerequisites:** Python 3.11+, Node 18+, pnpm, Postgres (or a Supabase account)
 
 ```bash
-# Clone
+# 1. Clone + install
 git clone https://github.com/sagearbor/quorum.git
 cd quorum
-
-# Install (from repo root)
 pnpm install --filter "./apps/*" --filter "./packages/*"
+pip install -r apps/api/requirements.txt
 
-# Configure
+# 2. Configure
 cp .env.example .env
-# Fill in: AZURE_OPENAI_ENDPOINT, SUPABASE_URL, SUPABASE_ANON_KEY
-# AZURE_OPENAI_KEY is optional — omit for Managed Identity auth (see .env.example)
+# Edit .env — set OPENAI_API_KEY (or set QUORUM_LLM_PROVIDER=local + OLLAMA_BASE_URL for Ollama)
 
+# 3. Database — pick one:
+#    Option A: Local Postgres
+#      Uncomment DATABASE_PROVIDER=postgres and set DATABASE_URL=postgresql://user:pass@localhost:5432/quorum
+#    Option B: Supabase
+#      Set SUPABASE_URL + SUPABASE_ANON_KEY + SUPABASE_SERVICE_KEY
+
+# 4. Run
 # Terminal 1 — FastAPI backend (http://localhost:8000)
 cd apps && uvicorn api.main:app --reload
 
 # Terminal 2 — Next.js frontend (http://localhost:3000)
+cd apps/web && pnpm dev
+```
+
+> **Everything else defaults to local** — no Azure account needed. Storage uses the local filesystem, LLM defaults to OpenAI (just an API key). See `.env.example` for all provider toggles.
+
+---
+
+## Quick Start (Azure / Cloud)
+
+```bash
+cp .env.example .env
+# Fill in: AZURE_OPENAI_ENDPOINT, SUPABASE_URL, SUPABASE_ANON_KEY
+# Set QUORUM_LLM_PROVIDER=azure, STORAGE_PROVIDER=azure_blob
+# For Azure auth without API keys: omit AZURE_OPENAI_KEY, run `az login`
+pip install -r requirements-azure.txt  # Azure-specific deps
+
+cd apps && uvicorn api.main:app --reload
 cd apps/web && pnpm dev
 ```
 

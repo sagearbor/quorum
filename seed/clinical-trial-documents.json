@@ -1,0 +1,317 @@
+{
+  "quorum_id": "00000000-0000-0000-0000-000000000010",
+  "description": "Pre-seeded agent documents for BEACON-CV trial rescue quorum. Each document contains realistic problems that agents must surface and resolve collaboratively.",
+  "documents": [
+    {
+      "title": "Protocol Timeline (Gantt)",
+      "doc_type": "timeline",
+      "format": "json",
+      "status": "active",
+      "tags": ["timeline", "critical_path", "milestones", "enrollment", "irb", "site_management"],
+      "content": {
+        "schema_version": "1.0",
+        "sections": {
+          "tasks": [
+            {
+              "id": "t1",
+              "name": "Site Selection",
+              "start": "2026-04-01",
+              "end": "2026-05-15",
+              "depends_on": [],
+              "owner_role": "sponsor",
+              "status": "in_progress"
+            },
+            {
+              "id": "t2",
+              "name": "IRB Approval",
+              "start": "2026-04-15",
+              "end": "2026-06-30",
+              "depends_on": ["t1"],
+              "owner_role": "irb_officer",
+              "status": "not_started"
+            },
+            {
+              "id": "t3",
+              "name": "Site Activation",
+              "start": "2026-05-01",
+              "end": "2026-06-15",
+              "depends_on": ["t1"],
+              "owner_role": "site_coordinator",
+              "status": "not_started"
+            },
+            {
+              "id": "t4",
+              "name": "First Patient Enrolled",
+              "start": "2026-06-01",
+              "end": "2026-06-01",
+              "depends_on": ["t2", "t3"],
+              "owner_role": "site_coordinator",
+              "status": "not_started"
+            },
+            {
+              "id": "t5",
+              "name": "Enrollment Complete",
+              "start": "2026-06-01",
+              "end": "2026-09-30",
+              "depends_on": ["t4"],
+              "owner_role": "sponsor",
+              "status": "not_started"
+            },
+            {
+              "id": "t6",
+              "name": "DSMB Review",
+              "start": "2026-07-15",
+              "end": "2026-08-15",
+              "depends_on": ["t4"],
+              "owner_role": "safety_monitor",
+              "status": "not_started"
+            },
+            {
+              "id": "t7",
+              "name": "Data Lock",
+              "start": "2026-10-01",
+              "end": "2026-10-15",
+              "depends_on": ["t5", "t6"],
+              "owner_role": "sponsor",
+              "status": "not_started"
+            }
+          ]
+        },
+        "metadata": {
+          "last_editors": [],
+          "conflict_zones": [
+            "sections.tasks[2]",
+            "sections.tasks[3]",
+            "sections.tasks[5]"
+          ],
+          "problems": [
+            "DEPENDENCY CONFLICT: Site Activation (t3) ends 2026-06-15 but IRB Approval (t2) ends 2026-06-30 — sites cannot activate before IRB approves. t3 must depend on t2, not just t1.",
+            "IMPOSSIBLE MILESTONE: First Patient Enrolled (t4) requires both t2 AND t3, but t3 completes before t2. The earliest possible date is 2026-06-30, not 2026-06-01.",
+            "INSUFFICIENT SAFETY DATA: DSMB Review (t6) starts only 6 weeks after first patient enrolled. FDA guidance recommends minimum 3 months of safety data before interim review for cardiovascular endpoints.",
+            "CASCADE DELAY: Correcting t3 dependency will push t4 to late June, t5 to Q4 2026, and t7 past the Q2 2027 hard stop."
+          ]
+        }
+      }
+    },
+    {
+      "title": "Budget Analysis",
+      "doc_type": "budget",
+      "format": "csv",
+      "status": "active",
+      "tags": ["budget", "cost_analysis", "funding", "vendor_management", "cro_management", "sponsor"],
+      "content": {
+        "schema_version": "1.0",
+        "sections": {
+          "line_items": [
+            {
+              "category": "CRO Management Fee",
+              "planned": 450000,
+              "actual": 520000,
+              "variance": -70000,
+              "notes": "Scope change not budgeted — CRO added 2 FTEs for enhanced monitoring",
+              "owner_role": "sponsor",
+              "status": "over_budget"
+            },
+            {
+              "category": "Site Costs (6 sites)",
+              "planned": 300000,
+              "actual": 300000,
+              "variance": 0,
+              "notes": "",
+              "owner_role": "site_coordinator",
+              "status": "on_track"
+            },
+            {
+              "category": "Lab/Bioanalytical",
+              "planned": 180000,
+              "actual": 210000,
+              "variance": -30000,
+              "notes": "Additional assays requested by Safety Monitor not in original scope",
+              "owner_role": "safety_monitor",
+              "status": "over_budget"
+            },
+            {
+              "category": "Drug Supply",
+              "planned": 120000,
+              "actual": 95000,
+              "variance": 25000,
+              "notes": "Lower than expected dosing due to enrollment shortfall",
+              "owner_role": "sponsor",
+              "status": "under_budget"
+            },
+            {
+              "category": "Monitoring Visits",
+              "planned": 200000,
+              "actual": 200000,
+              "variance": 0,
+              "notes": "Assumes 12 visits/site — valid only if all 6 sites remain active",
+              "owner_role": "site_coordinator",
+              "status": "at_risk"
+            },
+            {
+              "category": "Data Management",
+              "planned": 85000,
+              "actual": 85000,
+              "variance": 0,
+              "notes": "",
+              "owner_role": "sponsor",
+              "status": "on_track"
+            },
+            {
+              "category": "Statistical Analysis",
+              "planned": 75000,
+              "actual": 75000,
+              "variance": 0,
+              "notes": "",
+              "owner_role": "sponsor",
+              "status": "on_track"
+            },
+            {
+              "category": "Regulatory/IRB",
+              "planned": 40000,
+              "actual": 55000,
+              "variance": -15000,
+              "notes": "Amendment PA-001 and PA-002 fees not in original budget",
+              "owner_role": "irb_officer",
+              "status": "over_budget"
+            },
+            {
+              "category": "Patient Stipends",
+              "planned": 60000,
+              "actual": 60000,
+              "variance": 0,
+              "notes": "",
+              "owner_role": "site_coordinator",
+              "status": "on_track"
+            },
+            {
+              "category": "Contingency (10%)",
+              "planned": 151000,
+              "actual": 0,
+              "variance": 151000,
+              "notes": "NOT YET ALLOCATED despite known overruns — architect must approve release",
+              "owner_role": "sponsor",
+              "status": "critical"
+            }
+          ],
+          "totals": {
+            "total_planned": 1661000,
+            "total_actual": 1600000,
+            "total_variance": -90000,
+            "contingency_available": 151000,
+            "net_exposure": -90000
+          }
+        },
+        "metadata": {
+          "last_editors": [],
+          "conflict_zones": [
+            "sections.line_items[0]",
+            "sections.line_items[9]"
+          ],
+          "problems": [
+            "BUDGET OVERRUN: Total variance is -$90,000 before contingency release. Net position is only safe if contingency is partially deployed.",
+            "UNALLOCATED CONTINGENCY: $151,000 contingency exists but has not been allocated despite $90K in known overruns. This is a governance gap — who approves contingency release?",
+            "CRO SCOPE CREEP: CRO Management Fee overrun ($70K) accounts for 78% of total overrun. A contract amendment or scope negotiation is required before further spend.",
+            "CROSS-DOCUMENT CONFLICT: Additional bioanalytical costs ($30K, item 3) were requested by Safety Monitor but the Protocol Amendment Tracker (PA-002) also projects $30K lab cost impact — these may be double-counted.",
+            "TIMELINE DEPENDENCY: If enrollment extends per the timeline conflict, monitoring visit costs will increase proportionally — current $200K figure is understated.",
+            "AMENDMENT FEES: Regulatory/IRB overrun ($15K) confirms protocol amendments are in progress, but their scope and cost impact is not fully reflected here."
+          ]
+        }
+      }
+    },
+    {
+      "title": "Protocol Amendment Tracker",
+      "doc_type": "protocol",
+      "format": "json",
+      "status": "active",
+      "tags": [
+        "protocol_amendment",
+        "irb",
+        "regulatory_compliance",
+        "informed_consent",
+        "enrollment",
+        "safety_monitoring",
+        "budget"
+      ],
+      "content": {
+        "schema_version": "1.0",
+        "sections": {
+          "amendments": [
+            {
+              "id": "PA-001",
+              "title": "Dosing Schedule Modification",
+              "status": "pending_irb",
+              "submitted": "2026-03-01",
+              "target_approval": "2026-04-15",
+              "impacts": [
+                "enrollment_criteria",
+                "safety_monitoring",
+                "informed_consent"
+              ],
+              "description": "Change from BID to QD dosing based on PK data from first 30 patients. Reduces visit burden but requires updated consent language and revised DSMB monitoring plan.",
+              "owner_role": "irb_officer",
+              "budget_impact": 15000,
+              "timeline_impact_days": 14,
+              "consent_revised": false,
+              "sites_notified": false
+            },
+            {
+              "id": "PA-002",
+              "title": "Additional Biomarker Collection",
+              "status": "draft",
+              "submitted": null,
+              "target_approval": "2026-05-01",
+              "impacts": [
+                "lab_procedures",
+                "patient_burden",
+                "budget"
+              ],
+              "description": "Add exploratory biomarker collection (IL-6, TNF-alpha, hsCRP) at visits 3, 6, and 9. Adds approximately 30 minutes per visit.",
+              "owner_role": "safety_monitor",
+              "budget_impact": 30000,
+              "timeline_impact_days": 0,
+              "consent_revised": false,
+              "sites_notified": false
+            },
+            {
+              "id": "PA-003",
+              "title": "eGFR Inclusion Criterion Relaxation",
+              "status": "draft",
+              "submitted": null,
+              "target_approval": null,
+              "impacts": [
+                "enrollment_criteria",
+                "safety_monitoring",
+                "dsmb_charter",
+                "informed_consent"
+              ],
+              "description": "Proposed relaxation of eGFR inclusion threshold from >60 to >45 mL/min/1.73m². Based on site coordinator data showing 30% of otherwise-eligible patients excluded by current criterion.",
+              "owner_role": "sponsor",
+              "budget_impact": 0,
+              "timeline_impact_days": 30,
+              "consent_revised": false,
+              "sites_notified": false
+            }
+          ]
+        },
+        "metadata": {
+          "last_editors": [],
+          "conflict_zones": [
+            "sections.amendments[0]",
+            "sections.amendments[1]",
+            "sections.amendments[2]"
+          ],
+          "problems": [
+            "CONSENT NOT REVISED: PA-001 is pending IRB approval but its informed consent language has not been revised (consent_revised=false). Patients may currently be enrolling under outdated consent — potential regulatory violation.",
+            "SITES NOT NOTIFIED: Neither PA-001 nor PA-002 shows sites_notified=true. Sites are activating based on the original protocol, not the amended version.",
+            "TIMELINE CONFLICT: PA-001's target_approval (2026-04-15) matches the Site Activation start date in the Gantt. If IRB review takes longer (historically 6-8 weeks from submission), Site Activation will be blocked.",
+            "BUDGET DOUBLE-COUNT RISK: PA-002 projects $30K lab impact, but the Budget Analysis line item 3 (Lab/Bioanalytical, -$30K variance) appears to capture the same cost. Agents should verify whether these are the same or additive.",
+            "CUMULATIVE PATIENT BURDEN: PA-002 adds 30 min/visit at 3 visits = 1.5 additional hours per patient. Combined with the existing visit burden complaints from site coordinators, this is a material retention risk.",
+            "PA-003 DEPENDENCY: eGFR relaxation (PA-003) requires a DSMB charter update per IRB Officer's earlier statement, but this dependency is not captured in the amendment record. Missing: phased rollout plan, interim safety review at n=50.",
+            "AMENDMENT SEQUENCING: Submitting PA-001 (dosing), PA-002 (biomarkers), and PA-003 (eGFR) in parallel may overwhelm IRB review capacity and introduce conflicting consent addenda. Sequencing strategy needed."
+          ]
+        }
+      }
+    }
+  ]
+}

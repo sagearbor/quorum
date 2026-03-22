@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import uuid
 
 from quorum_llm.interface import LLMProvider
 from quorum_llm.models import LLMTier
@@ -113,8 +114,67 @@ class MockLLMProvider(LLMProvider):
                 return _CONFLICT_YES
             return _CONFLICT_NO
 
-        # Tier 3 — artifact synthesis
+        if tier in (LLMTier.AGENT_CHAT, LLMTier.AGENT_RESPOND, LLMTier.AGENT_REASON):
+            # Return a realistic facilitator acknowledgement for agent turns.
+            return (
+                "Understood. I have reviewed the current documents and the "
+                "incoming request. I note a potential concern around the "
+                "enrollment timeline and will flag it for the safety monitor. "
+                "[tags: enrollment, timeline, safety_monitoring]"
+            )
+
+        # Tier SYNTHESIS (3) — artifact synthesis
         return _ARTIFACT_JSON
+
+    async def chat(
+        self,
+        messages: list[dict[str, str]],
+        tier: LLMTier,
+        temperature: float = 0.4,
+        max_tokens: int = 1024,
+    ) -> str:
+        """Chat completion — records the call and delegates to complete().
+
+        The mock flattens the messages array so the existing call_log format
+        (prompt_hash, tier) stays consistent across complete() and chat().
+        """
+        flat = "\n".join(f"[{m['role']}]: {m['content']}" for m in messages)
+        return await self.complete(flat, tier)
+
+    async def respond(
+        self,
+        instructions: str,
+        input_text: str,
+        tier: LLMTier,
+        reasoning_effort: str = "medium",
+        previous_response_id: str | None = None,
+    ) -> tuple[str, str | None]:
+        """Responses API mock — deterministic reply + synthetic response_id.
+
+        Simulates the GPT-5 Responses API for testing.  Returns a canned
+        facilitator acknowledgement and a fake UUID-based response_id so
+        callers can verify stateful threading without a real API connection.
+
+        The call is recorded in call_log with tier=AGENT_RESPOND and an
+        additional ``reasoning_effort`` field for assertion in tests.
+        """
+        combo = f"{instructions[:40]}|{input_text[:40]}|{reasoning_effort}"
+        self.call_log.append({
+            "prompt_hash": _hash_key(combo),
+            "tier": int(tier),
+            "reasoning_effort": reasoning_effort,
+            "previous_response_id": previous_response_id,
+        })
+
+        response_text = (
+            "I have carefully considered the current documents and the "
+            "incoming request using enhanced reasoning. My assessment "
+            "focuses on enrollment timeline risks and safety thresholds. "
+            "[tags: enrollment, timeline, safety_monitoring, reasoning]"
+        )
+        # Generate a deterministic but unique-looking response ID based on input
+        fake_response_id = f"resp_{_hash_key(combo)}_{str(uuid.uuid4())[:8]}"
+        return response_text, fake_response_id
 
     async def embed(self, text: str) -> list[float]:
         self.call_log.append({"prompt_hash": _hash_key(text), "tier": "embed"})

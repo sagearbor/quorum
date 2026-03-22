@@ -1,9 +1,15 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { server } from "@/mocks/server";
 import ArchitectPage from "../page";
 import { useArchitectStore } from "@/store/architect";
+
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ push: vi.fn(), replace: vi.fn(), back: vi.fn() }),
+  usePathname: () => "/architect",
+  useSearchParams: () => new URLSearchParams(),
+}));
 
 beforeAll(() => server.listen({ onUnhandledRequest: "bypass" }));
 afterEach(() => server.resetHandlers());

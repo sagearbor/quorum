@@ -8,11 +8,23 @@ from typing import Any
 
 
 class LLMTier(IntEnum):
-    """LLM processing tiers — higher = more expensive."""
+    """LLM processing tiers — higher = more expensive.
 
-    KEYWORD = 1  # Free: deterministic keyword extraction, no LLM call
-    CONFLICT = 2  # Cheap: GPT-4o-mini for conflict detection
-    SYNTHESIS = 3  # Expensive: GPT-4o for final artifact synthesis
+    Integer values are stored in the database (tier_processed column) and
+    used for cost accounting.  Do not reorder existing values; add new ones
+    with non-conflicting integers.
+
+    Agent conversation tiers use sub-values (21, 22, 31) so they sort between
+    the primary tiers and are excluded from existing pipeline logic that checks
+    for specific tier values (CONFLICT, SYNTHESIS).
+    """
+
+    KEYWORD = 1        # Free: deterministic keyword extraction, no LLM call
+    CONFLICT = 2       # Cheap: GPT-4o-mini for conflict detection
+    AGENT_CHAT = 21    # Cheap: GPT-4o-mini for agent facilitator conversations
+    AGENT_RESPOND = 22 # Responses API: GPT-5-nano for stateful agent conversations
+    SYNTHESIS = 3      # Expensive: GPT-4o for final artifact synthesis
+    AGENT_REASON = 31  # Expensive: GPT-4o for agent deep reasoning (escalations)
 
 
 @dataclass

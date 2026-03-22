@@ -24,6 +24,14 @@ from quorum_llm.tier1 import (
     extract_keywords,
     find_overlapping_fields,
 )
+from quorum_llm.affinity import (
+    build_affinity_graph,
+    canonicalize_tag,
+    compute_tag_affinity,
+    extract_tags_from_text as extract_tags_from_text_affinity,
+    find_relevant_agents,
+    merge_tag_vocabularies,
+)
 
 __all__ = [
     # Interface
@@ -46,6 +54,13 @@ __all__ = [
     "extract_keywords",
     "deduplicate_contributions",
     "find_overlapping_fields",
+    # Affinity engine
+    "compute_tag_affinity",
+    "extract_tags_from_text_affinity",
+    "find_relevant_agents",
+    "build_affinity_graph",
+    "canonicalize_tag",
+    "merge_tag_vocabularies",
     # Budget
     "BudgetGuard",
     "guarded_complete",

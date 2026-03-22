@@ -1,49 +1,72 @@
 # Avatar Assets
 
-This directory holds glTF/GLB avatar files for the 12 Quorum archetypes.
+This directory holds GLB avatar files for the 12 Quorum archetypes.
 
-## Placeholder vs Production
+## Directory Structure
 
-By default, `scripts/setup-avatar-assets.sh` generates **procedural placeholder** avatars — colored box-body + box-head meshes with Duke blue shirts. These are valid glTF 2.0 files that load in Three.js / React Three Fiber.
+```
+avatars/
+├── *.glb                  — placeholder GLBs (ship in repo, always present)
+├── avaturn/               — Avaturn-generated GLBs (generated via script, not committed)
+│   └── *.glb
+└── makehuman/             — MakeHuman-exported GLBs (generated via pipeline, not committed)
+    └── *.glb
+```
 
-## Replacing with Ready Player Me Avatars
+### Placeholder GLBs (`/avatars/`)
 
-To use real RPM full-body avatars:
+Procedural box-body + box-head meshes with Duke blue shirts. Valid glTF 2.0 files that
+load in Three.js / React Three Fiber without any external tooling. Shipped in the repo so
+the app works with zero setup.
 
-1. Get a [Ready Player Me Partner API](https://docs.readyplayer.me/ready-player-me/api-reference) key and app ID.
-2. Set environment variables:
-   ```bash
-   export RPM_API_KEY=your_key
-   export RPM_APP_ID=your_app_id
-   ```
-3. Run the avatar creation script:
-   ```bash
-   bash scripts/create-rpm-avatars.sh
-   ```
-   This will create avatars via the RPM API and download GLBs here. Any that fail fall back to placeholders.
+### Avaturn GLBs (`/avatars/avaturn/`)
 
-4. Or replace files manually — drop a full-body GLB for each archetype using the filenames below.
+Full-body avatars generated via the Avaturn API. Run the generation script to populate
+this directory. Files are not committed to the repo.
 
-## Expected Files
+### MakeHuman GLBs (`/avatars/makehuman/`)
 
-| Archetype | Filename |
-|---|---|
-| medical_clinical | `medical.glb` (or `.gltf`) |
-| researcher | `researcher.glb` |
-| faculty | `faculty.glb` |
-| student_grad | `grad_student.glb` |
-| student_undergrad | `undergrad.glb` |
-| administrator | `administrator.glb` |
-| ethics | `ethics.glb` |
-| engineer_tech | `tech.glb` |
-| finance_ops | `finance.glb` |
-| patient_participant | `patient.glb` |
-| humanities_social | `humanities.glb` |
-| neutral | `neutral.glb` |
+Full-body avatars exported from a MakeHuman pipeline. Run the export pipeline to populate
+this directory. Files are not committed to the repo.
 
-## Requirements for Custom GLBs
+## Source Resolution
 
-- Full-body humanoid rig (RPM-compatible skeleton preferred)
-- Must include ARKit morph targets for lip sync (`morphTargets=ARKit`)
-- Texture atlas recommended (1024px) for performance
-- The Duke blue material override is applied at runtime — shirt color in the GLB will be replaced
+`resolveGlbUrl(archetype, preferredProvider?)` in
+`src/components/avatar/archetypes/archetypes.ts` selects the URL at runtime:
+
+1. If `preferredProvider` is supplied, try that source first.
+2. Walk `glbSources` in order: `avaturn` → `makehuman` → `placeholder`.
+3. The placeholder is always present, so a URL is always returned.
+
+## Expected Filenames
+
+Filenames use the archetype `id` for Avaturn and MakeHuman sources, and legacy names for
+the placeholder source.
+
+| Archetype            | Avaturn / MakeHuman filename       | Placeholder filename    |
+|----------------------|------------------------------------|-------------------------|
+| `medical_clinical`   | `medical_clinical.glb`             | `medical.glb`           |
+| `researcher`         | `researcher.glb`                   | `researcher.glb`        |
+| `faculty`            | `faculty.glb`                      | `faculty.glb`           |
+| `student_grad`       | `student_grad.glb`                 | `grad_student.glb`      |
+| `student_undergrad`  | `student_undergrad.glb`            | `undergrad.glb`         |
+| `administrator`      | `administrator.glb`                | `administrator.glb`     |
+| `ethics`             | `ethics.glb`                       | `ethics.glb`            |
+| `engineer_tech`      | `engineer_tech.glb`                | `tech.glb`              |
+| `finance_ops`        | `finance_ops.glb`                  | `finance.glb`           |
+| `patient_participant`| `patient_participant.glb`          | `patient.glb`           |
+| `humanities_social`  | `humanities_social.glb`            | `humanities.glb`        |
+| `neutral`            | `neutral.glb`                      | `neutral.glb`           |
+
+## GLB Requirements
+
+All production GLBs (Avaturn and MakeHuman) must satisfy:
+
+- **Humanoid rig** — standard humanoid skeleton with a named head bone (used for gaze
+  and head-sway animation).
+- **Head bone** — must be accessible by name so `VisionTracker` can drive it.
+- **ARKit blend shapes** — 52 ARKit morph targets on the face mesh
+  (`morphTargets=ARKit`) for lip sync driven by `EmotionDetector` / `StereoAnalyzer`.
+- **Texture atlas** — 1024 px recommended for performance; avoid per-material textures.
+- **Duke blue material** — shirt color is overridden at runtime; the GLB material value
+  is ignored for shirt meshes.

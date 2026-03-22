@@ -4,7 +4,7 @@ import { useAvatarController } from "../useAvatarController";
 import type { AvatarProvider } from "../AvatarProvider";
 import React from "react";
 
-// Mock the factory and StereoAnalyzer
+// Mock provider used in tests that need TTS behavior
 const mockProvider: AvatarProvider = {
   init: vi.fn().mockResolvedValue(undefined),
   speak: vi.fn().mockResolvedValue(undefined),
@@ -13,16 +13,33 @@ const mockProvider: AvatarProvider = {
   destroy: vi.fn(),
 };
 
+// Mock the factory so tests can inject a provider without real network calls.
+// When providerType is "elevenlabs" the mock returns mockProvider; otherwise null.
 vi.mock("../AvatarProvider", async () => {
   const actual = await vi.importActual("../AvatarProvider");
   return {
     ...actual,
-    createAvatarProvider: () => mockProvider,
+    createAvatarProvider: (type?: string) =>
+      type === "elevenlabs" ? mockProvider : null,
   };
 });
 
 vi.mock("../StereoAnalyzer", () => ({
   StereoAnalyzer: class {
+    start = vi.fn().mockResolvedValue(undefined);
+    stop = vi.fn();
+  },
+}));
+
+vi.mock("../VisionTracker", () => ({
+  VisionTracker: class {
+    start = vi.fn().mockResolvedValue(undefined);
+    stop = vi.fn();
+  },
+}));
+
+vi.mock("../EmotionDetector", () => ({
+  EmotionDetector: class {
     start = vi.fn().mockResolvedValue(undefined);
     stop = vi.fn();
   },
@@ -45,17 +62,34 @@ describe("useAvatarController", () => {
     return { current: containerEl };
   }
 
-  it("initializes provider on mount", async () => {
-    const ref = createRef();
+  it("becomes ready without a provider (no providerType set)", async () => {
     const { result } = renderHook(() =>
       useAvatarController({
-        providerType: "mock",
-        containerRef: ref,
         healthScore: 50,
+        enableMic: false,
+        enableVision: false,
+        enableEmotion: false,
       }),
     );
 
-    // Wait for init
+    await vi.waitFor(() => {
+      expect(result.current.ready).toBe(true);
+    });
+  });
+
+  it("initializes provider when providerType is set", async () => {
+    const ref = createRef();
+    const { result } = renderHook(() =>
+      useAvatarController({
+        providerType: "elevenlabs",
+        containerRef: ref,
+        healthScore: 50,
+        enableMic: false,
+        enableVision: false,
+        enableEmotion: false,
+      }),
+    );
+
     await vi.waitFor(() => {
       expect(result.current.ready).toBe(true);
     });
@@ -67,9 +101,12 @@ describe("useAvatarController", () => {
     const ref = createRef();
     const { unmount } = renderHook(() =>
       useAvatarController({
-        providerType: "mock",
+        providerType: "elevenlabs",
         containerRef: ref,
         healthScore: 50,
+        enableMic: false,
+        enableVision: false,
+        enableEmotion: false,
       }),
     );
 
@@ -82,14 +119,13 @@ describe("useAvatarController", () => {
   });
 
   it("computes 'engaged' emotion when health increases", async () => {
-    const ref = createRef();
     const { result, rerender } = renderHook(
       ({ score }) =>
         useAvatarController({
-          providerType: "mock",
-          containerRef: ref,
           healthScore: score,
           enableMic: false,
+          enableVision: false,
+          enableEmotion: false,
         }),
       { initialProps: { score: 50 } },
     );
@@ -100,14 +136,13 @@ describe("useAvatarController", () => {
   });
 
   it("computes 'tense' emotion when health drops significantly", async () => {
-    const ref = createRef();
     const { result, rerender } = renderHook(
       ({ score }) =>
         useAvatarController({
-          providerType: "mock",
-          containerRef: ref,
           healthScore: score,
           enableMic: false,
+          enableVision: false,
+          enableEmotion: false,
         }),
       { initialProps: { score: 50 } },
     );
@@ -118,14 +153,13 @@ describe("useAvatarController", () => {
   });
 
   it("computes 'neutral' emotion for small health changes", async () => {
-    const ref = createRef();
     const { result, rerender } = renderHook(
       ({ score }) =>
         useAvatarController({
-          providerType: "mock",
-          containerRef: ref,
           healthScore: score,
           enableMic: false,
+          enableVision: false,
+          enableEmotion: false,
         }),
       { initialProps: { score: 50 } },
     );
@@ -136,29 +170,30 @@ describe("useAvatarController", () => {
   });
 
   it("computes 'resolved' emotion when quorum is resolved", async () => {
-    const ref = createRef();
     const { result } = renderHook(() =>
       useAvatarController({
-        providerType: "mock",
-        containerRef: ref,
         healthScore: 50,
         resolved: true,
         enableMic: false,
+        enableVision: false,
+        enableEmotion: false,
       }),
     );
 
     expect(result.current.emotion).toBe("resolved");
   });
 
-  it("speaks when synthesisText changes", async () => {
+  it("speaks when synthesisText changes (requires active provider)", async () => {
     const ref = createRef();
     const { rerender } = renderHook(
       ({ text }) =>
         useAvatarController({
-          providerType: "mock",
+          providerType: "elevenlabs",
           containerRef: ref,
           healthScore: 50,
           enableMic: false,
+          enableVision: false,
+          enableEmotion: false,
           synthesisText: text,
         }),
       { initialProps: { text: undefined as string | undefined } },
@@ -176,18 +211,55 @@ describe("useAvatarController", () => {
     });
   });
 
+  it("does not call speak when no provider is configured", async () => {
+    const { rerender } = renderHook(
+      ({ text }) =>
+        useAvatarController({
+          // No providerType — factory returns null
+          healthScore: 50,
+          enableMic: false,
+          enableVision: false,
+          enableEmotion: false,
+          synthesisText: text,
+        }),
+      { initialProps: { text: undefined as string | undefined } },
+    );
+
+    await vi.waitFor(() => {
+      // Controller is ready without a provider
+    });
+
+    rerender({ text: "Some text" });
+
+    // speak should never be called since there is no provider
+    expect(mockProvider.speak).not.toHaveBeenCalled();
+  });
+
   it("defaults direction to center", () => {
-    const ref = createRef();
     const { result } = renderHook(() =>
       useAvatarController({
-        providerType: "mock",
-        containerRef: ref,
         healthScore: 50,
         enableMic: false,
+        enableVision: false,
+        enableEmotion: false,
       }),
     );
 
     expect(result.current.direction).toBe("center");
     expect(result.current.yaw).toBe(0);
+  });
+
+  it("containerRef is optional (no provider type set)", () => {
+    // Should not throw when containerRef is omitted entirely
+    expect(() => {
+      renderHook(() =>
+        useAvatarController({
+          healthScore: 50,
+          enableMic: false,
+          enableVision: false,
+          enableEmotion: false,
+        }),
+      );
+    }).not.toThrow();
   });
 });

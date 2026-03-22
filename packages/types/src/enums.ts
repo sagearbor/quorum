@@ -21,7 +21,12 @@ export type DashboardType =
   | "contribution_timeline"
   | "artifact_lineage_graph"
   | "live_stance_board"
-  | "voice_pulse_matrix";
+  | "voice_pulse_matrix"
+  // Agent system dashboards (Phase 3 Track G)
+  /** Renders agent_documents for a quorum: Gantt timeline, CSV table, JSON tree. Shows problem annotations in amber/red. */
+  | "agent_document_viewer"
+  /** Force-directed graph: nodes = agents, edges = tag-affinity strength, colour = interaction type. */
+  | "agent_affinity_graph";
 
 export type CarouselMode = "multi-view" | "multi-quorum";
 

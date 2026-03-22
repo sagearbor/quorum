@@ -10,8 +10,14 @@ export default function Home() {
       </p>
       <div className="flex gap-4">
         <Link
-          href="/architect"
+          href="/events"
           className="rounded-lg bg-foreground text-background px-6 py-3 font-medium hover:opacity-90 transition-opacity"
+        >
+          Browse Events
+        </Link>
+        <Link
+          href="/architect"
+          className="rounded-lg border border-gray-300 px-6 py-3 font-medium hover:bg-gray-50 transition-colors"
         >
           Architect
         </Link>

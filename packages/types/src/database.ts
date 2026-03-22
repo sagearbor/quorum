@@ -87,3 +87,96 @@ export interface ArtifactDiff {
   previous: string;
   current: string;
 }
+
+// ---------------------------------------------------------------------------
+// Agent system types (Phase 1 — Track C)
+// ---------------------------------------------------------------------------
+
+/** A single message in a per-station conversation thread. */
+export interface StationMessage {
+  id: string;
+  quorum_id: string;
+  role_id: string;
+  station_id: string;
+  /** Perspective: 'user' = human input, 'assistant' = AI facilitator, 'system' = system event */
+  role: "user" | "assistant" | "system";
+  content: string;
+  /** Extracted domain tags for affinity routing */
+  tags?: string[];
+  metadata?: Record<string, unknown>;
+  created_at: string;
+}
+
+/** Format of an agent-maintained document. */
+export type DocFormat = "json" | "yaml" | "csv" | "markdown";
+
+/** Lifecycle status of an agent document. */
+export type DocStatus = "active" | "superseded" | "canceled";
+
+/** A structured document collaboratively edited by AI agents. */
+export interface AgentDocument {
+  id: string;
+  quorum_id: string;
+  title: string;
+  doc_type: string;
+  format: DocFormat;
+  /** Actual document payload — shape varies by doc_type. */
+  content: Record<string, unknown>;
+  status: DocStatus;
+  version: number;
+  tags?: string[];
+  created_by_role_id?: string;
+  created_at: string;
+  updated_at: string;
+}
+
+/** An entry in the append-only document change log. */
+export interface DocumentChange {
+  id: string;
+  document_id: string;
+  version: number;
+  changed_by_role: string;
+  change_type: "create" | "edit" | "status_change";
+  diff: Record<string, unknown>;
+  rationale?: string;
+  previous_content?: Record<string, unknown>;
+  tags?: string[];
+  created_at: string;
+}
+
+/** A cross-station insight surfaced by the agent system. */
+export interface AgentInsight {
+  id: string;
+  quorum_id: string;
+  source_role_id: string;
+  insight_type: "summary" | "conflict" | "suggestion" | "question" | "decision" | "escalation";
+  content: string;
+  tags?: string[];
+  document_id?: string;
+  self_relevance: number;
+  version: number;
+  created_at: string;
+}
+
+/** An agent-to-agent request (A2A protocol). */
+export interface AgentRequest {
+  id: string;
+  quorum_id: string;
+  from_role_id: string;
+  to_role_id: string;
+  request_type:
+    | "conflict_flag"
+    | "input_request"
+    | "review_request"
+    | "doc_edit_notify"
+    | "escalation"
+    | "negotiation";
+  content: string;
+  tags?: string[];
+  document_id?: string;
+  status: "pending" | "acknowledged" | "processing" | "resolved" | "expired";
+  response?: string;
+  priority: number;
+  created_at: string;
+  resolved_at?: string;
+}

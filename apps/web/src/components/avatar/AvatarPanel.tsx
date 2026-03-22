@@ -1,71 +1,105 @@
 /**
- * AvatarPanel — Facilitator avatar panel for /display carousel.
- * Full-screen avatar with waveform indicator and L/C/R direction dot (dev mode).
+ * AvatarPanel — Facilitator avatar panel with 3D GLB avatar.
+ * Uses IdleScene for rendering (Three.js).
+ * VisionTracker + EmotionDetector drive gaze and expressions via useAvatarController.
+ * TTS is provider-driven (ElevenLabs / Simli) — no provider is wired by default until
+ * a real LLM conversation channel is connected.
  */
 
 "use client";
 
-import { useRef } from "react";
-import { useAvatarController, type AvatarControllerOptions } from "./useAvatarController";
+import { useRef, useEffect, useMemo } from "react";
+import { useAvatarController } from "./useAvatarController";
 import { useQuorumLive } from "@/hooks/useQuorumLive";
-import type { AvatarProviderType } from "./AvatarProvider";
+import { IdleScene, type IdleSceneHandle } from "./IdleScene";
+import { resolveArchetype } from "./archetypes/resolveArchetype";
+import { ARCHETYPES, resolveGlbUrl } from "./archetypes/archetypes";
 
 interface AvatarPanelProps {
   quorumId: string;
-  providerType?: AvatarProviderType;
   /** Show dev-mode direction indicator (default false) */
   showDirectionIndicator?: boolean;
   /** For testing: bypass useQuorumLive with a static score */
   staticHealthScore?: number;
   /** For testing: synthesis text to speak */
   staticSynthesisText?: string;
+  /** Role name used to resolve archetype and GLB model */
+  roleName?: string;
 }
 
 export function AvatarPanel({
   quorumId,
-  providerType,
   showDirectionIndicator = false,
   staticHealthScore,
   staticSynthesisText,
+  roleName,
 }: AvatarPanelProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
+  const idleSceneRef = useRef<IdleSceneHandle>(null);
 
   // Get live quorum data (unless overridden for testing)
   const liveState = useQuorumLive(quorumId);
   const healthScore = staticHealthScore ?? liveState.healthScore;
   const resolved = liveState.artifact?.status === "final";
 
-  // Get latest synthesis text from recent contributions (last one as proxy)
-  const latestSynthesis =
-    staticSynthesisText ??
-    (liveState.recentContributions.length > 0
-      ? liveState.recentContributions[liveState.recentContributions.length - 1].content
+  // Resolve archetype from role name
+  const effectiveRoleName = roleName
+    ?? (liveState.recentContributions.length > 0
+      ? liveState.recentContributions[0].role_name
       : undefined);
 
+  const glbUrl = useMemo(() => {
+    const archetypeId = resolveArchetype(effectiveRoleName ?? "");
+    const archetype = ARCHETYPES[archetypeId];
+    return resolveGlbUrl(archetype);
+  }, [effectiveRoleName]);
+
+  // Synthesis text: only speak LLM-generated output, never parrot user contributions.
+  // TODO: wire to Tier 3 artifact synthesis or a dedicated facilitator response channel
+  const latestSynthesis = staticSynthesisText ?? undefined;
+
+  // useAvatarController manages gaze (VisionTracker + StereoAnalyzer), emotion
+  // (EmotionDetector + health score), and optional TTS when a provider is configured.
   const avatarState = useAvatarController({
-    providerType,
-    containerRef: containerRef as React.RefObject<HTMLElement | null>,
     healthScore,
     resolved,
     enableMic: typeof window !== "undefined",
     synthesisText: latestSynthesis,
   });
 
+  // Connect gaze (yaw + pitch) from controller to IdleScene
+  useEffect(() => {
+    if (idleSceneRef.current) {
+      idleSceneRef.current.setGaze(avatarState.yaw, avatarState.pitch);
+    }
+  }, [avatarState.yaw, avatarState.pitch]);
+
+  // Connect detected emotion from controller to IdleScene
+  useEffect(() => {
+    if (idleSceneRef.current) {
+      idleSceneRef.current.setEmotion(avatarState.detectedEmotion);
+    }
+  }, [avatarState.detectedEmotion]);
+
   return (
     <div
       className="w-full h-full flex flex-col items-center justify-center relative bg-black/20 rounded-xl"
       data-testid="avatar-panel"
     >
-      {/* Avatar container */}
+      {/* 3D avatar — IdleScene handles WebGL */}
       <div
-        ref={containerRef}
-        className="flex-1 flex items-center justify-center min-h-0 w-full max-w-lg"
+        className="flex-1 flex items-center justify-center min-h-0 w-full"
         data-testid="avatar-container"
-      />
+      >
+        <IdleScene
+          ref={idleSceneRef}
+          glbUrl={glbUrl}
+          width="100%"
+          height="100%"
+        />
+      </div>
 
       {/* Status bar */}
       <div className="w-full px-4 pb-3 flex items-center justify-between">
-        {/* Speaking indicator / waveform */}
         <div className="flex items-center gap-2" data-testid="avatar-status">
           <div
             className={`w-2 h-2 rounded-full transition-colors duration-300 ${
@@ -77,7 +111,6 @@ export function AvatarPanel({
           </span>
         </div>
 
-        {/* Emotion badge */}
         <span
           className={`text-xs px-2 py-0.5 rounded-full ${emotionStyles[avatarState.emotion]}`}
           data-testid="avatar-emotion"
@@ -85,7 +118,6 @@ export function AvatarPanel({
           {avatarState.emotion}
         </span>
 
-        {/* Direction indicator (dev mode only) */}
         {showDirectionIndicator && (
           <div className="flex items-center gap-1" data-testid="avatar-direction">
             <DirectionDot active={avatarState.direction === "left"} label="L" />
@@ -95,7 +127,6 @@ export function AvatarPanel({
         )}
       </div>
 
-      {/* Waveform visualization (simple bar animation when speaking) */}
       {avatarState.speaking && (
         <div className="absolute bottom-12 left-1/2 -translate-x-1/2 flex gap-0.5" data-testid="avatar-waveform">
           {[...Array(5)].map((_, i) => (

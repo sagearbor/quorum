@@ -5,7 +5,7 @@
  * Graceful fallback: if MediaPipe fails to load or no camera, auto-switches to mock.
  */
 
-type GazeCallback = (yaw: number) => void;
+type GazeCallback = (yaw: number, pitch?: number) => void;
 
 export interface VisionTrackerOptions {
   onGaze: GazeCallback;
@@ -37,14 +37,17 @@ export class VisionTracker {
     this.running = true;
 
     if (this.mock) {
+      console.log("[VisionTracker] Starting in MOCK mode (env override)");
       this.startMock();
       return;
     }
 
     try {
       await this.initMediaPipe();
-    } catch {
+      console.log("[VisionTracker] MediaPipe + webcam active");
+    } catch (err) {
       // Graceful fallback to mock if MediaPipe or camera fails
+      console.warn("[VisionTracker] MediaPipe/camera failed, falling back to mock:", err);
       this.mock = true;
       this.startMock();
     }
@@ -85,7 +88,8 @@ export class VisionTracker {
       const elapsed = (Date.now() - this.mockStartTime) / 1000;
       // Slow sine wave: period ~4s
       const yaw = Math.sin(elapsed * Math.PI * 0.5);
-      this.onGaze(yaw);
+      const pitch = Math.sin(elapsed * Math.PI * 0.3) * 0.6; // vertical oscillation
+      this.onGaze(yaw, pitch);
     }, this.intervalMs);
   }
 
@@ -149,12 +153,21 @@ export class VisionTracker {
 
         const bb = detection.boundingBox;
         const centerX = bb.originX + bb.width / 2;
+        const centerY = bb.originY + bb.height / 2;
         const frameWidth = this.video.videoWidth || 320;
+        const frameHeight = this.video.videoHeight || 240;
 
         // Map centerX [0, frameWidth] → yaw [-1, 1]
         // Mirror: person on right of camera → avatar looks right
         const yaw = ((centerX / frameWidth) * 2 - 1) * -1;
-        this.onGaze(Math.max(-1, Math.min(1, yaw)));
+        // Map centerY [0, frameHeight] → pitch [-1, 1]
+        // Person above center (small Y) → negative pitch (avatar looks up)
+        // Person below center (large Y) → positive pitch (avatar looks down)
+        const pitch = (centerY / frameHeight) * 2 - 1;
+        this.onGaze(
+          Math.max(-1, Math.min(1, yaw)),
+          Math.max(-1, Math.min(1, pitch))
+        );
       }
     } catch {
       // Detection frame errors are non-fatal; skip this frame

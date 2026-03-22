@@ -76,6 +76,7 @@ class RoleDefinition(BaseModel):
     authority_rank: int = 0
     prompt_template: list[PromptField] = Field(default_factory=list)
     fallback_chain: list[str] = Field(default_factory=list)  # role_id[]
+    blocked_by: list[str] = Field(default_factory=list)  # role IDs that must have contributions before this role activates
 
 
 class CreateQuorumRequest(BaseModel):

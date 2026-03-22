@@ -96,3 +96,21 @@ async def get_guidance(quorum_id: str) -> dict[str, Any]:
         .execute()
     )
     return {"quorum_id": quorum_id, "messages": result.data}
+
+
+# ---------------------------------------------------------------------------
+# Per-role Agent Card
+# ---------------------------------------------------------------------------
+
+@a2a_router.get("/agents/{role_id}/agent.json")
+async def get_agent_card(role_id: str) -> dict[str, Any]:
+    """Return A2A agent card JSON for a specific role."""
+    from .agent_card import build_agent_card
+
+    db = get_supabase()
+    result = db.table("roles").select("*").eq("id", role_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail="Role not found")
+
+    role = result.data[0]
+    return build_agent_card(role)

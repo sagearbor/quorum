@@ -38,10 +38,59 @@ async def test_generate_roles_returns_valid_shapes():
 # Route tests
 # ---------------------------------------------------------------------------
 
+def _make_fake_provider(overrides: dict | None = None) -> MagicMock:
+    """Return a mock DatabaseProvider whose get_client() returns a fluent mock."""
+    overrides = overrides or {}
+
+    def _table_builder(table_name: str):
+        rows = overrides.get(table_name, [])
+        is_single = [False]
+        chain = MagicMock()
+
+        def _single():
+            is_single[0] = True
+            return chain
+
+        chain.single = _single
+        for method in (
+            "select", "eq", "neq", "lt", "gt", "gte", "lte",
+            "order", "limit", "insert", "update", "delete",
+            "upsert", "filter",
+        ):
+            getattr(chain, method).return_value = chain
+
+        def _execute():
+            result = MagicMock()
+            result.data = (rows[0] if rows else None) if is_single[0] else rows[:]
+            return result
+
+        chain.execute = _execute
+        return chain
+
+    db = MagicMock()
+    db.table.side_effect = _table_builder
+
+    provider = MagicMock()
+    provider.get_client.return_value = db
+    return provider
+
+
 @pytest.fixture
 def client():
-    with TestClient(app) as tc:
-        yield tc
+    fake_provider = _make_fake_provider({
+        "events": [{"id": "evt-001", "slug": "test-event"}],
+        "quorums": [{"id": "quorum-001", "status": "active", "title": "Q"}],
+        "roles": [],
+    })
+    with (
+        patch("apps.api.routes.get_database_provider", return_value=fake_provider),
+        patch("apps.api.seed_loader.load_seed_quorum", new=AsyncMock()),
+    ):
+        import importlib
+        import apps.api.main as main_mod
+        importlib.reload(main_mod)
+        with TestClient(main_mod.app) as tc:
+            yield tc
 
 
 def test_generate_roles_route(client):

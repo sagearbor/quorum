@@ -1,0 +1,4 @@
+# Optional Azure dependencies — not required for local-only usage.
+# Install with: pip install -r requirements-azure.txt
+azure-storage-blob>=12.19,<13
+azure-identity>=1.15,<2

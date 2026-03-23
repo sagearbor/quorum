@@ -144,7 +144,7 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
           const finalScore: number = quorum.heat_score ?? 0;
           const contribs = contributions ?? [];
           // Build history by interpolating scores across contribution timestamps
-          const seedHistory: import("@/lib/mockStream").HealthSnapshot[] = contribs.map((c: Record<string, unknown>, i: number) => {
+          const seedHistory: HealthSnapshot[] = contribs.map((c: Record<string, unknown>, i: number) => {
             const frac = (i + 1) / Math.max(contribs.length, 1);
             const score = Math.round(finalScore * frac * 10) / 10;
             return {

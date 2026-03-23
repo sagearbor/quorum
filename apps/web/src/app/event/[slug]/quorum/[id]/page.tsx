@@ -142,6 +142,17 @@ export default function QuorumPage() {
   // the browser TTS engine does not speak the facilitator reply.
   const [audioMuted, setAudioMuted] = useState(false);
 
+  // Webcam availability — only enable emotion tracking when a camera is present.
+  const [hasWebcam, setHasWebcam] = useState(false);
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) return;
+    navigator.mediaDevices.enumerateDevices().then((devices) => {
+      setHasWebcam(devices.some((d) => d.kind === "videoinput"));
+    }).catch(() => {
+      setHasWebcam(false);
+    });
+  }, []);
+
   // Conversation hook — scoped to this station + current role
   const conversation = useStationConversation(
     quorumId,
@@ -392,7 +403,7 @@ export default function QuorumPage() {
           <AvatarPanel
             quorumId={quorumId}
             showDirectionIndicator
-            enableEmotionTracking
+            enableEmotionTracking={hasWebcam}
             roleName={currentRole?.name}
             staticSynthesisText={audioMuted ? undefined : synthesisText}
           />

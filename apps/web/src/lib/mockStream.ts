@@ -7,8 +7,6 @@
 
 import type { HealthMetrics, HealthSnapshot } from "@quorum/types";
 
-export type { HealthSnapshot };
-
 export interface MockContribution {
   id: string;
   role_id: string;

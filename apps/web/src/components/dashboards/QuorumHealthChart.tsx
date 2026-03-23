@@ -21,6 +21,8 @@ interface QuorumHealthChartProps {
   /** Pass pre-computed history for testing / storybook (bypasses hook) */
   staticHistory?: HealthSnapshot[];
   staticScore?: number;
+  /** Pre-fetched state from carousel cache — renders instantly, no Supabase sub needed */
+  cachedState?: import("@/hooks/useQuorumLive").QuorumLiveState;
 }
 
 const METRIC_LINES = [

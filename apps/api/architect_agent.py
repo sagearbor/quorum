@@ -94,7 +94,7 @@ async def generate_roles(
     raw = await llm_provider.chat(messages, tier=LLMTier.CONFLICT)
 
     if not raw or not raw.strip():
-        logger.warning("LLM returned empty response for role generation — using mock roles. raw=%r", raw)
+        logger.warning("LLM returned empty response for role generation. raw=%r", raw)
         raise ValueError(f"Azure LLM returned empty response. Deployment={os.environ.get('AZURE_OPENAI_DEPLOYMENT')}")
 
     # Extract JSON array from response (handle markdown fences)

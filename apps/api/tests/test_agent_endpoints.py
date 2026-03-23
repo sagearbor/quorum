@@ -164,6 +164,7 @@ def client():
 
     with (
         patch("apps.api.routes.get_supabase", return_value=fake_db),
+        patch("database.get_supabase", return_value=fake_db),
         patch("apps.api.routes.llm_provider", fake_llm),
         patch("apps.api.routes.process_agent_turn", new=AsyncMock(
             return_value=("Mock agent reply [tags: test, mock]", str(uuid.uuid4()), ["test", "mock"])
@@ -193,11 +194,18 @@ def client():
         # Seed loader needs a real DB — skip in tests
         patch("apps.api.seed_loader.load_seed_quorum", new=AsyncMock()),
     ):
+        # Reset coordination backend singleton so it picks up the patched DB
+        import coordination.factory as coord_factory
+        coord_factory._backend = None
+
         # Import app after patches are in place so lifespan is already patched
         import importlib
         import apps.api.main as main_mod
         importlib.reload(main_mod)
         yield TestClient(main_mod.app, raise_server_exceptions=False)
+
+        # Clean up singleton for next test
+        coord_factory._backend = None
 
 
 @pytest.fixture()
@@ -210,6 +218,7 @@ def empty_client():
 
     with (
         patch("apps.api.routes.get_supabase", return_value=fake_db),
+        patch("database.get_supabase", return_value=fake_db),
         patch("apps.api.routes.llm_provider", fake_llm),
         patch("apps.api.routes.process_agent_turn", new=AsyncMock(
             return_value=("reply", str(uuid.uuid4()), [])

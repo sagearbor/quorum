@@ -38,6 +38,7 @@ export class EmotionDetector {
   private mock: boolean;
   private intervalMs: number;
   private smoothingMs: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private landmarker: any = null;
   private video: HTMLVideoElement | null = null;
   private stream: MediaStream | null = null;
@@ -67,9 +68,9 @@ export class EmotionDetector {
 
     try {
       await this.initMediaPipe();
-    } catch {
-      this.mock = true;
-      this.startMock();
+    } catch (err) {
+      console.error("[EmotionDetector] MediaPipe init failed:", err);
+      this.running = false;
     }
   }
 

@@ -173,11 +173,13 @@ describe("EmotionDetector", () => {
     });
   });
 
-  describe("MediaPipe mode (fallback)", () => {
-    it("should fallback to mock when MediaPipe fails", async () => {
+  describe("MediaPipe mode (no silent fallback)", () => {
+    it("should stop running when MediaPipe fails and mock is not enabled", async () => {
       vi.doMock("@mediapipe/tasks-vision", () => {
         throw new Error("WASM not available");
       });
+
+      const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
 
       const detector = new EmotionDetector({
         onEmotion: vi.fn(),
@@ -187,9 +189,14 @@ describe("EmotionDetector", () => {
 
       await detector.start();
 
-      expect(detector.isMock()).toBe(true);
-      expect(detector.isRunning()).toBe(true);
+      expect(detector.isMock()).toBe(false);
+      expect(detector.isRunning()).toBe(false);
+      expect(consoleError).toHaveBeenCalledWith(
+        "[EmotionDetector] MediaPipe init failed:",
+        expect.any(Error),
+      );
 
+      consoleError.mockRestore();
       detector.stop();
     });
   });

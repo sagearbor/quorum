@@ -93,8 +93,8 @@ export function QuorumHealthChart({
       </div>
 
       {/* Chart */}
-      <div className="flex-1" style={{minHeight: 0, height: "calc(100% - 56px)"}}>
-        <ResponsiveContainer width="100%" height="100%">
+      <div className="flex-1" style={{minHeight: "220px"}}>
+        <ResponsiveContainer width="100%" height={220}>
           <LineChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis

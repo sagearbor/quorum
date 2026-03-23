@@ -140,13 +140,32 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
             }
           });
 
-        // Set initial state from DB
+        // Set initial state from DB, seed history from contributions
         if (quorum && !cancelled) {
+          const finalScore: number = quorum.heat_score ?? 0;
+          const contribs = contributions ?? [];
+          // Build history by interpolating scores across contribution timestamps
+          const seedHistory: import("@/lib/mockStream").HealthSnapshot[] = contribs.map((c: Record<string, unknown>, i: number) => {
+            const frac = (i + 1) / Math.max(contribs.length, 1);
+            const score = Math.round(finalScore * frac * 10) / 10;
+            return {
+              timestamp: new Date(c.created_at as string).getTime(),
+              score,
+              metrics: {
+                role_coverage_pct: Math.round(Math.min(100, frac * 100 * 1.2) * 10) / 10,
+                completion_pct: Math.round(frac * 60 * 10) / 10,
+                consensus_score: Math.round(30 + frac * 20 * 10) / 10,
+                critical_path_score: 100,
+                blocker_score: 100,
+              },
+            };
+          });
           setState((prev) => ({
             ...prev,
-            healthScore: quorum.heat_score ?? 0,
+            healthScore: finalScore,
             connected: true,
-            recentContributions: (contributions ?? []).slice(-20).map((c: Record<string, string>) => ({
+            history: seedHistory,
+            recentContributions: contribs.slice(-20).map((c: Record<string, string>) => ({
               id: c.id,
               role_id: c.role_id,
               role_name: c.role_id,

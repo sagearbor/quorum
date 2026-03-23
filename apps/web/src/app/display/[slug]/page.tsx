@@ -28,13 +28,17 @@ export default function DisplayPage() {
           if (ids.length > 0) { setQuorumIds(ids); return; }
         }
       } catch { /* fall through */ }
-      // Fallback to mock IDs if API unavailable or no quorums yet
-      setQuorumIds([
-        "mock-quorum-clinical-trial",
-        "mock-quorum-irb-review",
-        "mock-quorum-site-approval",
-        "mock-quorum-data-monitoring",
-      ]);
+      // Only fall back to mock IDs in explicit test mode — otherwise show empty
+      if (process.env.NEXT_PUBLIC_QUORUM_TEST_MODE === "true") {
+        setQuorumIds([
+          "mock-quorum-clinical-trial",
+          "mock-quorum-irb-review",
+          "mock-quorum-site-approval",
+          "mock-quorum-data-monitoring",
+        ]);
+      } else {
+        setQuorumIds([]); // Real mode: show empty until API responds
+      }
     }
     loadQuorums();
     const interval = setInterval(loadQuorums, 30_000);

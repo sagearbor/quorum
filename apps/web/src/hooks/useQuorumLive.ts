@@ -156,10 +156,11 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
           supabase.removeChannel(channel);
         };
       } catch {
-        // Supabase not available — fall back to mock
-        if (!cancelled) {
+        // Supabase not available — only use mock stream in explicit test mode
+        if (!cancelled && process.env.NEXT_PUBLIC_QUORUM_TEST_MODE === "true") {
           unsubRef.current = createMockStream(quorumId, handleUpdate);
         }
+        // In production mode: show empty/loading state, not fake data
       }
     }
 

@@ -392,6 +392,7 @@ export default function QuorumPage() {
           <AvatarPanel
             quorumId={quorumId}
             showDirectionIndicator
+            enableEmotionTracking
             roleName={currentRole?.name}
             staticSynthesisText={audioMuted ? undefined : synthesisText}
           />

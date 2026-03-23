@@ -31,6 +31,7 @@ interface AvatarPanelProps {
 export function AvatarPanel({
   quorumId,
   showDirectionIndicator = false,
+  enableEmotionTracking = false,
   staticHealthScore,
   staticSynthesisText,
   roleName,
@@ -64,6 +65,7 @@ export function AvatarPanel({
     healthScore,
     resolved,
     enableMic: typeof window !== "undefined",
+    enableEmotion: enableEmotionTracking,
     synthesisText: latestSynthesis,
   });
 

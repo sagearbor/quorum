@@ -28,13 +28,8 @@ export default function DisplayPage() {
           if (ids.length > 0) { setQuorumIds(ids); return; }
         }
       } catch { /* fall through */ }
-      // Fallback to mock IDs if API unavailable or no quorums yet
-      setQuorumIds([
-        "mock-quorum-clinical-trial",
-        "mock-quorum-irb-review",
-        "mock-quorum-site-approval",
-        "mock-quorum-data-monitoring",
-      ]);
+      // API unavailable or no quorums yet — show empty state
+      setQuorumIds([]);
     }
     loadQuorums();
     const interval = setInterval(loadQuorums, 30_000);

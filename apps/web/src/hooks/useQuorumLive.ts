@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import type { HealthMetrics, HealthSnapshot } from "@quorum/types";
-import { createMockStream, type MockContribution, type MockStreamState } from "@/lib/mockStream";
+import type { MockContribution, MockStreamState } from "@/lib/mockStream";
 
 export interface QuorumLiveState {
   healthScore: number;
@@ -58,7 +58,9 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
 
   useEffect(() => {
     if (isTestMode()) {
-      unsubRef.current = createMockStream(quorumId, handleUpdate);
+      import("@/lib/mockStream").then(({ createMockStream }) => {
+        unsubRef.current = createMockStream(quorumId, handleUpdate);
+      });
       return () => {
         unsubRef.current?.();
         unsubRef.current = null;

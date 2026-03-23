@@ -11,6 +11,7 @@ export interface QuorumLiveState {
   recentContributions: MockContribution[];
   artifact: { status: "draft" | "pending_ratification" | "final"; version: number } | null;
   connected: boolean;
+  error: string | null;
 }
 
 const INITIAL_METRICS: HealthMetrics = {
@@ -28,6 +29,7 @@ const INITIAL_STATE: QuorumLiveState = {
   recentContributions: [],
   artifact: null,
   connected: false,
+  error: null,
 };
 
 function isTestMode(): boolean {
@@ -50,6 +52,7 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
       recentContributions: update.recentContributions,
       artifact: update.artifact,
       connected: true,
+      error: null,
     });
   }, []);
 
@@ -154,10 +157,11 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
         unsubRef.current = () => {
           supabase.removeChannel(channel);
         };
-      } catch {
-        // Supabase not available — show disconnected state (no mock fallback)
+      } catch (err) {
+        // Supabase not available — show disconnected state with error (no mock fallback)
         if (!cancelled) {
-          setState((prev) => ({ ...prev, connected: false }));
+          console.error("[useQuorumLive] Supabase connection failed:", err);
+          setState((prev) => ({ ...prev, connected: false, error: "Supabase unavailable" }));
         }
       }
     }

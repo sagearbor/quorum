@@ -83,6 +83,7 @@ export class ElevenLabsProvider implements AvatarProvider {
     }
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   setHeadPose(_yaw: number, _pitch: number): void {
     // ElevenLabs TTS API doesn't support head pose.
     // With their Conversational AI avatar widget, this would map to avatar params.

@@ -19,6 +19,7 @@ export class VisionTracker {
   private onGaze: GazeCallback;
   private mock: boolean;
   private intervalMs: number;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private detector: any = null;
   private video: HTMLVideoElement | null = null;
   private stream: MediaStream | null = null;
@@ -143,6 +144,7 @@ export class VisionTracker {
       if (results.detections && results.detections.length > 0) {
         // Use the largest (closest) person detection
         const detection = results.detections.reduce(
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           (best: any, d: any) =>
             d.boundingBox.width * d.boundingBox.height >
             best.boundingBox.width * best.boundingBox.height

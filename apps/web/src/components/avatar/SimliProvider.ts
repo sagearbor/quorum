@@ -32,6 +32,7 @@ export class SimliProvider implements AvatarProvider {
     // await this.client.initialize(this.container);
   }
 
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   async speak(text: string, _emotion?: Emotion): Promise<void> {
     this.speaking = true;
     console.log(`[SimliProvider stub] speak: "${text.slice(0, 50)}..."`);

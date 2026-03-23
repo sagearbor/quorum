@@ -42,7 +42,7 @@ export interface AvatarControllerOptions {
   enableMic?: boolean;
   /** Enable webcam vision tracking (default true in browser) */
   enableVision?: boolean;
-  /** Enable webcam emotion detection (default false — callers opt in via prop) */
+  /** Enable webcam emotion detection (default true in browser — callers override via prop) */
   enableEmotion?: boolean;
   /** Latest synthesis text to speak */
   synthesisText?: string;
@@ -73,7 +73,7 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
     resolved = false,
     enableMic = true,
     enableVision = typeof window !== "undefined",
-    enableEmotion = false,
+    enableEmotion = typeof window !== "undefined",
     synthesisText,
   } = options;
 

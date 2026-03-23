@@ -157,16 +157,10 @@ function usePanelPairs(mode: CarouselMode, quorumIds: string[]): PanelConfig[][]
     ];
   }
 
-  // Multi-quorum: pair quorums side by side, with a facilitator slide first
+  // Multi-quorum: pair quorums side by side as health charts
   const pairs: PanelConfig[][] = [];
 
-  // First slide: Facilitator for first quorum + health for first quorum
-  pairs.push([
-    { key: "facilitator-main", quorumId: quorumIds[0], label: "Facilitator", type: "facilitator" },
-    { key: `q-${quorumIds[0]}-health`, quorumId: quorumIds[0], label: "Quorum 1", type: "health" },
-  ]);
-
-  // Remaining quorum pairs as health charts
+  // All slides = health charts, two per slide
   for (let i = 0; i < quorumIds.length; i += 2) {
     const pair: PanelConfig[] = [
       { key: `q-${quorumIds[i]}`, quorumId: quorumIds[i], label: `Quorum ${i + 1}`, type: "health" },

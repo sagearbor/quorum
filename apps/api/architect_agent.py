@@ -112,8 +112,8 @@ async def generate_roles(
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
-        logger.warning("Failed to parse LLM JSON response — using mock roles. Raw: %s", text[:200])
-        return [RoleSuggestion(**r) for r in _MOCK_ROLES]
+        logger.error("Failed to parse LLM JSON response for role generation. Raw: %s", text[:200])
+        raise ValueError(f"LLM returned unparseable JSON for role generation: {text[:200]}")
 
     return [RoleSuggestion(**item) for item in parsed]
 

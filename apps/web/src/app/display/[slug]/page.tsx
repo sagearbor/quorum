@@ -75,7 +75,8 @@ export default function DisplayPage() {
     for (const qId of quorumIds) {
       try {
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const ws = new WebSocket(`${protocol}//${window.location.host}/quorums/${qId}/live`);
+        const apiHost = process.env.NEXT_PUBLIC_API_URL?.replace(/^https?:\/\//, "") || "127.0.0.1:9000";
+        const ws = new WebSocket(`${protocol}//${apiHost}/quorums/${qId}/live`);
         wsRef.current = ws;
 
         ws.onmessage = (event) => {

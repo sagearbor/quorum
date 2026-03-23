@@ -73,7 +73,7 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
     resolved = false,
     enableMic = true,
     enableVision = typeof window !== "undefined",
-    enableEmotion = typeof window !== "undefined",
+    enableEmotion = false, // must be explicitly enabled; display page does not need webcam
     synthesisText,
   } = options;
 

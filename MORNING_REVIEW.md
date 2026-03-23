@@ -2,7 +2,7 @@
 
 Generated 2026-03-23. These are shortcuts that need proper cleanup before expo.
 
-## 🔴 Fix Tonight (agent working on these)
+## ✅ Fixed Overnight
 
 ### 1. `NEXT_PUBLIC_` env var hack
 - **What I did**: Created `apps/web/.env.local` by copying values from root `.env` at runtime
@@ -29,7 +29,7 @@ Generated 2026-03-23. These are shortcuts that need proper cleanup before expo.
 - **Why it's a hack**: Hardcodes local port; breaks in any deployed environment
 - **Proper fix**: Read WS host from `NEXT_PUBLIC_API_URL` env var (already done), but also add WS proxy support in `next.config.mjs` via custom server, or deploy both services behind the same nginx/caddy
 
-## 🟡 Sage Must Do (can't be automated)
+## 🟡 Sage Must Do (still needed) (can't be automated)
 
 ### A. Confirm AZURE_OPENAI_KEY in `.env`
 The variable must be named exactly `AZURE_OPENAI_KEY` (not `AZURE_OPENAI_API_KEY`).

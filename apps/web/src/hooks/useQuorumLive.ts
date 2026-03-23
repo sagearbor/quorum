@@ -155,12 +155,17 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
         unsubRef.current = () => {
           supabase.removeChannel(channel);
         };
-      } catch {
-        // Supabase not available — only use mock stream in explicit test mode
-        if (!cancelled && process.env.NEXT_PUBLIC_QUORUM_TEST_MODE === "true") {
-          unsubRef.current = createMockStream(quorumId, handleUpdate);
+      } catch (err) {
+        console.error("[useQuorumLive] Supabase subscription failed:", err);
+        if (!cancelled) {
+          if (process.env.NEXT_PUBLIC_QUORUM_TEST_MODE === "true") {
+            // Explicit test mode: use mock stream
+            unsubRef.current = createMockStream(quorumId, handleUpdate);
+          } else {
+            // Production: show error state, never fake data
+            setState((prev) => ({ ...prev, connected: false }));
+          }
         }
-        // In production mode: show empty/loading state, not fake data
       }
     }
 

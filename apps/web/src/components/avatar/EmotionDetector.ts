@@ -67,9 +67,15 @@ export class EmotionDetector {
 
     try {
       await this.initMediaPipe();
-    } catch {
-      this.mock = true;
-      this.startMock();
+    } catch (err) {
+      // Do NOT silently fall back to mock — fail visibly so real issues get fixed.
+      // Mock mode is only for NEXT_PUBLIC_AVATAR_MOCK=true or explicit { mock: true }.
+      if (process.env.NEXT_PUBLIC_AVATAR_MOCK === "true" || this.mock) {
+        this.startMock();
+      } else {
+        console.error("[EmotionDetector] MediaPipe init failed — stopping. Set NEXT_PUBLIC_AVATAR_MOCK=true to use mock mode.", err);
+        this.running = false;
+      }
     }
   }
 

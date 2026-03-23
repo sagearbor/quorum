@@ -27,7 +27,6 @@ interface AvatarPanelProps {
   staticSynthesisText?: string;
   /** Role name used to resolve archetype and GLB model */
   roleName?: string;
-  enableEmotionTracking?: boolean;
 }
 
 export function AvatarPanel({

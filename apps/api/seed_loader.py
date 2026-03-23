@@ -39,7 +39,7 @@ async def load_seed_quorum() -> None:
         logger.warning("Seed file not found at %s — skipping", SEED_FILE)
         return
 
-    from .database import get_supabase
+    from database import get_supabase
 
     db = get_supabase()
 

@@ -152,7 +152,7 @@ async def create_event(body: CreateEventRequest):
         "id": event_id,
         "name": body.name,
         "slug": body.slug,
-        "access_code": body.access_code,
+        "access_code": body.access_code or "",
         "max_active_quorums": body.max_active_quorums,
         "created_by": "local-dev",
     }

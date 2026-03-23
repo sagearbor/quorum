@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import logging
 import os
 from typing import Any, Literal
@@ -78,22 +79,50 @@ async def generate_roles(
         "You are an expert multi-stakeholder facilitation designer. "
         "Given a problem or decision, suggest 4-6 distinct roles for a structured "
         "deliberation quorum. Each role should represent a different perspective, "
-        "expertise, or stakeholder interest. Return a JSON array of objects with fields: "
+        "expertise, or stakeholder interest. "
+        "Return ONLY a valid JSON array (no markdown, no explanation) of objects with fields: "
         "name (string), description (string), authority_rank (integer 1-5, higher=more authority), "
         "capacity ('unlimited' or integer), suggested_prompt_focus (string)."
     )
 
-    prompt = f"{system_prompt}\n\nProblem: {problem}"
-    raw = await llm_provider.complete(prompt, tier=LLMTier.CONFLICT)
+    # Use respond() which routes to Responses API for gpt-5, Chat Completions for gpt-4
+    try:
+        raw, _ = await llm_provider.respond(
+            instructions=system_prompt,
+            input_text=f"Problem: {problem}\n\nReturn the JSON array now.",
+            tier=LLMTier.CONFLICT,
+            reasoning_effort="low",
+        )
+    except (AttributeError, TypeError):
+        # Fallback for providers that don't implement respond()
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": f"Problem: {problem}\n\nReturn the JSON array now."},
+        ]
+        raw = await llm_provider.chat(messages, tier=LLMTier.CONFLICT)
+
+    if not raw or not raw.strip():
+        logger.warning("LLM returned empty response for role generation — using mock roles")
+        return [RoleSuggestion(**r) for r in _MOCK_ROLES]
 
     # Extract JSON array from response (handle markdown fences)
     text = raw.strip()
-    if text.startswith("```"):
-        lines = text.split("\n")
-        lines = [l for l in lines if not l.strip().startswith("```")]
-        text = "\n".join(lines)
+    # Strip markdown code fences
+    text = re.sub(r"^```[a-z]*\n?", "", text)
+    text = re.sub(r"\n?```$", "", text)
+    text = text.strip()
 
-    parsed = json.loads(text)
+    # Extract just the JSON array if there's surrounding text
+    match = re.search(r"\[.*\]", text, re.DOTALL)
+    if match:
+        text = match.group(0)
+
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        logger.warning("Failed to parse LLM JSON response — using mock roles. Raw: %s", text[:200])
+        return [RoleSuggestion(**r) for r in _MOCK_ROLES]
+
     return [RoleSuggestion(**item) for item in parsed]
 
 

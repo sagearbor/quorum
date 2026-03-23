@@ -354,6 +354,93 @@ export function getDemoEngine(): DemoEngine {
   return engine;
 }
 
+// ---------------------------------------------------------------------------
+// Demo facilitator replies (moved from dataProvider to keep mock data here)
+// ---------------------------------------------------------------------------
+
+export const DEMO_FACILITATOR_REPLIES = [
+  "I'm running in demo mode. In a live session I would provide context-aware guidance based on the quorum's active documents, contribution history, and cross-station insights.",
+  "Demo mode is active — no backend is connected. Try submitting a contribution to see how the quorum health score updates in real time.",
+  "This is a demonstration of the Quorum facilitator. In production, I synthesize perspectives from all roles and help surface conflicts before they escalate.",
+  "The facilitator agent system is designed to assist each station independently while maintaining a global view of the quorum's progress. Ask me anything in a live session.",
+];
+
+// ---------------------------------------------------------------------------
+// Demo agent documents (moved from dataProvider to keep mock data here)
+// ---------------------------------------------------------------------------
+
+export function getDemoDocuments(quorumId: string): {
+  id: string;
+  quorum_id: string;
+  title: string;
+  doc_type: string;
+  format: string;
+  content: Record<string, unknown>;
+  status: string;
+  version: number;
+  tags: string[];
+  created_by_role_id: string;
+  created_at: string;
+  updated_at: string;
+}[] {
+  const now = new Date().toISOString();
+  return [
+    {
+      id: "demo-doc-001",
+      quorum_id: quorumId,
+      title: "Protocol Amendment — eGFR Threshold",
+      doc_type: "protocol",
+      format: "json",
+      content: {
+        schema_version: "1.0",
+        sections: {
+          amendment: {
+            original_criterion: "eGFR > 60 mL/min/1.73m²",
+            proposed_criterion: "eGFR > 45 mL/min/1.73m²",
+            rationale: "Expand eligible population by ~30%",
+            dsmb_review_required: true,
+          },
+        },
+        metadata: { last_editors: ["demo-irb", "demo-safety"], conflict_zones: [] },
+      },
+      status: "active",
+      version: 3,
+      tags: ["egfr", "protocol_amendment", "enrollment"],
+      created_by_role_id: "demo-irb",
+      created_at: now,
+      updated_at: now,
+    },
+    {
+      id: "demo-doc-002",
+      quorum_id: quorumId,
+      title: "Site Support Budget",
+      doc_type: "budget",
+      format: "json",
+      content: {
+        schema_version: "1.0",
+        sections: {
+          budget: {
+            line_items: [
+              { category: "CRC staffing", amount: 180000, status: "approved" },
+              { category: "Translation services", amount: 50000, status: "approved" },
+              { category: "Patient materials", amount: 30000, status: "pending" },
+            ],
+            total_approved: 230000,
+            total_pending: 30000,
+          },
+        },
+        metadata: { last_editors: ["demo-sponsor"], conflict_zones: [] },
+      },
+      status: "active",
+      version: 2,
+      tags: ["budget", "crc_staffing", "sponsor"],
+      created_by_role_id: "demo-sponsor",
+      created_at: now,
+      updated_at: now,
+    },
+  ];
+}
+
 export type {
   DemoEngine,
   DemoState,

@@ -5,13 +5,24 @@
  * Switches between DemoEngine (offline) and Supabase (live) based on env.
  */
 
-import {
-  getDemoEngine,
-  type DemoQuorum,
-  type DemoRole,
-  type DemoContribution,
-  type DemoArtifact,
+import type {
+  DemoQuorum,
+  DemoRole,
+  DemoContribution,
+  DemoArtifact,
 } from "./demoMode";
+
+// Dynamic import() so demoMode.ts (and its seed JSON) are excluded from the
+// production bundle when QUORUM_TEST_MODE is off. All calls gated by isDemoMode().
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let _cachedDemoModule: any = null;
+
+async function loadDemoEngine() {
+  if (!_cachedDemoModule) {
+    _cachedDemoModule = await import("./demoMode");
+  }
+  return _cachedDemoModule.getDemoEngine();
+}
 
 // ---------------------------------------------------------------------------
 // Mode detection
@@ -84,7 +95,8 @@ export async function getQuorums(
   eventSlug: string
 ): Promise<DemoQuorum[]> {
   if (isDemoMode()) {
-    return getDemoEngine().getQuorums(eventSlug);
+    const engine = await loadDemoEngine();
+    return engine.getQuorums(eventSlug);
   }
 
   // Live mode — fetch from Supabase
@@ -130,7 +142,8 @@ export async function getQuorum(
   quorumId: string
 ): Promise<DemoQuorum | null> {
   if (isDemoMode()) {
-    return getDemoEngine().getQuorum(quorumId) ?? null;
+    const engine = await loadDemoEngine();
+    return engine.getQuorum(quorumId) ?? null;
   }
 
   const { supabase } = await import("./supabase");
@@ -162,7 +175,8 @@ export async function getQuorum(
 
 export async function getRoles(quorumId: string): Promise<DemoRole[]> {
   if (isDemoMode()) {
-    return getDemoEngine().getRoles(quorumId);
+    const engine = await loadDemoEngine();
+    return engine.getRoles(quorumId);
   }
 
   const { supabase } = await import("./supabase");
@@ -183,7 +197,8 @@ export async function getContributions(
   quorumId: string
 ): Promise<DemoContribution[]> {
   if (isDemoMode()) {
-    return getDemoEngine().getContributions(quorumId);
+    const engine = await loadDemoEngine();
+    return engine.getContributions(quorumId);
   }
 
   const { supabase } = await import("./supabase");
@@ -204,7 +219,8 @@ export async function getArtifact(
   quorumId: string
 ): Promise<DemoArtifact | null> {
   if (isDemoMode()) {
-    return getDemoEngine().getArtifact(quorumId);
+    const engine = await loadDemoEngine();
+    return engine.getArtifact(quorumId);
   }
 
   const { supabase } = await import("./supabase");
@@ -223,7 +239,8 @@ export async function getArtifact(
 
 export async function getHealthScore(quorumId: string): Promise<number> {
   if (isDemoMode()) {
-    return getDemoEngine().getHealthScore(quorumId);
+    const engine = await loadDemoEngine();
+    return engine.getHealthScore(quorumId);
   }
 
   const { supabase } = await import("./supabase");
@@ -249,12 +266,16 @@ export function subscribeToHealth(
   handler: (data: { score: number; metrics: Record<string, number> }) => void
 ): () => void {
   if (isDemoMode()) {
-    return getDemoEngine().subscribe("health_update", (raw) => {
-      const data = raw as { quorum_id: string; score: number; metrics: Record<string, number> };
-      if (data.quorum_id === quorumId) {
-        handler({ score: data.score, metrics: data.metrics });
-      }
+    let unsub: (() => void) | null = null;
+    import("./demoMode").then(({ getDemoEngine }) => {
+      unsub = getDemoEngine().subscribe("health_update", (raw) => {
+        const data = raw as { quorum_id: string; score: number; metrics: Record<string, number> };
+        if (data.quorum_id === quorumId) {
+          handler({ score: data.score, metrics: data.metrics });
+        }
+      });
     });
+    return () => { unsub?.(); };
   }
 
   // Live mode — Supabase realtime channel
@@ -302,12 +323,16 @@ export function subscribeToContributions(
   handler: (contribution: DemoContribution) => void
 ): () => void {
   if (isDemoMode()) {
-    return getDemoEngine().subscribe("contribution", (raw) => {
-      const c = raw as DemoContribution;
-      if (c.quorum_id === quorumId) {
-        handler(c);
-      }
+    let unsub: (() => void) | null = null;
+    import("./demoMode").then(({ getDemoEngine }) => {
+      unsub = getDemoEngine().subscribe("contribution", (raw) => {
+        const c = raw as DemoContribution;
+        if (c.quorum_id === quorumId) {
+          handler(c);
+        }
+      });
     });
+    return () => { unsub?.(); };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -349,12 +374,16 @@ export function subscribeToArtifact(
   handler: (artifact: DemoArtifact) => void
 ): () => void {
   if (isDemoMode()) {
-    return getDemoEngine().subscribe("artifact_update", (raw) => {
-      const a = raw as DemoArtifact & { quorum_id: string };
-      if (a.quorum_id === quorumId) {
-        handler(a);
-      }
+    let unsub: (() => void) | null = null;
+    import("./demoMode").then(({ getDemoEngine }) => {
+      unsub = getDemoEngine().subscribe("artifact_update", (raw) => {
+        const a = raw as DemoArtifact & { quorum_id: string };
+        if (a.quorum_id === quorumId) {
+          handler(a);
+        }
+      });
     });
+    return () => { unsub?.(); };
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -439,14 +468,6 @@ export async function getStationMessages(
   return (data ?? []) as StationMessage[];
 }
 
-/** Canned demo replies for the facilitator (rotated by content hash). */
-const DEMO_FACILITATOR_REPLIES = [
-  "I'm running in demo mode. In a live session I would provide context-aware guidance based on the quorum's active documents, contribution history, and cross-station insights.",
-  "Demo mode is active — no backend is connected. Try submitting a contribution to see how the quorum health score updates in real time.",
-  "This is a demonstration of the Quorum facilitator. In production, I synthesize perspectives from all roles and help surface conflicts before they escalate.",
-  "The facilitator agent system is designed to assist each station independently while maintaining a global view of the quorum's progress. Ask me anything in a live session.",
-];
-
 /**
  * Ask the AI facilitator a direct question at a station.
  * Hits POST /quorums/{quorumId}/stations/{stationId}/ask.
@@ -459,8 +480,7 @@ export async function askFacilitator(
   content: string
 ): Promise<FacilitatorReply> {
   if (isDemoMode()) {
-    // Rotate through canned responses based on content length so repeated
-    // questions get different (but deterministic) answers.
+    const { DEMO_FACILITATOR_REPLIES } = await import("./demoMode");
     const idx = content.length % DEMO_FACILITATOR_REPLIES.length;
     const reply = DEMO_FACILITATOR_REPLIES[idx];
     return {
@@ -536,66 +556,6 @@ export function subscribeToStationMessages(
 // Agent documents
 // ---------------------------------------------------------------------------
 
-/** Demo documents shown when no backend is connected. */
-function getDemoDocuments(quorumId: string): AgentDocument[] {
-  const now = new Date().toISOString();
-  return [
-    {
-      id: "demo-doc-001",
-      quorum_id: quorumId,
-      title: "Protocol Amendment — eGFR Threshold",
-      doc_type: "protocol",
-      format: "json",
-      content: {
-        schema_version: "1.0",
-        sections: {
-          amendment: {
-            original_criterion: "eGFR > 60 mL/min/1.73m²",
-            proposed_criterion: "eGFR > 45 mL/min/1.73m²",
-            rationale: "Expand eligible population by ~30%",
-            dsmb_review_required: true,
-          },
-        },
-        metadata: { last_editors: ["demo-irb", "demo-safety"], conflict_zones: [] },
-      },
-      status: "active",
-      version: 3,
-      tags: ["egfr", "protocol_amendment", "enrollment"],
-      created_by_role_id: "demo-irb",
-      created_at: now,
-      updated_at: now,
-    },
-    {
-      id: "demo-doc-002",
-      quorum_id: quorumId,
-      title: "Site Support Budget",
-      doc_type: "budget",
-      format: "json",
-      content: {
-        schema_version: "1.0",
-        sections: {
-          budget: {
-            line_items: [
-              { category: "CRC staffing", amount: 180000, status: "approved" },
-              { category: "Translation services", amount: 50000, status: "approved" },
-              { category: "Patient materials", amount: 30000, status: "pending" },
-            ],
-            total_approved: 230000,
-            total_pending: 30000,
-          },
-        },
-        metadata: { last_editors: ["demo-sponsor"], conflict_zones: [] },
-      },
-      status: "active",
-      version: 2,
-      tags: ["budget", "crc_staffing", "sponsor"],
-      created_by_role_id: "demo-sponsor",
-      created_at: now,
-      updated_at: now,
-    },
-  ];
-}
-
 /**
  * Fetch all documents for a quorum (defaults to active status).
  */
@@ -604,7 +564,8 @@ export async function getAgentDocuments(
   status?: "active" | "superseded" | "canceled"
 ): Promise<AgentDocument[]> {
   if (isDemoMode()) {
-    const docs = getDemoDocuments(quorumId);
+    const { getDemoDocuments } = await import("./demoMode");
+    const docs = getDemoDocuments(quorumId) as AgentDocument[];
     return status ? docs.filter((d) => d.status === status) : docs;
   }
 
@@ -725,12 +686,16 @@ export function subscribeToA2ARequests(
 
 export function startDemo(): void {
   if (isDemoMode()) {
-    getDemoEngine().start();
+    import("./demoMode").then(({ getDemoEngine }) => {
+      getDemoEngine().start();
+    });
   }
 }
 
 export function stopDemo(): void {
   if (isDemoMode()) {
-    getDemoEngine().stop();
+    import("./demoMode").then(({ getDemoEngine }) => {
+      getDemoEngine().stop();
+    });
   }
 }

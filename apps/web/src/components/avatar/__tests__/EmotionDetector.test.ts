@@ -173,8 +173,8 @@ describe("EmotionDetector", () => {
     });
   });
 
-  describe("MediaPipe mode (fallback)", () => {
-    it("should fallback to mock when MediaPipe fails", async () => {
+  describe("MediaPipe mode (failure)", () => {
+    it("should stop without mock fallback when MediaPipe fails", async () => {
       vi.doMock("@mediapipe/tasks-vision", () => {
         throw new Error("WASM not available");
       });
@@ -187,8 +187,8 @@ describe("EmotionDetector", () => {
 
       await detector.start();
 
-      expect(detector.isMock()).toBe(true);
-      expect(detector.isRunning()).toBe(true);
+      expect(detector.isMock()).toBe(false);
+      expect(detector.isRunning()).toBe(false);
 
       detector.stop();
     });

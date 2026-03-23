@@ -31,7 +31,6 @@ const INITIAL_STATE: QuorumLiveState = {
 };
 
 function isTestMode(): boolean {
-  if (typeof window === "undefined") return true;
   return process.env.NEXT_PUBLIC_QUORUM_TEST_MODE === "true";
 }
 
@@ -156,9 +155,9 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
           supabase.removeChannel(channel);
         };
       } catch {
-        // Supabase not available — fall back to mock
+        // Supabase not available — show disconnected state (no mock fallback)
         if (!cancelled) {
-          unsubRef.current = createMockStream(quorumId, handleUpdate);
+          setState((prev) => ({ ...prev, connected: false }));
         }
       }
     }

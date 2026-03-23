@@ -114,7 +114,7 @@ This activates the **DemoEngine**, which:
 - `apps/web/src/lib/dataProvider.ts` — unified interface (all components import from here)
 - `apps/api/seed_loader.py` — loads seed data into Supabase on FastAPI startup
 
-**Detection logic:** Demo mode activates if `NEXT_PUBLIC_QUORUM_TEST_MODE=true` **or** no `NEXT_PUBLIC_SUPABASE_URL` is set.
+**Detection logic:** Demo mode activates only when `NEXT_PUBLIC_QUORUM_TEST_MODE=true` is explicitly set. Missing Supabase URL yields empty state, not mock data.
 
 **To regenerate fixtures with a real API key:** Run the backend with Supabase configured, then export the quorum state from the `/quorums/{id}/state` endpoint.
 

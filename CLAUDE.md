@@ -50,7 +50,7 @@ NEXT_PUBLIC_QUORUM_TEST_MODE=true pnpm --filter web dev
 The frontend has two data paths that share the same interface:
 
 - **Live mode**: Components call `dataProvider.ts` which queries Supabase and subscribes to Postgres realtime channels.
-- **Demo mode**: `dataProvider.ts` detects missing Supabase URL or `NEXT_PUBLIC_QUORUM_TEST_MODE=true` and routes to `demoMode.ts` (DemoEngine), an in-memory EventEmitter that ticks fake contributions from `seed/clinical-trial.json`.
+- **Demo mode**: `dataProvider.ts` activates only when `NEXT_PUBLIC_QUORUM_TEST_MODE=true` is explicitly set, and routes to `demoMode.ts` (DemoEngine), an in-memory EventEmitter that ticks fake contributions from `seed/clinical-trial.json`. Missing Supabase URL yields empty state, not mock data.
 
 Components must **always import from `@/lib/dataProvider`**, never from `supabase.ts` or `demoMode.ts` directly.
 

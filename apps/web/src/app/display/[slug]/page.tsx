@@ -49,7 +49,7 @@ export default function DisplayPage() {
           setRoleStatuses(data);
         }
       } catch {
-        // Silently fail in mock/test mode
+        // API unreachable — skip this quorum's role status
       }
     }
   }, [quorumIds]);
@@ -90,7 +90,7 @@ export default function DisplayPage() {
           }
         };
       } catch {
-        // WebSocket not available in test/mock mode
+        // WebSocket connection failed — skip realtime updates
       }
     }
     return () => {

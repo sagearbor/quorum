@@ -11,8 +11,6 @@ import {
   type DemoRole,
   type DemoContribution,
   type DemoArtifact,
-  type DemoEventType,
-  type DemoHandler,
 } from "./demoMode";
 
 // ---------------------------------------------------------------------------

@@ -45,7 +45,7 @@ export type {
   ResolveResponse,
 } from "./api";
 
-export type { HealthMetrics } from "./health";
+export type { HealthMetrics, HealthSnapshot } from "./health";
 
 export type {
   WsContributionEvent,

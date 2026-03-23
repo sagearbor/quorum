@@ -13,7 +13,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useQuorumLive } from "@/hooks/useQuorumLive";
-import type { HealthSnapshot } from "@/lib/mockStream";
+import type { HealthSnapshot } from "@quorum/types";
 
 interface QuorumHealthChartProps {
   quorumId: string;

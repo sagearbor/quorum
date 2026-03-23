@@ -5,13 +5,9 @@
  * Produces HealthMetrics that rise over time, simulating a quorum resolving.
  */
 
-import type { HealthMetrics } from "@quorum/types";
+import type { HealthMetrics, HealthSnapshot } from "@quorum/types";
 
-export interface HealthSnapshot {
-  timestamp: number;
-  score: number;
-  metrics: HealthMetrics;
-}
+export type { HealthSnapshot };
 
 export interface MockContribution {
   id: string;

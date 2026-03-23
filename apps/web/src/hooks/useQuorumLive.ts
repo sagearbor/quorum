@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import type { HealthMetrics } from "@quorum/types";
-import { createMockStream, type HealthSnapshot, type MockContribution, type MockStreamState } from "@/lib/mockStream";
+import type { HealthMetrics, HealthSnapshot } from "@quorum/types";
+import { createMockStream, type MockContribution, type MockStreamState } from "@/lib/mockStream";
 
 export interface QuorumLiveState {
   healthScore: number;

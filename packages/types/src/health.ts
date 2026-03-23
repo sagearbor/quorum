@@ -1,5 +1,11 @@
 // Health score metrics from CONTRACT.md
 
+export interface HealthSnapshot {
+  timestamp: number;
+  score: number;
+  metrics: HealthMetrics;
+}
+
 export interface HealthMetrics {
   /** % artifact sections resolved */
   completion_pct: number;

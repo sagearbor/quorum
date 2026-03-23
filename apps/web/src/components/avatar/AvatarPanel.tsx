@@ -19,6 +19,8 @@ interface AvatarPanelProps {
   quorumId: string;
   /** Show dev-mode direction indicator (default false) */
   showDirectionIndicator?: boolean;
+  /** Enable webcam emotion tracking (default false — only enable on station pages with webcam) */
+  enableEmotionTracking?: boolean;
   /** For testing: bypass useQuorumLive with a static score */
   staticHealthScore?: number;
   /** For testing: synthesis text to speak */
@@ -30,6 +32,7 @@ interface AvatarPanelProps {
 export function AvatarPanel({
   quorumId,
   showDirectionIndicator = false,
+  enableEmotionTracking = false,
   staticHealthScore,
   staticSynthesisText,
   roleName,
@@ -63,6 +66,7 @@ export function AvatarPanel({
     healthScore,
     resolved,
     enableMic: typeof window !== "undefined",
+    enableEmotion: enableEmotionTracking,
     synthesisText: latestSynthesis,
   });
 

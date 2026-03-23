@@ -18,19 +18,14 @@ import {
 // ---------------------------------------------------------------------------
 
 export function isDemoMode(): boolean {
-  // NEXT_PUBLIC_ prefix so it's available in browser
+  // Demo mode is ONLY active when explicitly requested via env var.
+  // Missing Supabase URL should yield empty state, not mock data.
   if (typeof window !== "undefined") {
-    // Client-side: check injected env vars
-    return (
-      process.env.NEXT_PUBLIC_QUORUM_TEST_MODE === "true" ||
-      !process.env.NEXT_PUBLIC_SUPABASE_URL
-    );
+    return process.env.NEXT_PUBLIC_QUORUM_TEST_MODE === "true";
   }
-  // Server-side: check both prefixed and unprefixed
   return (
     process.env.QUORUM_TEST_MODE === "true" ||
-    process.env.NEXT_PUBLIC_QUORUM_TEST_MODE === "true" ||
-    !process.env.NEXT_PUBLIC_SUPABASE_URL
+    process.env.NEXT_PUBLIC_QUORUM_TEST_MODE === "true"
   );
 }
 

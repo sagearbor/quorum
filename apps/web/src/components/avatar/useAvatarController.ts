@@ -73,7 +73,7 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
     resolved = false,
     enableMic = true,
     enableVision = typeof window !== "undefined",
-    enableEmotion = false, // default false — callers opt-in via prop
+    enableEmotion = false,
     synthesisText,
   } = options;
 

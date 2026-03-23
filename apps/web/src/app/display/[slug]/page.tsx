@@ -28,17 +28,8 @@ export default function DisplayPage() {
           if (ids.length > 0) { setQuorumIds(ids); return; }
         }
       } catch { /* fall through */ }
-      // Only fall back to mock IDs in explicit test mode — otherwise show empty
-      if (process.env.NEXT_PUBLIC_QUORUM_TEST_MODE === "true") {
-        setQuorumIds([
-          "mock-quorum-clinical-trial",
-          "mock-quorum-irb-review",
-          "mock-quorum-site-approval",
-          "mock-quorum-data-monitoring",
-        ]);
-      } else {
-        setQuorumIds([]); // Real mode: show empty until API responds
-      }
+      // API unavailable or no quorums yet — show empty state
+      setQuorumIds([]);
     }
     loadQuorums();
     const interval = setInterval(loadQuorums, 30_000);
@@ -58,7 +49,7 @@ export default function DisplayPage() {
           setRoleStatuses(data);
         }
       } catch {
-        // Silently fail in mock/test mode
+        // API unreachable — skip this quorum's role status
       }
     }
   }, [quorumIds]);
@@ -75,8 +66,7 @@ export default function DisplayPage() {
     for (const qId of quorumIds) {
       try {
         const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const apiHost = process.env.NEXT_PUBLIC_API_URL?.replace(/^https?:\/\//, "") || "127.0.0.1:9000";
-        const ws = new WebSocket(`${protocol}//${apiHost}/quorums/${qId}/live`);
+        const ws = new WebSocket(`${protocol}//${window.location.host}/quorums/${qId}/live`);
         wsRef.current = ws;
 
         ws.onmessage = (event) => {
@@ -100,7 +90,7 @@ export default function DisplayPage() {
           }
         };
       } catch {
-        // WebSocket not available in test/mock mode
+        // WebSocket connection failed — skip realtime updates
       }
     }
     return () => {

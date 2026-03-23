@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import type { HealthMetrics } from "@quorum/types";
-import { createMockStream, type HealthSnapshot, type MockContribution, type MockStreamState } from "@/lib/mockStream";
+import type { HealthMetrics, HealthSnapshot } from "@quorum/types";
+import type { MockContribution, MockStreamState } from "@/lib/mockStream";
 
 export interface QuorumLiveState {
   healthScore: number;
@@ -58,7 +58,9 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
 
   useEffect(() => {
     if (isTestMode()) {
-      unsubRef.current = createMockStream(quorumId, handleUpdate);
+      import("@/lib/mockStream").then(({ createMockStream }) => {
+        unsubRef.current = createMockStream(quorumId, handleUpdate);
+      });
       return () => {
         unsubRef.current?.();
         unsubRef.current = null;
@@ -138,42 +140,13 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
             }
           });
 
-        // Set initial state from DB, including seeded history from contributions
+        // Set initial state from DB
         if (quorum && !cancelled) {
-          const contribs = contributions ?? [];
-          const currentScore = quorum.heat_score ?? 0;
-
-          // Build history: one snapshot per contribution, ramping up to current score
-          const history: HealthSnapshot[] = contribs.map((c: Record<string, unknown>, i: number) => ({
-            timestamp: new Date(c.created_at as string).getTime(),
-            score: Math.round((currentScore / contribs.length) * (i + 1)),
-            metrics: {
-              completion_pct: Math.round((100 / contribs.length) * (i + 1)),
-              consensus_score: 50,
-              critical_path_score: 100,
-              role_coverage_pct: Math.round((100 / contribs.length) * (i + 1)),
-              blocker_score: 100,
-            },
-          }));
-          // Always add a current snapshot at now
-          history.push({
-            timestamp: Date.now(),
-            score: currentScore,
-            metrics: {
-              completion_pct: contribs.length > 0 ? 100 : 0,
-              consensus_score: 50,
-              critical_path_score: 100,
-              role_coverage_pct: contribs.length > 0 ? 100 : 0,
-              blocker_score: 100,
-            },
-          });
-
           setState((prev) => ({
             ...prev,
-            healthScore: currentScore,
+            healthScore: quorum.heat_score ?? 0,
             connected: true,
-            history,
-            recentContributions: contribs.slice(-20).map((c: Record<string, string>) => ({
+            recentContributions: (contributions ?? []).slice(-20).map((c: Record<string, string>) => ({
               id: c.id,
               role_id: c.role_id,
               role_name: c.role_id,
@@ -187,8 +160,9 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
           supabase.removeChannel(channel);
         };
       } catch (err) {
-        console.error("[useQuorumLive] Supabase connection failed:", err);
+        // Supabase not available — show disconnected state with error (no mock fallback)
         if (!cancelled) {
+          console.error("[useQuorumLive] Supabase connection failed:", err);
           setState((prev) => ({ ...prev, connected: false, error: "Supabase unavailable" }));
         }
       }

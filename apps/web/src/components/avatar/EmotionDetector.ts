@@ -69,7 +69,7 @@ export class EmotionDetector {
     try {
       await this.initMediaPipe();
     } catch (err) {
-      console.error("[EmotionDetector] MediaPipe init failed — stopping. Set NEXT_PUBLIC_AVATAR_MOCK=true to use mock mode.", err);
+      console.error("[EmotionDetector] MediaPipe init failed:", err);
       this.running = false;
     }
   }

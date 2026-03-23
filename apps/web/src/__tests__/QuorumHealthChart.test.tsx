@@ -18,6 +18,7 @@ vi.mock("@/hooks/useQuorumLive", () => ({
     recentContributions: [],
     artifact: null,
     connected: true,
+    error: null,
   }),
 }));
 
@@ -136,6 +137,7 @@ describe("QuorumHealthChart", () => {
         recentContributions: [],
         artifact: null,
         connected: false,
+        error: "Supabase unavailable",
       }),
     }));
   });

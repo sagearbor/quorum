@@ -17,6 +17,7 @@ vi.mock("@/hooks/useQuorumLive", () => ({
     recentContributions: [],
     artifact: null,
     connected: true,
+    error: null,
   }),
 }));
 

@@ -1,17 +1,11 @@
 /**
  * Mock stream — simulates a live WebSocket stream of health updates.
- * Used in QUORUM_TEST_MODE=true or when no Supabase connection is available.
+ * Used only when NEXT_PUBLIC_QUORUM_TEST_MODE=true.
  *
  * Produces HealthMetrics that rise over time, simulating a quorum resolving.
  */
 
-import type { HealthMetrics } from "@quorum/types";
-
-export interface HealthSnapshot {
-  timestamp: number;
-  score: number;
-  metrics: HealthMetrics;
-}
+import type { HealthMetrics, HealthSnapshot } from "@quorum/types";
 
 export interface MockContribution {
   id: string;

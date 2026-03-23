@@ -4,14 +4,6 @@ import { useParams } from "next/navigation";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { DashboardCarousel } from "@/components/carousel/DashboardCarousel";
 
-// In test mode, provide mock quorum IDs so the display works without a backend
-const MOCK_QUORUM_IDS = [
-  "mock-quorum-clinical-trial",
-  "mock-quorum-irb-review",
-  "mock-quorum-site-approval",
-  "mock-quorum-data-monitoring",
-];
-
 interface RoleStatus {
   role_id: string;
   name: string;
@@ -24,9 +16,30 @@ export default function DisplayPage() {
   const params = useParams<{ slug: string }>();
   const slug = params.slug;
 
-  // In production, these would come from a Supabase query for the event's active quorums.
-  // For now, always use mock IDs — the useQuorumLive hook handles test mode automatically.
-  const quorumIds = MOCK_QUORUM_IDS;
+  const [quorumIds, setQuorumIds] = useState<string[]>([]);
+
+  // Fetch real quorum IDs for this event slug from the API
+  useEffect(() => {
+    async function loadQuorums() {
+      try {
+        const res = await fetch(`/api/events/${slug}/quorum-ids`);
+        if (res.ok) {
+          const ids: string[] = await res.json();
+          if (ids.length > 0) { setQuorumIds(ids); return; }
+        }
+      } catch { /* fall through */ }
+      // Fallback to mock IDs if API unavailable or no quorums yet
+      setQuorumIds([
+        "mock-quorum-clinical-trial",
+        "mock-quorum-irb-review",
+        "mock-quorum-site-approval",
+        "mock-quorum-data-monitoring",
+      ]);
+    }
+    loadQuorums();
+    const interval = setInterval(loadQuorums, 30_000);
+    return () => clearInterval(interval);
+  }, [slug]);
 
   const [roleStatuses, setRoleStatuses] = useState<RoleStatus[]>([]);
   const [unblockedIds, setUnblockedIds] = useState<Set<string>>(new Set());

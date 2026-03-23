@@ -142,6 +142,28 @@ async def list_events():
 
 
 # ---------------------------------------------------------------------------
+# GET /events/{slug}/quorum-ids  — used by display page to get live quorum IDs
+# ---------------------------------------------------------------------------
+@router.get("/events/{slug}/quorum-ids", response_model=list[str])
+async def get_event_quorum_ids(slug: str):
+    """Return active quorum IDs for an event, looked up by slug."""
+    db = get_supabase()
+    event = db.table("events").select("id").eq("slug", slug).maybe_single().execute()
+    if not event.data:
+        return []
+    event_id = event.data["id"]
+    result = (
+        db.table("quorums")
+        .select("id")
+        .eq("event_id", event_id)
+        .in_("status", ["open", "active"])
+        .order("created_at", desc=True)
+        .execute()
+    )
+    return [r["id"] for r in (result.data or [])]
+
+
+# ---------------------------------------------------------------------------
 # POST /events
 # ---------------------------------------------------------------------------
 @router.post("/events", response_model=CreateEventResponse)

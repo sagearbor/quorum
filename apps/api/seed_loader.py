@@ -35,6 +35,12 @@ async def load_seed_quorum() -> None:
         logger.info("SUPABASE_URL not set — skipping seed loader (offline mode)")
         return
 
+    # Only seed when QUORUM_TEST_MODE is explicitly enabled.
+    # Without this gate, seed data leaks into production databases on first boot.
+    if os.environ.get("QUORUM_TEST_MODE", "").lower() not in ("true", "1", "yes"):
+        logger.info("QUORUM_TEST_MODE not set — skipping seed loader")
+        return
+
     if not SEED_FILE.exists():
         logger.warning("Seed file not found at %s — skipping", SEED_FILE)
         return

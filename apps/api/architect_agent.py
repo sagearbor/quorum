@@ -85,25 +85,17 @@ async def generate_roles(
         "capacity ('unlimited' or integer), suggested_prompt_focus (string)."
     )
 
-    # Use respond() which routes to Responses API for gpt-5, Chat Completions for gpt-4
-    try:
-        raw, _ = await llm_provider.respond(
-            instructions=system_prompt,
-            input_text=f"Problem: {problem}\n\nReturn the JSON array now.",
-            tier=LLMTier.CONFLICT,
-            reasoning_effort="low",
-        )
-    except (AttributeError, TypeError):
-        # Fallback for providers that don't implement respond()
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"Problem: {problem}\n\nReturn the JSON array now."},
-        ]
-        raw = await llm_provider.chat(messages, tier=LLMTier.CONFLICT)
+    # Use chat() with system/user split — works for both gpt-4o and gpt-5-nano
+    # (temperature is omitted for gpt-5 models inside the provider)
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Problem: {problem}\n\nReturn the JSON array now."},
+    ]
+    raw = await llm_provider.chat(messages, tier=LLMTier.CONFLICT)
 
     if not raw or not raw.strip():
-        logger.warning("LLM returned empty response for role generation — using mock roles")
-        return [RoleSuggestion(**r) for r in _MOCK_ROLES]
+        logger.warning("LLM returned empty response for role generation — using mock roles. raw=%r", raw)
+        raise ValueError(f"Azure LLM returned empty response. Deployment={os.environ.get('AZURE_OPENAI_DEPLOYMENT')}")
 
     # Extract JSON array from response (handle markdown fences)
     text = raw.strip()

@@ -699,7 +699,10 @@ async def architect_generate_roles(event_id: str, body: GenerateRolesRequest):
     if not event.data:
         raise HTTPException(status_code=404, detail="Event not found")
 
-    roles = await generate_roles(body.problem)
+    try:
+        roles = await generate_roles(body.problem)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Role generation failed: {type(e).__name__}: {e}")
     return GenerateRolesResponse(
         roles=[r.model_dump() for r in roles],
         problem_summary=body.problem[:100],

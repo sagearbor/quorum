@@ -28,7 +28,6 @@ import {
   ResponsiveContainer,
   Cell,
 } from "recharts";
-import type { AgentDocumentDashboardProps } from "@quorum/types/src/dashboard";
 import { useAgentDocuments } from "@/hooks/useAgentDocuments";
 
 // ---------------------------------------------------------------------------

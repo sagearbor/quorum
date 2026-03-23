@@ -20,7 +20,7 @@ const RANK_COLORS: Record<number, string> = {
 };
 
 export function AIArchitectPanel() {
-  const { eventId, eventDraft } = useArchitectStore();
+  const { eventId } = useArchitectStore();
 
   const [problem, setProblem] = useState("");
   const [mode, setMode] = useState<"auto" | "approved">("approved");

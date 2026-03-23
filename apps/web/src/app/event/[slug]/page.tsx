@@ -148,7 +148,7 @@ export default function EventPage() {
       setLoading(true);
       const data = await getQuorums(slug);
       if (!cancelled) {
-        setQuorums(data as EnrichedQuorum[]);
+        setQuorums(data as unknown as EnrichedQuorum[]);
         setLoading(false);
       }
     }

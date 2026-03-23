@@ -190,7 +190,7 @@ describe('TransitionEngine', () => {
   });
 
   it('each archetype weight array sums to > 0', () => {
-    for (const [id, weights] of Object.entries(ARCHETYPE_WEIGHTS)) {
+    for (const [, weights] of Object.entries(ARCHETYPE_WEIGHTS)) {
       const sum = weights.reduce((a: number, b: number) => a + b, 0);
       expect(sum).toBeGreaterThan(0);
     }

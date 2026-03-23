@@ -136,13 +136,42 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
             }
           });
 
-        // Set initial state from DB
+        // Set initial state from DB, including seeded history from contributions
         if (quorum && !cancelled) {
+          const contribs = contributions ?? [];
+          const currentScore = quorum.heat_score ?? 0;
+
+          // Build history: one snapshot per contribution, ramping up to current score
+          const history: HealthSnapshot[] = contribs.map((c: Record<string, unknown>, i: number) => ({
+            timestamp: new Date(c.created_at as string).getTime(),
+            score: Math.round((currentScore / contribs.length) * (i + 1)),
+            metrics: {
+              completion_pct: Math.round((100 / contribs.length) * (i + 1)),
+              consensus_score: 50,
+              critical_path_score: 100,
+              role_coverage_pct: Math.round((100 / contribs.length) * (i + 1)),
+              blocker_score: 100,
+            },
+          }));
+          // Always add a current snapshot at now
+          history.push({
+            timestamp: Date.now(),
+            score: currentScore,
+            metrics: {
+              completion_pct: contribs.length > 0 ? 100 : 0,
+              consensus_score: 50,
+              critical_path_score: 100,
+              role_coverage_pct: contribs.length > 0 ? 100 : 0,
+              blocker_score: 100,
+            },
+          });
+
           setState((prev) => ({
             ...prev,
-            healthScore: quorum.heat_score ?? 0,
+            healthScore: currentScore,
             connected: true,
-            recentContributions: (contributions ?? []).slice(-20).map((c: Record<string, string>) => ({
+            history,
+            recentContributions: contribs.slice(-20).map((c: Record<string, string>) => ({
               id: c.id,
               role_id: c.role_id,
               role_name: c.role_id,
@@ -155,10 +184,16 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
         unsubRef.current = () => {
           supabase.removeChannel(channel);
         };
-      } catch {
-        // Supabase not available — fall back to mock
+      } catch (err) {
+        console.error("[useQuorumLive] Supabase subscription failed:", err);
         if (!cancelled) {
-          unsubRef.current = createMockStream(quorumId, handleUpdate);
+          if (process.env.NEXT_PUBLIC_QUORUM_TEST_MODE === "true") {
+            // Explicit test mode: use mock stream
+            unsubRef.current = createMockStream(quorumId, handleUpdate);
+          } else {
+            // Production: show error state, never fake data
+            setState((prev) => ({ ...prev, connected: false }));
+          }
         }
       }
     }

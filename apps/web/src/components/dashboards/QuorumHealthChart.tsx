@@ -73,7 +73,7 @@ export function QuorumHealthChart({
   );
 
   return (
-    <div className="w-full h-full min-h-[300px] flex flex-col">
+    <div className="w-full h-full flex flex-col" style={{minHeight: 0}}>
       {/* Header */}
       <div className="flex items-center justify-between px-2 mb-2">
         <div className="flex items-center gap-3">
@@ -93,7 +93,7 @@ export function QuorumHealthChart({
       </div>
 
       {/* Chart */}
-      <div className="flex-1 min-h-0">
+      <div className="flex-1" style={{minHeight: 0, height: "calc(100% - 56px)"}}>
         <ResponsiveContainer width="100%" height="100%">
           <LineChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />

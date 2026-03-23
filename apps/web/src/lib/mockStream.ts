@@ -1,6 +1,6 @@
 /**
  * Mock stream — simulates a live WebSocket stream of health updates.
- * Used in QUORUM_TEST_MODE=true or when no Supabase connection is available.
+ * Used only when NEXT_PUBLIC_QUORUM_TEST_MODE=true.
  *
  * Produces HealthMetrics that rise over time, simulating a quorum resolving.
  */

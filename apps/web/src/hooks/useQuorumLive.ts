@@ -2,13 +2,13 @@
 
 import { useEffect, useState, useRef, useCallback } from "react";
 import type { HealthMetrics, HealthSnapshot } from "@quorum/types";
-import type { MockContribution, MockStreamState } from "@/lib/mockStream";
+import type { StreamContribution, StreamState } from "@/lib/mockStream";
 
 export interface QuorumLiveState {
   healthScore: number;
   metrics: HealthMetrics;
   history: HealthSnapshot[];
-  recentContributions: MockContribution[];
+  recentContributions: StreamContribution[];
   artifact: { status: "draft" | "pending_ratification" | "final"; version: number } | null;
   connected: boolean;
   error: string | null;
@@ -44,7 +44,7 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
   const [state, setState] = useState<QuorumLiveState>(INITIAL_STATE);
   const unsubRef = useRef<(() => void) | null>(null);
 
-  const handleUpdate = useCallback((update: MockStreamState) => {
+  const handleUpdate = useCallback((update: StreamState) => {
     setState({
       healthScore: update.healthScore,
       metrics: update.metrics,

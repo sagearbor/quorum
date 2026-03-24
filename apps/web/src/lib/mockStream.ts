@@ -7,7 +7,7 @@
 
 import type { HealthMetrics, HealthSnapshot } from "@quorum/types";
 
-export interface MockContribution {
+export interface StreamContribution {
   id: string;
   role_id: string;
   role_name: string;
@@ -15,15 +15,21 @@ export interface MockContribution {
   created_at: string;
 }
 
-export interface MockStreamState {
+/** @deprecated Use StreamContribution instead */
+export type MockContribution = StreamContribution;
+
+export interface StreamState {
   healthScore: number;
   metrics: HealthMetrics;
   history: HealthSnapshot[];
-  recentContributions: MockContribution[];
+  recentContributions: StreamContribution[];
   artifact: { status: "draft" | "pending_ratification" | "final"; version: number } | null;
 }
 
-type MockStreamCallback = (state: MockStreamState) => void;
+/** @deprecated Use StreamState instead */
+export type MockStreamState = StreamState;
+
+type StreamCallback = (state: StreamState) => void;
 
 const ROLE_NAMES = ["Principal Investigator", "IRB Representative", "Biostatistician", "Patient Advocate", "Site Coordinator"];
 const ROLE_IDS = ["role-pi", "role-irb", "role-bio", "role-patient", "role-site"];
@@ -97,7 +103,7 @@ function generateInitialHistory(count: number, totalDuration: number): HealthSna
   return history;
 }
 
-function generateContribution(index: number): MockContribution {
+function generateContribution(index: number): StreamContribution {
   const roleIndex = index % ROLE_NAMES.length;
   return {
     id: `mock-contrib-${Date.now()}-${index}`,
@@ -118,13 +124,13 @@ function generateContribution(index: number): MockContribution {
  */
 export function createMockStream(
   _quorumId: string,
-  callback: MockStreamCallback,
+  callback: StreamCallback,
   intervalMs = 2000,
   totalDurationMs = 120_000,
 ): () => void {
   const startTime = Date.now();
   const initialHistory = generateInitialHistory(8, totalDurationMs);
-  let contributions: MockContribution[] = [];
+  let contributions: StreamContribution[] = [];
   let contribIndex = 0;
   let tick = 0;
 
@@ -155,7 +161,7 @@ export function createMockStream(
     history[history.length - 1] = snapshot;
 
     const artifactThreshold = 75;
-    let artifact: MockStreamState["artifact"] = null;
+    let artifact: StreamState["artifact"] = null;
     if (score > artifactThreshold + 10) {
       artifact = { status: "final", version: 2 };
     } else if (score > artifactThreshold) {
@@ -187,7 +193,7 @@ export function createMockStream(
 }
 
 /** Static snapshot for testing / SSR — no timer, no side effects. */
-export function createMockSnapshot(progress = 0.5): MockStreamState {
+export function createMockSnapshot(progress = 0.5): StreamState {
   const totalDuration = 120_000;
   const elapsed = progress * totalDuration;
   const metrics = generateMetrics(elapsed, totalDuration);

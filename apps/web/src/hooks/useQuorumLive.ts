@@ -1,8 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import type { HealthMetrics, HealthSnapshot } from "@quorum/types";
-import type { StreamContribution, StreamState } from "@/lib/mockStream";
+import type { HealthMetrics, HealthSnapshot, StreamContribution, StreamState } from "@quorum/types";
 
 export interface QuorumLiveState {
   healthScore: number;

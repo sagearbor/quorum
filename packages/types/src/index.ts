@@ -47,6 +47,8 @@ export type {
 
 export type { HealthMetrics, HealthSnapshot } from "./health";
 
+export type { StreamContribution, StreamState } from "./stream";
+
 export type {
   WsContributionEvent,
   WsHealthUpdateEvent,

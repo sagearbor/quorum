@@ -5,23 +5,9 @@
  * Produces HealthMetrics that rise over time, simulating a quorum resolving.
  */
 
-import type { HealthMetrics, HealthSnapshot } from "@quorum/types";
+import type { HealthMetrics, HealthSnapshot, StreamContribution, StreamState } from "@quorum/types";
 
-export interface StreamContribution {
-  id: string;
-  role_id: string;
-  role_name: string;
-  content: string;
-  created_at: string;
-}
-
-export interface StreamState {
-  healthScore: number;
-  metrics: HealthMetrics;
-  history: HealthSnapshot[];
-  recentContributions: StreamContribution[];
-  artifact: { status: "draft" | "pending_ratification" | "final"; version: number } | null;
-}
+export type { StreamContribution, StreamState };
 
 type StreamCallback = (state: StreamState) => void;
 

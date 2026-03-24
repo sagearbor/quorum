@@ -15,9 +15,6 @@ export interface StreamContribution {
   created_at: string;
 }
 
-/** @deprecated Use StreamContribution instead */
-export type MockContribution = StreamContribution;
-
 export interface StreamState {
   healthScore: number;
   metrics: HealthMetrics;
@@ -25,9 +22,6 @@ export interface StreamState {
   recentContributions: StreamContribution[];
   artifact: { status: "draft" | "pending_ratification" | "final"; version: number } | null;
 }
-
-/** @deprecated Use StreamState instead */
-export type MockStreamState = StreamState;
 
 type StreamCallback = (state: StreamState) => void;
 

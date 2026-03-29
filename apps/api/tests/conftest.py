@@ -8,9 +8,45 @@ top-level import statements succeed.
 
 from __future__ import annotations
 
+import os
 import sys
 import types
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+# Ensure apps/api is on sys.path so that bare imports in main.py
+# (e.g. `from routes import router`) resolve when tests import
+# `apps.api.main` as a package path.
+_API_DIR = os.path.join(os.path.dirname(__file__), os.pardir)
+_API_DIR = os.path.abspath(_API_DIR)
+if _API_DIR not in sys.path:
+    sys.path.insert(0, _API_DIR)
+
+
+def _alias_bare_modules() -> None:
+    """Ensure bare-imported modules (e.g. `routes`) and their qualified
+    counterparts (e.g. `apps.api.routes`) always refer to the same object.
+
+    When main.py does `from routes import router`, Python loads routes.py as
+    the module `routes`. But tests patch `apps.api.routes.get_supabase`.
+    Without aliasing, those are different module objects and patches miss.
+    """
+    _bare_names = [
+        "routes", "seed_loader", "database", "health", "models",
+        "agent_engine", "document_engine", "llm", "tag_vocabulary",
+    ]
+    for name in _bare_names:
+        qualified = f"apps.api.{name}"
+        bare = sys.modules.get(name)
+        qual = sys.modules.get(qualified)
+        if bare is not None and qual is not None and bare is not qual:
+            # Both exist but differ — prefer qualified (it's what patches target)
+            sys.modules[name] = qual
+        elif bare is not None and qual is None:
+            sys.modules[qualified] = bare
+        elif qual is not None and bare is None:
+            sys.modules[name] = qual
 
 
 def _install_quorum_llm_mock() -> None:
@@ -165,3 +201,22 @@ def _install_supabase_mock() -> None:
 # Install mocks at import time so that subsequent imports of routes.py succeed
 _install_quorum_llm_mock()
 _install_supabase_mock()
+
+# Pre-import key modules via their qualified path, then alias the bare name
+# to the same object. This ensures that when main.py does `from routes import
+# router` during importlib.reload(), it gets the same module object that
+# unittest.mock.patch("apps.api.routes.xxx") targets.
+import importlib as _importlib
+
+for _name in [
+    "routes", "seed_loader", "database", "health", "models",
+    "agent_engine", "document_engine", "llm", "tag_vocabulary",
+]:
+    _qualified = f"apps.api.{_name}"
+    try:
+        _mod = _importlib.import_module(_qualified)
+        sys.modules[_name] = _mod  # bare name → same object
+    except ImportError:
+        pass
+
+_alias_bare_modules()

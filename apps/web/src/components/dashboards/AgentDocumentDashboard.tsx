@@ -588,7 +588,7 @@ export function AgentDocumentDashboard({
         data-testid="agent-document-dashboard-empty"
       >
         <p className="text-sm text-white/40">
-          No agent documents seeded yet.
+          No agent documents yet.
         </p>
       </div>
     );

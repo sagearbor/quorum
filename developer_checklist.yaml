@@ -1,0 +1,323 @@
+# =============================================================================
+# Quorum — Developer Checklist
+# =============================================================================
+# Used by AI agents (Claude Code, Codex) to track remaining build work.
+# Agents should announce "Starting item X.Y" when beginning each item.
+# Compatible with sage-agent-tempo for token/cost/audit reporting.
+#
+# Tags: backend, frontend, api, tests, docs, config, realtime, avatar, voice, infra
+# =============================================================================
+
+project: quorum
+description: >
+  Multi-agent coordination platform for real-world group problem-solving.
+  Expo debut: Duke Tech Expo 2026. Post-expo target: DCRI clinical research.
+  Stations = browser URLs. Projector = live dashboard carousel.
+  AI roles coordinate via A2A; human contributions drive quorum health score.
+
+agent_instructions:
+  language: TypeScript (frontend), Python 3.11 (backend)
+  frontend_framework: Next.js 14 app router, Tailwind, Recharts, Framer Motion
+  backend_framework: FastAPI + uvicorn, Supabase, Azure OpenAI
+  package_manager: pnpm (frontend), pip (backend)
+  test_framework: vitest (frontend), pytest (backend)
+  repo_root: apps/web (frontend), apps/api (backend), packages/llm (LLM providers)
+  style: >
+    TypeScript: functional components, hooks, no classes.
+    Python: async/await throughout, Pydantic models for validation.
+    All mock data gated on QUORUM_TEST_MODE=true (backend) or
+    NEXT_PUBLIC_QUORUM_TEST_MODE=true (frontend) — zero mocks in production.
+  critical_env_vars:
+    - AZURE_OPENAI_KEY (NOT AZURE_OPENAI_API_KEY)
+    - AZURE_OPENAI_ENDPOINT / AZURE_OPENAI_DEPLOYMENT
+    - SUPABASE_URL / NEXT_PUBLIC_SUPABASE_URL
+    - SUPABASE_ANON_KEY / NEXT_PUBLIC_SUPABASE_ANON_KEY
+    - NEXT_PUBLIC_QUORUM_TEST_MODE=false (production)
+    - NEXT_PUBLIC_AVATAR_MOCK=false (production)
+
+phases:
+
+  - id: voice
+    name: Voice Input — Always-On Mode
+    description: Ambient listening with noise threshold; dual mic buttons on station page
+
+    items:
+      - id: "1.1"
+        title: Build useAmbientVoice hook
+        tags: [frontend, voice]
+        priority: high
+        acceptance: |
+          - apps/web/src/hooks/useAmbientVoice.ts exports:
+            - useAmbientVoice(opts): { active, listening, volume, start, stop, error }
+          - opts: { onTranscript, noiseThreshold=20, silenceMs=1500, lang="en-US" }
+          - Web Audio API for volume detection; Web Speech API continuous=true for transcript
+          - Only transcribes when volume > noiseThreshold
+          - Pauses recognition during silence (silenceMs), resumes for next utterance
+          - Returns error string if Web Speech API unsupported (no alert)
+          - Unit tests: mock AudioContext + SpeechRecognition, verify threshold + cleanup
+
+      - id: "1.2"
+        title: Add always-on mic button to station page
+        tags: [frontend, voice]
+        priority: high
+        depends_on: ["1.1"]
+        acceptance: |
+          - Two mic buttons on station contribution input:
+            1. Existing press-to-talk (one-shot, unchanged)
+            2. New toggle: "🎙️ Live" — activates ambient mode
+          - While ambient mode active: green pulsing border on textarea, volume bar below
+          - Transcripts fill textarea as interim (italic), committed on silence
+          - User still manually submits (never auto-submit)
+          - URL param ?voiceThreshold=N (0-100) overrides default (20)
+          - Both buttons disabled with tooltip if Web Speech API unsupported
+          - Vitest tests for render, state transitions, error states
+
+      - id: "1.3"
+        title: Document voice modes in SETUP.md
+        tags: [docs, voice]
+        priority: medium
+        depends_on: ["1.2"]
+        acceptance: |
+          - docs/SETUP.md "Voice Input Modes" section:
+            - Table: press-to-talk vs always-on
+            - ?voiceThreshold=N param for expo testing
+            - Recommendation: press-to-talk for noisy rooms; always-on for quiet
+            - Note: ThinkPad built-in mic is mono — always-on still works;
+              USB webcam stereo mic needed for avatar head-turn (StereoAnalyzer)
+
+  - id: db_migration
+    name: Backend DatabaseProvider Migration
+    description: Resolve routes.py TODO — wire all DB ops through DatabaseProvider ABC
+
+    items:
+      - id: "2.1"
+        title: Audit raw Supabase calls in routes.py
+        tags: [backend, api]
+        priority: high
+        acceptance: |
+          - Enumerate all direct supabase.table(...) calls in routes.py
+          - Map each to existing DatabaseProvider method or flag as gap
+          - Audit output as inline comments or doc block — no code changes yet
+
+      - id: "2.2"
+        title: Fill DatabaseProvider gaps
+        tags: [backend]
+        priority: high
+        depends_on: ["2.1"]
+        acceptance: |
+          - Any methods missing from 2.1 audit added to base.py ABC
+          - Both SupabaseDatabaseProvider and PostgresDatabaseProvider implement them
+          - Existing pytest tests still pass; new tests for new methods
+
+      - id: "2.3"
+        title: Migrate routes.py to DatabaseProvider
+        tags: [backend, api]
+        priority: high
+        depends_on: ["2.2"]
+        acceptance: |
+          - Line 23 TODO in routes.py resolved
+          - All raw supabase.table() calls replaced with db_provider.method()
+          - No behavior changes; all 78 pytest tests pass
+          - Integration tested against real Supabase
+
+  - id: runtime_modes
+    name: Runtime Modes — LLM + A2A Wiring
+    description: Merge unmerged runtime branches; wire LLM_PROVIDER and A2A_BACKEND toggles
+
+    items:
+      - id: "3.1"
+        title: Merge runtime/track-x (LLM abstraction) to main
+        tags: [backend, config]
+        priority: high
+        acceptance: |
+          - runtime/track-x merged, no conflicts
+          - LLM_PROVIDER=azure|local|openai env var toggles provider
+          - Local mode: Ollama (llama3.3, deepseek-r1, mistral, qwen2.5, gemma3)
+          - azure.py patch (max_completion_tokens, skip temperature for gpt-5*) preserved
+          - All pytest tests pass; docs/SETUP.md Ollama section added
+
+      - id: "3.2"
+        title: Merge runtime/track-y (A2A backend) to main
+        tags: [backend, api]
+        priority: medium
+        depends_on: ["3.1"]
+        acceptance: |
+          - runtime/track-y merged, no conflicts
+          - A2A_BACKEND=supabase|a2a env var toggles coordination backend
+          - All 30 A2A tests from track-y pass on main
+          - ARCHITECTURE.md updated with A2A backend section
+
+      - id: "3.3"
+        title: Expose runtime mode in /health endpoint
+        tags: [backend, api]
+        priority: low
+        depends_on: ["3.1", "3.2"]
+        acceptance: |
+          - GET /health includes: llm_provider, coordination_backend, llm_model
+          - Useful for verifying config at expo without reading .env
+
+  - id: avatar
+    name: Avatar — ElevenLabs Wiring + Track Z
+    description: Complete avatar integration; verify all 6 transitions; ElevenLabs config
+
+    items:
+      - id: "4.1"
+        title: Audit and merge runtime/track-z
+        tags: [frontend, avatar]
+        priority: medium
+        acceptance: |
+          - Review track-z commits vs main; merge non-duplicate changes
+          - All 6 transitions verified: idle↔engaged, idle↔speaking, engaged↔speaking
+          - AVATAR_TRANSITION_TEST=true still cycles all 6 transitions
+          - All avatar tests pass
+
+      - id: "4.2"
+        title: Document ElevenLabs production setup
+        tags: [docs, avatar, config]
+        priority: high
+        acceptance: |
+          - docs/SETUP.md "7c. ElevenLabs" section:
+            - Sign up → create Conversational AI agent → get API key + agent ID
+            - ELEVENLABS_API_KEY, ELEVENLABS_AGENT_ID env vars
+            - AVATAR_PROVIDER=elevenlabs to activate
+            - Fallback: NEXT_PUBLIC_AVATAR_MOCK=true for demo without keys
+            - Recommended persona: clinical facilitator, neutral professional voice
+          - example.env updated with ELEVENLABS_* vars
+        notes: >
+          Sage creates the ElevenLabs account; this item scaffolds the config
+          so dropping in the keys is all that's needed.
+
+      - id: "4.3"
+        title: Wire avatar to synthesis/conflict updates
+        tags: [frontend, avatar]
+        priority: low
+        depends_on: ["4.1"]
+        acceptance: |
+          - AvatarPanel.tsx line 60 TODO resolved
+          - Avatar speaks new artifact/synthesis when WebSocket quorum event fires
+          - Graceful fallback: text display only if ElevenLabs not configured
+          - Vitest test: mock WS event → avatar transitions to speaking state
+
+  - id: expo_hardening
+    name: Expo Hardening
+    description: Resilience, UX polish, and day-of logistics for 5-station live demo
+
+    items:
+      - id: "5.1"
+        title: Station page offline/reconnect handling
+        tags: [frontend, realtime]
+        priority: high
+        acceptance: |
+          - API unreachable on load: "Connecting…" banner, retry every 5s, resume on reconnect
+          - Supabase realtime drops: subtle "Reconnecting…" indicator, auto-resume
+          - Contribution submitted while offline: queue in sessionStorage, flush on reconnect,
+            show "Queued — will submit when reconnected" badge
+          - Tests: mock network failure at load, mid-session, submission; verify recovery
+
+      - id: "5.2"
+        title: Display page crash recovery and empty-state
+        tags: [frontend, realtime]
+        priority: high
+        acceptance: |
+          - Error boundary: chart crash → "Reconnecting…" slide (not white screen)
+          - Empty quorumIds (event not started): "Waiting for event to begin…" placeholder
+          - Supabase WS drop: charts freeze on last known state, auto-reconnect
+          - Tests: error boundary catch, empty quorumIds, WS disconnect
+
+      - id: "5.3"
+        title: Expo quorum seed/reset script
+        tags: [backend, config]
+        priority: high
+        acceptance: |
+          - scripts/seed-expo-quorum.sh (or .py):
+            - Creates or resets "Phase III Trial Safety Review" quorum for duke-expo-2026
+            - Seeds 5–8 contributions across all defined roles (produces health ~75+)
+            - Idempotent: running twice doesn't duplicate
+          - Documented in docs/SETUP.md "Expo Day Checklist"
+
+      - id: "5.4"
+        title: Expo Day Checklist in SETUP.md
+        tags: [docs, config]
+        priority: high
+        acceptance: |
+          - docs/SETUP.md "Expo Day Checklist" section (fits on one printed page):
+            - Pre-event verification steps (API, Supabase, display page, station page)
+            - Seed/reset quorum for each workshop session
+            - QR codes per station (?station=1 through ?station=5)
+            - Voice mode recommendation (press-to-talk vs always-on by room noise)
+            - USB webcam check for avatar head-turn
+            - Offline contingency: QUORUM_TEST_MODE=true
+
+      - id: "5.5"
+        title: QR code generation script
+        tags: [config]
+        priority: medium
+        acceptance: |
+          - scripts/generate-qr.py outputs 6 PNGs to /tmp/quorum-qr/:
+            - Stations 1–5: /event/duke-expo-2026/quorum/<ID>?station=N
+            - Display: /display/duke-expo-2026
+          - Takes HOST as argument (default: localhost:3000)
+          - README note: print + tape to laptops before doors open
+
+  - id: stt_provider
+    name: STT Provider Abstraction (Post-Expo)
+    description: Pluggable STT backend for future voice pipeline; Deepgram + AssemblyAI options
+
+    items:
+      - id: "6.1"
+        title: Define STTProvider ABC
+        tags: [backend, voice]
+        priority: low
+        acceptance: |
+          - packages/stt/ with quorum_stt/providers/base.py:
+            - STTProvider ABC: transcribe(audio_bytes) -> str
+            - WebSpeechProvider stub (browser-side, no-op on server)
+            - DeepgramProvider (Nova-3, real-time streaming)
+            - AssemblyAIProvider (Universal-3 Pro, turn-queue for multi-speaker)
+            - STT_PROVIDER=webspeech|deepgram|assemblyai env var
+          - ARCHITECTURE.md note: ElevenLabs Scribe V2 NOT recommended for STT
+            (22.1% missed entity rate per Mar 2026 benchmark; use Deepgram or AssemblyAI)
+          - Unit tests for provider selection
+
+      - id: "6.2"
+        title: Wire STTProvider to station voice input
+        tags: [frontend, backend, voice]
+        priority: low
+        depends_on: ["6.1"]
+        acceptance: |
+          - Station voice mode can use server-side STT via WebSocket when STT_PROVIDER != webspeech
+          - Falls back to Web Speech API if server STT unavailable
+          - Integration test: mock Deepgram WS → verify transcript delivery
+
+  - id: tests
+    name: Test Coverage — Keep Green, Add for New Features
+    description: Target 160+ frontend (Vitest) + 100+ backend (pytest)
+
+    items:
+      - id: "7.1"
+        title: Voice hook + station page tests
+        tags: [tests, frontend, voice]
+        priority: high
+        depends_on: ["1.1", "1.2"]
+        acceptance: |
+          - useAmbientVoice: threshold, silence, cleanup
+          - Station: both buttons render, state transitions, error states
+          - All existing 131 frontend tests still pass
+
+      - id: "7.2"
+        title: DatabaseProvider migration tests
+        tags: [tests, backend]
+        priority: high
+        depends_on: ["2.3"]
+        acceptance: |
+          - Tests for all migrated routes; all 78 existing pytest tests pass
+
+      - id: "7.3"
+        title: Expo hardening tests
+        tags: [tests, frontend]
+        priority: medium
+        depends_on: ["5.1", "5.2"]
+        acceptance: |
+          - Station offline queue: mock failure → queue → reconnect → flush
+          - Display error boundary: chart throw → recovery slide
+          - Empty quorumIds: placeholder rendered

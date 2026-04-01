@@ -32,3 +32,5 @@ Last updated: 2026-04-01
 | Saša Pekeč | pekec@duke.edu | Duke Fuqua — decision sciences, AI judgment, algorithmic bias | Not contacted |
 | David Ridley | david.ridley@duke.edu | Duke Fuqua/Margolis — health economist, innovation incentives | Not contacted |
 | Michael Pencina | michael.pencina@duke.edu | Duke AI Health Director, Chief Data Scientist — AI in clinical research | Not contacted |
+| Michael Pollmann | michael.pollmann@duke.edu | Duke Econ Asst Prof — ML/causal inference, empirical AI impact measurement | Not contacted |
+| John Graham | john.graham@duke.edu | Duke Fuqua Finance Prof — published Mar 2026 paper on AI, productivity & workforce (750 exec survey) | Not contacted |

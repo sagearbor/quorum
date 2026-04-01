@@ -30,7 +30,7 @@ Last updated: 2026-04-01
 |------|-------|-------------|-----|
 | Wesley M. Cohen | wesley.cohen@duke.edu | Duke Econ/Fuqua — economics of tech change, AI & innovation | 🔇 NO RESPONSE | Emailed 2026-04-01 |
 | Saša Pekeč | pekec@duke.edu | Duke Fuqua — decision sciences, AI judgment, algorithmic bias | 🔇 NO RESPONSE | Emailed 2026-04-01 |
-| David Ridley | david.ridley@duke.edu | Duke Fuqua/Margolis — health economist, innovation incentives | 🔇 NO RESPONSE | Emailed 2026-04-01 |
+| David Ridley | david.ridley@duke.edu | Duke Fuqua/Margolis — health economist, innovation incentives | ❌ DECLINED | Not available |
 | Michael Pencina | michael.pencina@duke.edu | Duke AI Health Director, Chief Data Scientist — AI in clinical research | Not contacted |
 | Michael Pollmann | michael.pollmann@duke.edu | Duke Econ Asst Prof — ML/causal inference, empirical AI impact measurement | 🔇 NO RESPONSE | Emailed 2026-04-01 |
 | John Graham | john.graham@duke.edu | Duke Fuqua Finance Prof — published Mar 2026 paper on AI, productivity & workforce (750 exec survey) | 🔇 NO RESPONSE | Emailed 2026-04-01 |

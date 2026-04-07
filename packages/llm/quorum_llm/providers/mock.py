@@ -97,8 +97,55 @@ class MockLLMProvider(LLMProvider):
     - embed: returns a deterministic vector derived from input hash
     """
 
+    # Varied responses keyed by role-like keywords found in the prompt.
+    # Each list is cycled through using prompt hash so different turns get different text.
+    _ROLE_RESPONSES: dict[str, list[str]] = {
+        "researcher": [
+            "Based on the available evidence, I recommend we gather baseline data before proceeding. The current approach lacks rigorous methodology for measuring outcomes. I suggest a mixed-methods design combining quantitative metrics with qualitative stakeholder interviews. [tags: research, methodology, evidence]",
+            "I've reviewed the literature on similar interventions. Key finding: shared governance models show 40% better faculty satisfaction scores. We should benchmark against peer institutions. [tags: research, benchmarking, governance]",
+            "The data suggests a systemic issue rather than individual leadership failure. I recommend a root cause analysis framework — specifically the Ishikawa diagram approach for educational governance. [tags: research, root_cause, systems_thinking]",
+        ],
+        "ethicist": [
+            "This raises significant concerns about power concentration and lack of checks and balances. Faculty autonomy is a core principle of academic governance. Any solution must preserve academic freedom while ensuring accountability. [tags: ethics, autonomy, governance]",
+            "I want to flag a fairness concern: if one person controls all curriculum decisions, there's inherent bias risk. We need transparent decision-making criteria and an appeals process. [tags: ethics, fairness, transparency]",
+            "From an ethical standpoint, the affected faculty deserve voice in this process. I recommend establishing a faculty senate subcommittee with real decision-making authority, not just advisory capacity. [tags: ethics, representation, due_process]",
+        ],
+        "administrator": [
+            "From an operational perspective, we need to define clear roles and responsibilities. A RACI matrix would help delineate who is Responsible, Accountable, Consulted, and Informed for each curriculum decision. [tags: operations, governance, RACI]",
+            "I've drafted a proposed organizational structure that distributes curriculum authority across three committees: content review, assessment, and clinical integration. Each reports to the dean but has autonomous decision-making within scope. [tags: operations, structure, delegation]",
+            "Budget implications: transitioning to shared governance requires investment in committee infrastructure — roughly 0.2 FTE per committee chair. However, this reduces bottleneck risk and improves throughput on curriculum changes by an estimated 60%. [tags: operations, budget, efficiency]",
+        ],
+        "patient_advocate": [
+            "The students and trainees are the ones ultimately affected by curriculum decisions. Their learning outcomes should be our north star metric. I recommend incorporating student feedback mechanisms into any governance reform. [tags: advocacy, student_outcomes, feedback]",
+            "I want to ensure we don't lose sight of patient safety implications. Curriculum quality directly impacts clinical competency. Any governance change must include quality assurance checkpoints. [tags: advocacy, patient_safety, quality]",
+            "Speaking for the affected community: faculty morale is at a critical low. Three department chairs have expressed intent to leave if governance doesn't change. We need interim measures while long-term solutions develop. [tags: advocacy, retention, urgency]",
+        ],
+    }
+
+    _GENERIC_RESPONSES: list[str] = [
+        "I've analyzed the current situation and identified three priority areas. First, we need better communication channels between stakeholders. Second, decision-making authority should be distributed. Third, we need measurable outcomes to track progress. [tags: analysis, priorities, governance]",
+        "Building on what other agents have shared, I see an opportunity for a phased approach: immediate conflict resolution in month one, structural reforms in months two through three, and evaluation in month four. [tags: planning, timeline, phased_approach]",
+        "I'd like to flag a potential conflict between the efficiency goals and the equity goals raised by others. We should explicitly prioritize — I recommend equity first, then optimize for efficiency within those constraints. [tags: conflict, priorities, tradeoffs]",
+    ]
+
     def __init__(self) -> None:
         self.call_log: list[dict] = []
+        self._turn_counter: int = 0
+
+    def _varied_agent_response(self, prompt: str) -> str:
+        """Generate varied mock responses based on role keywords in the prompt."""
+        prompt_lower = prompt.lower()
+        self._turn_counter += 1
+
+        # Find the best matching role
+        for role_key, responses in self._ROLE_RESPONSES.items():
+            if role_key in prompt_lower:
+                idx = (int(_hash_key(prompt), 16) + self._turn_counter) % len(responses)
+                return responses[idx]
+
+        # Generic fallback with rotation
+        idx = self._turn_counter % len(self._GENERIC_RESPONSES)
+        return self._GENERIC_RESPONSES[idx]
 
     async def complete(self, prompt: str, tier: LLMTier) -> str:
         self.call_log.append({"prompt_hash": _hash_key(prompt), "tier": int(tier)})
@@ -115,13 +162,8 @@ class MockLLMProvider(LLMProvider):
             return _CONFLICT_NO
 
         if tier in (LLMTier.AGENT_CHAT, LLMTier.AGENT_RESPOND, LLMTier.AGENT_REASON):
-            # Return a realistic facilitator acknowledgement for agent turns.
-            return (
-                "Understood. I have reviewed the current documents and the "
-                "incoming request. I note a potential concern around the "
-                "enrollment timeline and will flag it for the safety monitor. "
-                "[tags: enrollment, timeline, safety_monitoring]"
-            )
+            # Generate varied responses based on prompt content hash
+            return self._varied_agent_response(prompt)
 
         # Tier SYNTHESIS (3) — artifact synthesis
         return _ARTIFACT_JSON

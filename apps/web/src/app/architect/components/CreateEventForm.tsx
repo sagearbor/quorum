@@ -1,9 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useArchitectStore } from "@/store/architect";
 import { slugify } from "@/lib/slugify";
 import { QRCodeSVG } from "qrcode.react";
+
+interface ExistingEvent {
+  id: string;
+  name: string;
+  slug: string;
+  created_at: string;
+}
 
 export function CreateEventForm() {
   const { eventDraft, setEventDraft, setEventId, setStep } =
@@ -15,6 +22,22 @@ export function CreateEventForm() {
 
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [existingEvents, setExistingEvents] = useState<ExistingEvent[]>([]);
+
+  // Load existing events on mount
+  useEffect(() => {
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    fetch(`${apiBase}/events`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setExistingEvents(data ?? []))
+      .catch(() => {});
+  }, []);
+
+  function selectExistingEvent(event: ExistingEvent) {
+    setEventId(event.id);
+    setEventDraft({ name: event.name, slug: event.slug });
+    setStep(2);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -67,6 +90,42 @@ export function CreateEventForm() {
     eventDraft.max_active_quorums > 0;
 
   return (
+    <div className="space-y-6">
+      {/* Existing events — pick one to add more quorums */}
+      {existingEvents.length > 0 && (
+        <div>
+          <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
+            Continue with an existing event
+          </h3>
+          <div className="space-y-1.5">
+            {existingEvents.slice(0, 5).map((ev) => (
+              <button
+                key={ev.id}
+                type="button"
+                onClick={() => selectExistingEvent(ev)}
+                className="w-full text-left flex items-center justify-between px-3 py-2.5 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-indigo-300 dark:hover:border-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
+              >
+                <div>
+                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{ev.name}</span>
+                  <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">/{ev.slug}</span>
+                </div>
+                <span className="text-xs text-gray-400 dark:text-gray-500">
+                  {new Date(ev.created_at).toLocaleDateString()}
+                </span>
+              </button>
+            ))}
+          </div>
+          <div className="relative my-4">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-gray-200 dark:border-gray-700" />
+            </div>
+            <div className="relative flex justify-center">
+              <span className="bg-white dark:bg-gray-800 px-3 text-xs text-gray-500 dark:text-gray-400">or create new</span>
+            </div>
+          </div>
+        </div>
+      )}
+
     <form onSubmit={handleSubmit} className="space-y-6">
       <div>
         <label
@@ -193,5 +252,6 @@ export function CreateEventForm() {
         {submitting ? "Creating..." : "Create Event \u2192"}
       </button>
     </form>
+    </div>
   );
 }

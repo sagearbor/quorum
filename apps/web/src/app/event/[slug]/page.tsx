@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { getQuorums, isDemoMode } from "@/lib/dataProvider";
+import { QRCodeSVG } from "qrcode.react";
 import type { Quorum, Role } from "@quorum/types";
 
 interface EnrichedQuorum extends Quorum {
@@ -138,6 +139,10 @@ export default function EventPage() {
 
   const [quorums, setQuorums] = useState<EnrichedQuorum[]>([]);
   const [loading, setLoading] = useState(true);
+  const [showQR, setShowQR] = useState(false);
+
+  const baseUrl =
+    typeof window !== "undefined" ? window.location.origin : "https://quorum.app";
 
   useEffect(() => {
     // Reset station counter on page load
@@ -219,6 +224,65 @@ export default function EventPage() {
           )}
         </p>
       </header>
+
+      {/* QR Codes — collapsible, shows station links for all quorums */}
+      {quorums.length > 0 && (
+        <div className="mb-6">
+          <button
+            type="button"
+            onClick={() => setShowQR((v) => !v)}
+            className="flex items-center gap-2 text-xs font-medium text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white transition-colors"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="17" y="17" width="4" height="4"/>
+            </svg>
+            Station QR Codes
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className={`transition-transform ${showQR ? "rotate-180" : ""}`}>
+              <path d="M6 9l6 6 6-6" />
+            </svg>
+          </button>
+          {showQR && (
+            <div className="mt-3 p-4 border border-gray-200 dark:border-gray-700 rounded-xl bg-white dark:bg-gray-800">
+              {quorums.map((quorum) => {
+                const roles = quorum.roles ?? [];
+                const stationCount = Math.max(roles.length, 1);
+                return (
+                  <div key={quorum.id} className="mb-4 last:mb-0">
+                    <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">{quorum.title}</h4>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
+                      {Array.from({ length: stationCount }, (_, i) => {
+                        const url = `${baseUrl}/event/${slug}/quorum/${quorum.id}?station=${i + 1}`;
+                        return (
+                          <a
+                            key={i}
+                            href={url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="flex flex-col items-center p-3 border border-gray-200 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 hover:border-indigo-300 transition-colors"
+                          >
+                            <QRCodeSVG value={url} size={80} level="M" />
+                            <span className="mt-2 text-xs font-medium text-gray-700 dark:text-gray-200">
+                              Station {i + 1}
+                            </span>
+                            {roles[i] && (
+                              <span
+                                className="text-[10px] mt-0.5"
+                                style={{ color: roles[i].color ?? "#6b7280" }}
+                              >
+                                {roles[i].name}
+                              </span>
+                            )}
+                          </a>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {quorums.length === 0 ? (
         <div className="text-center py-16 text-gray-500 dark:text-gray-400">

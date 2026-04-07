@@ -26,11 +26,11 @@ start_api() {
   echo "Starting API server (SQLite + MockLLM)..."
   cd "$ROOT/apps/api"
   # Install dependencies if needed
-  if ! python -c "import fastapi" 2>/dev/null; then
-    pip install -r requirements.txt -q
+  if ! python3 -c "import fastapi" 2>/dev/null; then
+    pip3 install -r requirements.txt -q
   fi
-  if ! python -c "import quorum_llm" 2>/dev/null; then
-    pip install -e "$ROOT/packages/llm" -q
+  if ! python3 -c "import quorum_llm" 2>/dev/null; then
+    pip3 install -e "$ROOT/packages/llm" -q
   fi
   echo "  DB: $QUORUM_DB_PATH"
   echo "  LLM: MockLLMProvider"

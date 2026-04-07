@@ -96,7 +96,7 @@ export function ConversationThread({
       >
         {messages.length === 0 && (
           <p
-            className="text-center text-xs text-gray-400 py-6"
+            className="text-center text-xs text-gray-500 dark:text-gray-400 py-6"
             data-testid="conversation-empty"
           >
             Ask the facilitator a question about this quorum.
@@ -158,7 +158,7 @@ export function ConversationThread({
                 className={`max-w-[85%] rounded-2xl px-4 py-2.5 text-sm leading-relaxed whitespace-pre-wrap ${
                   isUser
                     ? "bg-indigo-600 text-white rounded-br-sm"
-                    : "bg-gray-100 text-gray-800 rounded-bl-sm"
+                    : "bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-100 rounded-bl-sm"
                 }`}
               >
                 {msg.content}
@@ -178,7 +178,7 @@ export function ConversationThread({
                 </div>
               )}
 
-              <span className="text-[10px] text-gray-400">
+              <span className="text-[10px] text-gray-500 dark:text-gray-400">
                 {new Date(msg.created_at).toLocaleTimeString([], {
                   hour: "2-digit",
                   minute: "2-digit",
@@ -194,7 +194,7 @@ export function ConversationThread({
             className="flex items-start"
             data-testid="conversation-typing"
           >
-            <div className="bg-gray-100 rounded-2xl rounded-bl-sm px-4 py-3 flex gap-1">
+            <div className="bg-gray-100 dark:bg-gray-700 rounded-2xl rounded-bl-sm px-4 py-3 flex gap-1">
               {[0, 1, 2].map((i) => (
                 <span
                   key={i}
@@ -223,7 +223,7 @@ export function ConversationThread({
       {/* Input bar */}
       <form
         onSubmit={handleSubmit}
-        className="border-t border-gray-200 p-3 flex gap-2 items-end"
+        className="border-t border-gray-200 dark:border-gray-700 p-3 flex gap-2 items-end"
         data-testid="conversation-form"
       >
         <textarea
@@ -234,7 +234,7 @@ export function ConversationThread({
           disabled={sending}
           rows={1}
           placeholder="Ask the facilitator…"
-          className="flex-1 resize-none rounded-xl border border-gray-300 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400"
+          className="flex-1 resize-none rounded-xl border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:outline-none disabled:bg-gray-50 disabled:text-gray-400 dark:bg-gray-800 dark:text-gray-100"
           data-testid="conversation-input"
           style={{ minHeight: "40px", maxHeight: "120px" }}
         />

@@ -32,6 +32,7 @@ export interface Quorum {
   heat_score: number;
   carousel_mode: CarouselMode;
   dashboard_types: DashboardType[];
+  autonomy_level: number;
   created_at: string;
 }
 

@@ -44,7 +44,7 @@ function SortableChip({ role, index, total }: { role: RoleDraft; index: number; 
         style={{ borderColor: role.color, backgroundColor: `${role.color}15` }}
         data-testid={`authority-chip-${role.id}`}
       >
-        <span className="text-gray-400 text-xs font-mono w-4">
+        <span className="text-gray-500 dark:text-gray-400 text-xs font-mono w-4">
           {total - index}
         </span>
         <span
@@ -52,12 +52,12 @@ function SortableChip({ role, index, total }: { role: RoleDraft; index: number; 
           style={{ backgroundColor: role.color }}
         />
         <span className="font-medium text-sm flex-1">{role.name}</span>
-        <span className="text-xs text-gray-500">
+        <span className="text-xs text-gray-600 dark:text-gray-300">
           {role.capacity === 1 ? "👤" : "👥"}
         </span>
       </div>
       {index < total - 1 && (
-        <span className="text-[10px] text-gray-400 whitespace-nowrap absolute -bottom-3 left-1/2 -translate-x-1/2">
+        <span className="text-[10px] text-gray-500 dark:text-gray-400 whitespace-nowrap absolute -bottom-3 left-1/2 -translate-x-1/2">
           overrides ↓
         </span>
       )}
@@ -103,7 +103,7 @@ export function AuthorityStack() {
 
   if (roles.length === 0) {
     return (
-      <div className="text-center text-gray-400 py-6 text-sm">
+      <div className="text-center text-gray-500 dark:text-gray-400 py-6 text-sm">
         Add roles above to build the authority hierarchy
       </div>
     );
@@ -111,10 +111,10 @@ export function AuthorityStack() {
 
   return (
     <div data-testid="authority-stack">
-      <h4 className="text-sm font-medium text-gray-700 mb-2">
+      <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
         Authority Hierarchy
       </h4>
-      <p className="text-xs text-gray-500 mb-3">
+      <p className="text-xs text-gray-600 dark:text-gray-300 mb-3">
         Drag to reorder. Top role has highest authority.
       </p>
       <DndContext
@@ -138,7 +138,7 @@ export function AuthorityStack() {
                   <button
                     type="button"
                     onClick={() => makePeerTier(role.id)}
-                    className="absolute -right-2 top-1/2 -translate-y-1/2 text-[10px] bg-gray-100 hover:bg-gray-200 rounded px-1.5 py-0.5 text-gray-500"
+                    className="absolute -right-2 top-1/2 -translate-y-1/2 text-[10px] bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded px-1.5 py-0.5 text-gray-500 dark:text-gray-300"
                     title="Make peer tier with role above"
                   >
                     = peer

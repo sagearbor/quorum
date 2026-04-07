@@ -18,6 +18,7 @@ import { useStationConversation } from "@/hooks/useStationConversation";
 import { useAgentDocuments } from "@/hooks/useAgentDocuments";
 import { useA2ARequests } from "@/hooks/useA2ARequests";
 import type { StationMessage } from "@quorum/types";
+import { AgentActivityFeed } from "@/components/AgentActivityFeed";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -128,6 +129,7 @@ export default function QuorumPage() {
   const [quorumDescription, setQuorumDescription] = useState<string>("");
   const [autonomyLevel, setAutonomyLevel] = useState<number>(0);
   const [showAutonomyControl, setShowAutonomyControl] = useState(false);
+  const [showAgentActivity, setShowAgentActivity] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
   const [contributions, setContributions] = useState<Contribution[]>([]);
   const [currentRole, setCurrentRole] = useState<Role | null>(null);
@@ -486,7 +488,7 @@ export default function QuorumPage() {
             </Link>
           </div>
           {quorumDescription && (
-            <p className="text-sm text-gray-500 mt-1">{quorumDescription}</p>
+            <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">{quorumDescription}</p>
           )}
           {station && (
             <span className="mt-2 inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-indigo-700 text-xs font-medium">
@@ -496,7 +498,7 @@ export default function QuorumPage() {
           <button
             type="button"
             onClick={() => setShowAutonomyControl((v) => !v)}
-            className="mt-2 inline-flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+            className="mt-2 inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
           >
             Autonomy: {autonomyLevel.toFixed(1)}
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -504,9 +506,9 @@ export default function QuorumPage() {
             </svg>
           </button>
           {showAutonomyControl && (
-            <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
+            <div className="mt-2 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
               <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-500 w-16">Human</span>
+                <span className="text-xs text-gray-600 dark:text-gray-300 w-16">Human</span>
                 <input
                   type="range"
                   min="0"
@@ -525,12 +527,12 @@ export default function QuorumPage() {
                   }}
                   className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
                 />
-                <span className="text-xs text-gray-500 w-16 text-right">Autonomous</span>
+                <span className="text-xs text-gray-600 dark:text-gray-300 w-16 text-right">Autonomous</span>
                 <span className="text-sm font-semibold text-blue-600 w-8 text-right tabular-nums">
                   {autonomyLevel.toFixed(1)}
                 </span>
               </div>
-              <p className="text-[10px] text-gray-400 mt-1">
+              <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">
                 Adjust how proactively agents communicate. Changes take effect immediately.
               </p>
             </div>
@@ -540,7 +542,7 @@ export default function QuorumPage() {
         {/* Role selection */}
         {roles.length > 0 && (
           <section className="mb-6">
-            <h2 className="text-sm font-semibold text-gray-700 mb-2">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">
               Select your role
             </h2>
             <div className="flex flex-col gap-2">
@@ -590,7 +592,7 @@ export default function QuorumPage() {
                     <div key={field.field_name}>
                       <label
                         htmlFor={field.field_name}
-                        className="block text-sm font-medium text-gray-700 mb-1"
+                        className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-1"
                       >
                         {field.prompt}
                       </label>
@@ -602,7 +604,7 @@ export default function QuorumPage() {
                           handleFieldChange(field.field_name, e.target.value)
                         }
                         rows={3}
-                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:outline-none resize-none"
+                        className="w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:outline-none resize-none dark:bg-gray-800 dark:text-gray-100"
                         placeholder={`Enter your ${field.field_name.replace(/_/g, " ")}...`}
                       />
                     </div>
@@ -611,7 +613,7 @@ export default function QuorumPage() {
                   <div>
                     <label
                       htmlFor="contribution"
-                      className="block text-sm font-medium text-gray-700 mb-1"
+                      className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-1"
                     >
                       Your contribution
                     </label>
@@ -623,7 +625,7 @@ export default function QuorumPage() {
                         handleFieldChange("contribution", e.target.value)
                       }
                       rows={4}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:outline-none resize-none"
+                      className="w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:outline-none resize-none dark:bg-gray-800 dark:text-gray-100"
                       placeholder={`Share your perspective as ${currentRole.name}...`}
                     />
                   </div>
@@ -656,11 +658,21 @@ export default function QuorumPage() {
           </section>
         )}
 
+        {/* Agent activity feed — shows what autonomous agents are doing */}
+        <section className="mb-4">
+          <AgentActivityFeed
+            quorumId={quorumId}
+            roles={roles}
+            visible={showAgentActivity}
+            onToggle={() => setShowAgentActivity((v) => !v)}
+          />
+        </section>
+
         {/* Tabbed panel — Conversation | Documents | Contributions */}
-        <section className="flex-1 border border-gray-200 rounded-xl overflow-hidden flex flex-col min-h-[400px]">
+        <section className="flex-1 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden flex flex-col min-h-[400px]">
           {/* Tab bar */}
           <div
-            className="flex border-b border-gray-200 bg-gray-50"
+            className="flex border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900"
             role="tablist"
             data-testid="quorum-tabs"
           >
@@ -680,8 +692,8 @@ export default function QuorumPage() {
                 data-testid={`tab-${id}`}
                 className={`px-4 py-2.5 text-sm font-medium transition-colors focus:outline-none ${
                   activeTab === id
-                    ? "text-indigo-600 border-b-2 border-indigo-600 bg-white"
-                    : "text-gray-500 hover:text-gray-700"
+                    ? "text-indigo-600 border-b-2 border-indigo-600 bg-white dark:bg-gray-800"
+                    : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
                 }`}
               >
                 {label}
@@ -748,7 +760,7 @@ export default function QuorumPage() {
                         <div
                           key={c.id}
                           data-testid={`contribution-${c.id}`}
-                          className="rounded-lg border border-gray-200 p-3 text-sm"
+                          className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-sm"
                         >
                           <div className="flex items-center gap-2 mb-1">
                             <span
@@ -762,11 +774,11 @@ export default function QuorumPage() {
                             >
                               {role?.name ?? "Unknown"}
                             </span>
-                            <span className="text-xs text-gray-400 ml-auto">
+                            <span className="text-xs text-gray-500 dark:text-gray-400 ml-auto">
                               {new Date(c.created_at).toLocaleTimeString()}
                             </span>
                           </div>
-                          <p className="text-gray-700 line-clamp-2">
+                          <p className="text-gray-700 dark:text-gray-200 line-clamp-2">
                             {c.content}
                           </p>
                         </div>

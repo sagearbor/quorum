@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
-import { createMockStream, createMockSnapshot, type MockStreamState } from "@/lib/mockStream";
+import { createMockStream, createMockSnapshot, type StreamState } from "@/lib/mockStream";
 
 describe("createMockSnapshot", () => {
   it("returns valid initial state at progress=0", () => {
@@ -51,7 +51,7 @@ describe("createMockStream", () => {
   });
 
   it("emits initial state immediately (synchronously)", () => {
-    const states: MockStreamState[] = [];
+    const states: StreamState[] = [];
     const unsub = createMockStream("test-quorum", (s) => states.push(s));
     // Initial state is emitted synchronously
     expect(states.length).toBe(1);
@@ -61,7 +61,7 @@ describe("createMockStream", () => {
 
   it("emits updates over time", async () => {
     vi.useFakeTimers();
-    const states: MockStreamState[] = [];
+    const states: StreamState[] = [];
     const unsub = createMockStream("test-quorum", (s) => states.push(s), 100);
 
     // Initial emission
@@ -77,7 +77,7 @@ describe("createMockStream", () => {
 
   it("health scores generally increase over time", async () => {
     vi.useFakeTimers();
-    const states: MockStreamState[] = [];
+    const states: StreamState[] = [];
     const unsub = createMockStream("test-quorum", (s) => states.push(s), 100, 5000);
 
     // Let it run for the full duration
@@ -97,7 +97,7 @@ describe("createMockStream", () => {
 
   it("unsubscribe stops emission", () => {
     vi.useFakeTimers();
-    const states: MockStreamState[] = [];
+    const states: StreamState[] = [];
     const unsub = createMockStream("test-quorum", (s) => states.push(s), 100);
 
     vi.advanceTimersByTime(250);
@@ -112,7 +112,7 @@ describe("createMockStream", () => {
 
   it("generates contributions periodically", () => {
     vi.useFakeTimers();
-    const states: MockStreamState[] = [];
+    const states: StreamState[] = [];
     const unsub = createMockStream("test-quorum", (s) => states.push(s), 100);
 
     // Advance enough ticks to generate contributions (every 3rd tick)

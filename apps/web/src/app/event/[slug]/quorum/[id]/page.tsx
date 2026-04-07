@@ -126,6 +126,8 @@ export default function QuorumPage() {
 
   const [quorumTitle, setQuorumTitle] = useState<string>("");
   const [quorumDescription, setQuorumDescription] = useState<string>("");
+  const [autonomyLevel, setAutonomyLevel] = useState<number>(0);
+  const [showAutonomyControl, setShowAutonomyControl] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
   const [contributions, setContributions] = useState<Contribution[]>([]);
   const [currentRole, setCurrentRole] = useState<Role | null>(null);
@@ -233,6 +235,7 @@ export default function QuorumPage() {
       if (quorum) {
         setQuorumTitle(quorum.title);
         setQuorumDescription(quorum.description);
+        setAutonomyLevel(quorum.autonomy_level ?? 0);
       }
       setRoles(qRoles as Role[]);
       setContributions(qContribs as Contribution[]);
@@ -489,6 +492,48 @@ export default function QuorumPage() {
             <span className="mt-2 inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-indigo-700 text-xs font-medium">
               Station {station}
             </span>
+          )}
+          <button
+            type="button"
+            onClick={() => setShowAutonomyControl((v) => !v)}
+            className="mt-2 inline-flex items-center gap-1.5 text-xs text-gray-400 hover:text-gray-600 transition-colors"
+          >
+            Autonomy: {autonomyLevel.toFixed(1)}
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d={showAutonomyControl ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
+            </svg>
+          </button>
+          {showAutonomyControl && (
+            <div className="mt-2 p-3 bg-gray-50 rounded-lg border border-gray-200">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-500 w-16">Human</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                  value={autonomyLevel}
+                  onChange={async (e) => {
+                    const val = parseFloat(e.target.value);
+                    setAutonomyLevel(val);
+                    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+                    await fetch(`${apiBase}/quorums/${quorumId}/autonomy`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ autonomy_level: val }),
+                    }).catch(() => {});
+                  }}
+                  className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                />
+                <span className="text-xs text-gray-500 w-16 text-right">Autonomous</span>
+                <span className="text-sm font-semibold text-blue-600 w-8 text-right tabular-nums">
+                  {autonomyLevel.toFixed(1)}
+                </span>
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1">
+                Adjust how proactively agents communicate. Changes take effect immediately.
+              </p>
+            </div>
           )}
         </header>
 

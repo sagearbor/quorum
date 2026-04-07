@@ -134,6 +134,7 @@ class CreateQuorumRequest(BaseModel):
     roles: list[RoleDefinition]
     dashboard_types: list[DashboardType] = Field(default_factory=list)
     carousel_mode: CarouselMode = CarouselMode.multi_view
+    autonomy_level: float = Field(default=0.0, ge=0.0, le=1.0)
 
 
 class CreateQuorumResponse(BaseModel):

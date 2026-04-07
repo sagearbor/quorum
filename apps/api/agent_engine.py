@@ -694,9 +694,23 @@ def _notify_relevant_agents(
         insight_tags:    Tags associated with the published insight.
         insight_content: Truncated insight text for the A2A request body.
     """
-    # Threshold for auto-wake: only send A2A for strong affinity matches.
-    # Lower-affinity agents will see the insight via context injection instead.
-    _A2A_NOTIFY_THRESHOLD = 0.6
+    # Load quorum autonomy level to gate A2A notifications
+    try:
+        q_result = db.table("quorums").select("autonomy_level").eq("id", quorum_id).maybe_single().execute()
+        autonomy = (q_result.data or {}).get("autonomy_level", 0.0)
+    except Exception:
+        autonomy = 0.0
+
+    if autonomy < 0.1:
+        return  # No A2A at very low autonomy
+
+    # Adjust notification threshold based on autonomy
+    if autonomy >= 0.8:
+        _A2A_NOTIFY_THRESHOLD = 0.2  # Very aggressive
+    elif autonomy >= 0.5:
+        _A2A_NOTIFY_THRESHOLD = 0.4  # Moderate
+    else:
+        _A2A_NOTIFY_THRESHOLD = 0.6  # Conservative (original default)
 
     if not insight_tags:
         return

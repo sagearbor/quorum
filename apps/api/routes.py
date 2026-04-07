@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -208,6 +209,7 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
         "description": body.description,
         "status": "open",
         "carousel_mode": body.carousel_mode.value,
+        "autonomy_level": body.autonomy_level,
     }
     db.table("quorums").insert(quorum_row).execute()
 
@@ -269,6 +271,11 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
                 logger.info("Auto-seeded %d documents for quorum %s", len(seed_data.get("documents", [])), quorum_id)
         except Exception:
             logger.warning("Auto-seed documents failed for quorum %s (non-fatal)", quorum_id, exc_info=True)
+
+    # Start autonomy loop if autonomy_level > 0
+    if body.autonomy_level > 0:
+        from autonomy_loop import start_autonomy_loop
+        asyncio.create_task(start_autonomy_loop(quorum_id, body.autonomy_level))
 
     return CreateQuorumResponse(id=quorum_id, status="open", share_url=share_url)
 
@@ -1289,6 +1296,29 @@ async def seed_documents(event_id: str, quorum_id: str):
             if doc["title"] not in skipped
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# PATCH /quorums/{quorum_id}/autonomy
+# ---------------------------------------------------------------------------
+@router.patch("/quorums/{quorum_id}/autonomy")
+async def update_autonomy(quorum_id: str, body: dict):
+    """Update autonomy_level for a quorum (architect control)."""
+    autonomy_level = body.get("autonomy_level", 0.0)
+    if not 0.0 <= autonomy_level <= 1.0:
+        raise HTTPException(status_code=422, detail="autonomy_level must be 0.0-1.0")
+
+    db = get_supabase()
+    db.table("quorums").update({"autonomy_level": autonomy_level}).eq("id", quorum_id).execute()
+
+    # Start or stop the autonomy loop
+    from autonomy_loop import start_autonomy_loop, stop_autonomy_loop
+    if autonomy_level > 0:
+        await start_autonomy_loop(quorum_id, autonomy_level)
+    else:
+        await stop_autonomy_loop(quorum_id)
+
+    return {"quorum_id": quorum_id, "autonomy_level": autonomy_level}
 
 
 # ---------------------------------------------------------------------------

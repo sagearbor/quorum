@@ -22,6 +22,7 @@ export interface QuorumDraft {
   roles: RoleDraft[];
   dashboard_types: DashboardType[];
   carousel_mode: CarouselMode;
+  autonomy_level: number;
 }
 
 export interface EventDraft {
@@ -70,6 +71,7 @@ const defaultQuorumDraft: QuorumDraft = {
   roles: [],
   dashboard_types: [],
   carousel_mode: "multi-view",
+  autonomy_level: 0.0,
 };
 
 export const useArchitectStore = create<ArchitectState>((set) => ({

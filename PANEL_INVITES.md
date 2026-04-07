@@ -1,7 +1,7 @@
 # Duke Tech Expo 2026 — Panel Invitee Tracker
 
 Workshop: "Quorum: Multi-Agent AI Coordination for Real-World Decision-Making"
-Last updated: 2026-04-07
+Last updated: 2026-04-07 (PM update)
 
 ## Status Key
 - ✅ YES — confirmed
@@ -28,12 +28,20 @@ Last updated: 2026-04-07
 
 | Name | Email | Affiliation | Status | Notes |
 |------|-------|-------------|--------|-------|
-| Wesley M. Cohen | wesley.cohen@duke.edu | Duke Econ/Fuqua — economics of tech change, AI & innovation | 🔇 NO RESPONSE | Emailed 2026-04-01, follow-up 2026-04-07 |
 | Saša Pekeč | pekec@duke.edu | Duke Fuqua — decision sciences, AI judgment, algorithmic bias | ❌ DECLINED | |
 | David Ridley | david.ridley@duke.edu | Duke Fuqua/Margolis — health economist, innovation incentives | ❌ DECLINED | Not available |
 | Michael Pencina | michael.pencina@duke.edu | Duke AI Health Director, Chief Data Scientist — AI in clinical research | 🔇 NO RESPONSE | Not yet contacted? |
 | Michael Pollmann | michael.pollmann@duke.edu | Duke Econ Asst Prof — ML/causal inference, empirical AI impact measurement | ❌ DECLINED | |
 | John Graham | john.graham@duke.edu | Duke Fuqua Finance Prof — AI, productivity & workforce | ❌ DECLINED | |
+
+## UBI / Low-Income Workers Contacts
+
+| Name | Email | Affiliation | Status | Notes |
+|------|-------|-------------|--------|-------|
+| Michael Munger | munger@duke.edu | Duke Poli Sci / PPE | ❌ DECLINED | No |
+| Lisa Gennetian | lisa.gennetian@duke.edu | Duke Sanford — child poverty, cash transfers | ❌ DECLINED | No; recommended Matt Johnson |
+| Matt Johnson | matthew.johnson@duke.edu | Duke (rec. by Gennetian) — workers at low end of income distribution | 🔇 NO RESPONSE | Contacted 2026-04-07 |
+| Wesley M. Cohen | wesley.cohen@duke.edu | Duke Econ/Fuqua — economics of tech change, AI & innovation | 🤝 MEETING | Wants to meet to chat; follow up to schedule |
 
 ## New Targets — AI + Workforce/Job Displacement Focus (not yet contacted)
 

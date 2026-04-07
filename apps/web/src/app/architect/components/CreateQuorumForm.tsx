@@ -92,7 +92,7 @@ export function CreateQuorumForm() {
         <div>
           <label
             htmlFor="quorum-title"
-            className="block text-sm font-medium text-gray-700 mb-1"
+            className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-1"
           >
             Quorum Title
           </label>
@@ -102,14 +102,14 @@ export function CreateQuorumForm() {
             value={quorumDraft.title}
             onChange={(e) => setQuorumDraft({ title: e.target.value })}
             placeholder="Protocol Amendment Review"
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             required
           />
         </div>
         <div>
           <label
             htmlFor="quorum-description"
-            className="block text-sm font-medium text-gray-700 mb-1"
+            className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-1"
           >
             Description
           </label>
@@ -119,7 +119,7 @@ export function CreateQuorumForm() {
             onChange={(e) => setQuorumDraft({ description: e.target.value })}
             placeholder="Describe what this quorum will address..."
             rows={3}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
         </div>
       </div>
@@ -137,7 +137,7 @@ export function CreateQuorumForm() {
       </div>
 
       <div className="border-t border-gray-200 pt-6">
-        <label className="block text-sm font-medium text-gray-700 mb-3">
+        <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
           Agent Autonomy Level
         </label>
         <div className="space-y-2">

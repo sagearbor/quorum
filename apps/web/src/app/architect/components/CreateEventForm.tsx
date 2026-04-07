@@ -33,8 +33,18 @@ export function CreateEventForm() {
         }),
       });
       if (!res.ok) {
-        const body = await res.text();
-        setError(`Server error (${res.status}): ${body}`);
+        let detail = "";
+        try {
+          const body = await res.json();
+          detail = body.detail ?? JSON.stringify(body);
+        } catch {
+          detail = await res.text().catch(() => "Unknown error");
+        }
+        if (res.status === 409) {
+          setError(`Event slug "${eventDraft.slug}" already exists. Try a different name.`);
+        } else {
+          setError(`Server error (${res.status}): ${detail}`);
+        }
         return;
       }
       const data = await res.json();

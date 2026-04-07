@@ -171,6 +171,12 @@ async def get_event_quorum_ids(slug: str):
 @router.post("/events", response_model=CreateEventResponse)
 async def create_event(body: CreateEventRequest):
     db = get_supabase()
+
+    # Check for duplicate slug
+    existing = db.table("events").select("id").eq("slug", body.slug).maybe_single().execute()
+    if existing.data:
+        raise HTTPException(status_code=409, detail=f"An event with slug '{body.slug}' already exists")
+
     event_id = str(uuid.uuid4())
     row = {
         "id": event_id,

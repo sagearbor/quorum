@@ -34,50 +34,46 @@ Even if only 2 of 10 parties use it, Quorum creates value. Absent roles trigger 
 
 ---
 
-## Local Quickstart
+## Quickstart
 
-**Prerequisites:** Python 3.11+, Node 18+, pnpm, Postgres (or a Supabase account)
+**Prerequisites:** Python 3.11+, Node 18+, pnpm
 
 ```bash
-# 1. Clone + install
 git clone https://github.com/sagearbor/quorum.git
 cd quorum
-pnpm install --filter "./apps/*" --filter "./packages/*"
-pip install -r apps/api/requirements.txt
-
-# 2. Configure
-cp .env.example .env
-# Edit .env — set OPENAI_API_KEY (or set QUORUM_LLM_PROVIDER=local + OLLAMA_BASE_URL for Ollama)
-
-# 3. Database — pick one:
-#    Option A: Local Postgres
-#      Uncomment DATABASE_PROVIDER=postgres and set DATABASE_URL=postgresql://user:pass@localhost:5432/quorum
-#    Option B: Supabase
-#      Set SUPABASE_URL + SUPABASE_ANON_KEY + SUPABASE_SERVICE_KEY
-
-# 4. Run
-# Terminal 1 — FastAPI backend (http://localhost:8000)
-cd apps && uvicorn api.main:app --reload
-
-# Terminal 2 — Next.js frontend (http://localhost:3000)
-cd apps/web && pnpm dev
+pnpm install
+pip3 install -r apps/api/requirements.txt && pip3 install -e packages/llm
 ```
 
-> **Everything else defaults to local** — no Azure account needed. Storage uses the local filesystem, LLM defaults to OpenAI (just an API key). See `.env.example` for all provider toggles.
+### Run with Supabase (default — production-like)
 
----
-
-## Quick Start (Azure / Cloud)
+Set your credentials in `apps/web/.env.local` and `apps/api/.env`:
 
 ```bash
-cp .env.example .env
-# Fill in: AZURE_OPENAI_ENDPOINT, SUPABASE_URL, SUPABASE_ANON_KEY
-# Set QUORUM_LLM_PROVIDER=azure, STORAGE_PROVIDER=azure_blob
-# For Azure auth without API keys: omit AZURE_OPENAI_KEY, run `az login`
-pip install -r requirements-azure.txt  # Azure-specific deps
+# apps/api/.env
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_KEY=your-service-key
+QUORUM_LLM_PROVIDER=openai          # or azure, anthropic, local
+OPENAI_API_KEY=sk-...               # if using openai provider
+```
 
-cd apps && uvicorn api.main:app --reload
-cd apps/web && pnpm dev
+```bash
+./scripts/start.sh          # API (8000) + frontend (3000)
+./scripts/start.sh api      # backend only
+./scripts/start.sh web      # frontend only
+```
+
+### Run locally (no Supabase, no API keys)
+
+```bash
+./scripts/start.sh --local           # SQLite + MockLLM, everything offline
+./scripts/start.sh --local api       # backend only
+```
+
+### Demo mode (no backend at all)
+
+```bash
+cd apps/web && NEXT_PUBLIC_QUORUM_TEST_MODE=true pnpm dev
 ```
 
 ---
@@ -92,31 +88,19 @@ cd apps/web && pnpm dev
 
 ---
 
-## Demo Mode (Offline)
+## A2A Agent Autonomy
 
-Run the full expo experience with no backend, no API key, and no internet:
+Quorum includes an agent-to-agent (A2A) communication system. Set `autonomy_level` (0-1) when creating a quorum:
 
-```bash
-# Offline demo — everything runs client-side (http://localhost:3000)
-cd apps/web && NEXT_PUBLIC_QUORUM_TEST_MODE=true pnpm dev
-```
+| Level | Behavior |
+|-------|----------|
+| 0.0 | Human only — agents respond to messages but don't initiate |
+| 0.1-0.3 | Human-led — agents occasionally share insights across stations |
+| 0.4-0.6 | Collaborative — agents proactively contribute |
+| 0.7-0.9 | Agent-led — agents auto-contribute and drive toward resolution |
+| 1.0 | Fully autonomous — agents solve it on their own |
 
-This activates the **DemoEngine**, which:
-- Loads 1 pre-seeded clinical trial quorum with 12 realistic contributions and a draft artifact
-- Includes 2 stub quorums (Medical Device Recall, ED Overcrowding) ready for interaction
-- Ticks every 5 seconds: picks a random role, adds a realistic fake contribution
-- Health score starts at 35 and rises ~3 points per tick, capping at 88
-- Emits the same events as Supabase realtime (`contribution`, `health_update`, `artifact_update`)
-
-**Key files:**
-- `seed/clinical-trial.json` — structured seed data
-- `apps/web/src/lib/demoMode.ts` — DemoEngine class (EventEmitter pattern)
-- `apps/web/src/lib/dataProvider.ts` — unified interface (all components import from here)
-- `apps/api/seed_loader.py` — loads seed data into Supabase on FastAPI startup
-
-**Detection logic:** Demo mode activates only when `NEXT_PUBLIC_QUORUM_TEST_MODE=true` is explicitly set. Missing Supabase URL yields empty state, not mock data.
-
-**To regenerate fixtures with a real API key:** Run the backend with Supabase configured, then export the quorum state from the `/quorums/{id}/state` endpoint.
+The architect can adjust autonomy in real-time from the quorum page header.
 
 ---
 

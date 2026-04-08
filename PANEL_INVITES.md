@@ -17,7 +17,7 @@ Last updated: 2026-04-07 (PM update)
 | Chris Bail, Ph.D. | christopher.bail@duke.edu | Duke Sociology / BTSI | ❌ DECLINED | |
 | Arti Rai | rai@law.duke.edu | Duke Law (IP/AI policy) | 🤔 MAYBE | Depends on time |
 | William Darity Jr., Ph.D. | william.darity@duke.edu | Duke Economics / Sanford | 🔇 NO RESPONSE | Follow-up sent 2026-04-07 |
-| Anne Washington, Ph.D. | anne.washington@duke.edu | Duke (Data Ethics) | 🔇 NO RESPONSE | Follow-up sent 2026-04-07 |
+| Anne Washington, Ph.D. | anne.washington@duke.edu | Duke (Data Ethics) | ❌ DECLINED | |
 | David Hoffman | david.hoffman@duke.edu | Duke | 🔇 NO RESPONSE | Follow-up sent 2026-04-07 |
 | Mark McClellan, M.D. | mark.mcclellan@duke.edu | Duke Margolis Health Policy | 🔇 NO RESPONSE | Follow-up sent 2026-04-07 |
 | Lee Tiedrich, J.D. | lee.tiedrich@duke.edu | Duke Law (AI/Tech law) | 🔇 NO RESPONSE | Follow-up sent 2026-04-07 |

@@ -84,13 +84,32 @@ start_web() {
 }
 
 # --- Run ---
+
+# Build the flags string so spawned terminals inherit the mode
+FLAGS=""
+[ "$MODE" = "local" ] && FLAGS="--local"
+
 case "$COMPONENT" in
   api) start_api ;;
   web) start_web ;;
   all)
+    # On macOS, open two Terminal tabs so logs don't interleave
+    if [ "$(uname)" = "Darwin" ] && [ -z "${QUORUM_CHILD:-}" ]; then
+      echo "Opening two Terminal tabs..."
+      export QUORUM_CHILD=1
+      osascript -e "
+        tell application \"Terminal\"
+          activate
+          do script \"cd '$ROOT' && '$ROOT/scripts/start.sh' $FLAGS api\"
+          delay 0.5
+          do script \"cd '$ROOT' && sleep 3 && '$ROOT/scripts/start.sh' $FLAGS web\"
+        end tell
+      " 2>/dev/null && exit 0
+    fi
+    # Fallback: run both in this terminal
     start_api &
     API_PID=$!
-    sleep 2
+    sleep 3
     start_web &
     WEB_PID=$!
     trap "kill $API_PID $WEB_PID 2>/dev/null" EXIT

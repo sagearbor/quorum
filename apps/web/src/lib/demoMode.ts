@@ -60,6 +60,7 @@ interface DemoQuorum {
   description: string;
   status: string;
   heat_score: number;
+  autonomy_level?: number;
   dashboard_types: string[];
   carousel_mode: string;
   roles: DemoRole[];

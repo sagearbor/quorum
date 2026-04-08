@@ -73,10 +73,10 @@ export function CreateEventForm() {
       const data = await res.json();
       setEventId(data.id);
       setStep(2);
-    } catch (err) {
+    } catch {
       setError(
         `Cannot reach API at ${apiBase}. Make sure the backend is running:\n` +
-        `  ./scripts/start-local.sh api`
+        `  ./scripts/start.sh api`
       );
     } finally {
       setSubmitting(false);

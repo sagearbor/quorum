@@ -260,8 +260,8 @@ export default function QuorumPage() {
   const handleVoiceTranscript = useCallback(
     (text: string) => {
       if (!currentRole) return;
-      if (currentRole.prompt_template.length > 0) {
-        const firstEmptyField = currentRole.prompt_template.find(
+      if ((currentRole.prompt_template ?? []).length > 0) {
+        const firstEmptyField = (currentRole.prompt_template ?? []).find(
           (f) => !fieldValues[f.field_name]
         );
         if (firstEmptyField) {
@@ -369,13 +369,13 @@ export default function QuorumPage() {
                 Demo Mode
               </span>
             )}
-            {/* Audio mute toggle — suppresses facilitator TTS when muted */}
+            {/* Audio output toggle — suppresses facilitator TTS when muted */}
             <button
               type="button"
               onClick={() => setAudioMuted((m) => !m)}
               data-testid="audio-mute-toggle"
               title={audioMuted ? "Unmute facilitator audio" : "Mute facilitator audio"}
-              className={`p-1.5 rounded-lg transition-colors ${
+              className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors text-xs font-medium ${
                 audioMuted
                   ? "bg-red-500/20 text-red-400 hover:bg-red-500/30"
                   : "bg-white/10 text-white/60 hover:bg-white/20 hover:text-white/80"
@@ -398,6 +398,7 @@ export default function QuorumPage() {
                   <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
                 </svg>
               )}
+              {audioMuted ? "Audio Off" : "Audio On"}
             </button>
           </div>
         </div>
@@ -587,8 +588,8 @@ export default function QuorumPage() {
               </div>
 
               <div className="space-y-4">
-                {currentRole.prompt_template.length > 0 ? (
-                  currentRole.prompt_template.map((field) => (
+                {(currentRole.prompt_template ?? []).length > 0 ? (
+                  (currentRole.prompt_template ?? []).map((field) => (
                     <div key={field.field_name}>
                       <label
                         htmlFor={field.field_name}

@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 import os
 
-from openai import AsyncAzureOpenAI, RateLimitError
+from openai import AsyncAzureOpenAI, BadRequestError, RateLimitError
 
 from quorum_llm.interface import LLMProvider
 from quorum_llm.models import BudgetExhaustedError, LLMTier
@@ -35,8 +35,8 @@ _T5_TIERS = frozenset({LLMTier.AGENT_RESPOND})
 
 logger = logging.getLogger(__name__)
 
-# Azure OpenAI API version
-_API_VERSION = "2024-10-21"
+# Azure OpenAI API version — must be 2025-03-01-preview or later for Responses API (gpt-5)
+_API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-03-01-preview")
 # Scope required for Entra ID / Managed Identity token
 _AZURE_COGNITIVESERVICES_SCOPE = "https://cognitiveservices.azure.com/.default"
 
@@ -118,25 +118,75 @@ class AzureOpenAIProvider(LLMProvider):
             return self._deployment_t3
         raise ValueError(f"Tier {tier} does not use LLM — use tier1 module directly")
 
+    def _is_gpt5(self, deployment: str) -> bool:
+        """Check if a deployment is a GPT-5/reasoning model (needs Responses API).
+
+        Checks deployment name AND the explicit AZURE_OPENAI_REASONING_DEPLOYMENTS
+        env var (comma-separated list of deployment names that are reasoning models).
+        """
+        name = deployment.lower()
+        if "gpt-5" in name:
+            return True
+        # Allow explicit configuration for deployments with custom names
+        reasoning_list = os.environ.get("AZURE_OPENAI_REASONING_DEPLOYMENTS", "")
+        if reasoning_list:
+            return deployment in [d.strip() for d in reasoning_list.split(",")]
+        return False
+
+    async def _call(self, kwargs: dict, tier: LLMTier) -> str:
+        """Make an Azure OpenAI call.
+
+        For GPT-5 models, automatically routes to the Responses API.
+        For other models, uses Chat Completions with temperature retry.
+        """
+        model = kwargs.get("model", "")
+
+        # GPT-5 models: use Responses API instead of Chat Completions
+        if self._is_gpt5(model):
+            messages = kwargs.get("messages", [])
+            system_parts = [m["content"] for m in messages if m["role"] == "system"]
+            user_parts = [m["content"] for m in messages if m["role"] != "system"]
+            instructions = "\n".join(system_parts) if system_parts else "You are a helpful assistant."
+            input_text = "\n".join(user_parts)
+            try:
+                response = await self._client.responses.create(
+                    model=model,
+                    instructions=instructions,
+                    input=input_text,
+                )
+                return response.output_text or ""
+            except RateLimitError as exc:
+                raise BudgetExhaustedError(
+                    provider="azure", tier=tier, detail=str(exc),
+                ) from exc
+
+        # Non-GPT-5: Chat Completions with temperature retry
+        try:
+            response = await self._client.chat.completions.create(**kwargs)
+            return response.choices[0].message.content or ""
+        except BadRequestError as exc:
+            if "temperature" in str(exc) and "temperature" in kwargs:
+                kwargs.pop("temperature")
+                response = await self._client.chat.completions.create(**kwargs)
+                return response.choices[0].message.content or ""
+            raise
+        except RateLimitError as exc:
+            raise BudgetExhaustedError(
+                provider="azure", tier=tier, detail=str(exc),
+            ) from exc
+
     async def complete(self, prompt: str, tier: LLMTier) -> str:
         if tier == LLMTier.KEYWORD:
             return ", ".join(extract_keywords(prompt))
 
         deployment = self._deployment_for_tier(tier)
-        try:
-            response = await self._client.chat.completions.create(
-                model=deployment,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=0.3 if tier == LLMTier.CONFLICT else 0.7,
-                max_tokens=2048 if tier == LLMTier.CONFLICT else 4096,
-            )
-            return response.choices[0].message.content or ""
-        except RateLimitError as exc:
-            raise BudgetExhaustedError(
-                provider="azure",
-                tier=tier,
-                detail=str(exc),
-            ) from exc
+        kwargs: dict = {
+            "model": deployment,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.3 if tier == LLMTier.CONFLICT else 0.7,
+            "max_completion_tokens": 2048 if tier == LLMTier.CONFLICT else 4096,
+        }
+        return await self._call(kwargs, tier)
 
     async def chat(
         self,
@@ -145,43 +195,19 @@ class AzureOpenAIProvider(LLMProvider):
         temperature: float = 0.4,
         max_tokens: int = 1024,
     ) -> str:
-        """Chat completion using the native Azure OpenAI messages API.
-
-        Passes the full messages array directly to the API rather than
-        flattening to a string.  This gives the model proper role-aware
-        context and enables Azure OpenAI prompt caching on stable prefixes
-        (system message + slowly-changing context block), reducing per-turn
-        cost by ~50% after the first call in a session.
-
-        The KEYWORD tier is not applicable for multi-turn chat; callers should
-        use ``complete()`` or ``extract_keywords()`` from tier1 directly.
-        """
+        """Chat completion using the native Azure OpenAI messages API."""
         if tier == LLMTier.KEYWORD:
-            # Keyword extraction is deterministic and does not use the messages
-            # format — flatten and delegate so callers can use chat() uniformly.
             flat = "\n".join(m["content"] for m in messages)
             return ", ".join(extract_keywords(flat))
 
         deployment = self._deployment_for_tier(tier)
-        # Default temperature per tier: lower for analytical turns (conflict,
-        # agent_chat), higher for synthesis/reasoning turns.
-        resolved_temperature = temperature
-        resolved_max_tokens = max_tokens
-
-        try:
-            response = await self._client.chat.completions.create(
-                model=deployment,
-                messages=messages,  # type: ignore[arg-type]
-                temperature=resolved_temperature,
-                max_tokens=resolved_max_tokens,
-            )
-            return response.choices[0].message.content or ""
-        except RateLimitError as exc:
-            raise BudgetExhaustedError(
-                provider="azure",
-                tier=tier,
-                detail=str(exc),
-            ) from exc
+        kwargs: dict = {
+            "model": deployment,
+            "messages": messages,
+            "temperature": temperature,
+            "max_completion_tokens": max_tokens,
+        }
+        return await self._call(kwargs, tier)
 
     async def respond(
         self,
@@ -216,16 +242,7 @@ class AzureOpenAIProvider(LLMProvider):
         """
         deployment = self._deployment_for_tier(tier)
 
-        # Detect whether the deployment is a GPT-5 model.  GPT-5 models
-        # require the Responses API; GPT-4 deployments use Chat Completions.
-        # We check the deployment name because the model field on the response
-        # object is only available after the call, not before.
-        is_gpt5 = deployment.startswith("gpt-5") or (
-            self._deployment_t5 == deployment
-            and "gpt-5" in (os.environ.get("AZURE_OPENAI_DEPLOYMENT_T5") or "")
-        )
-
-        if is_gpt5:
+        if self._is_gpt5(deployment):
             try:
                 kwargs: dict = {
                     "model": deployment,
@@ -250,7 +267,7 @@ class AzureOpenAIProvider(LLMProvider):
             {"role": "system", "content": instructions},
             {"role": "user", "content": input_text},
         ]
-        result = await self.chat(messages, tier)
+        result = await self.chat(messages, LLMTier.AGENT_CHAT)
         return result, None
 
     async def embed(self, text: str) -> list[float]:

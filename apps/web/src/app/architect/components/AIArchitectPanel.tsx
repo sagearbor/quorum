@@ -47,8 +47,8 @@ export function AIArchitectPanel() {
         }
       );
       if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(detail || "Failed to generate roles");
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail || `Failed to generate roles (HTTP ${res.status})`);
       }
       const data = await res.json();
       setRoles(data.roles);
@@ -82,8 +82,8 @@ export function AIArchitectPanel() {
         }
       );
       if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(detail || "Failed to start quorum");
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail || `Failed to start quorum (HTTP ${res.status})`);
       }
       const data = await res.json();
       window.location.href = data.share_url;

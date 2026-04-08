@@ -1,7 +1,7 @@
 # Duke Tech Expo 2026 — Panel Invitee Tracker
 
 Workshop: "Quorum: Multi-Agent AI Coordination for Real-World Decision-Making"
-Last updated: 2026-04-07 (PM update)
+Last updated: 2026-04-08
 
 ## Status Key
 - ✅ YES — confirmed
@@ -19,7 +19,7 @@ Last updated: 2026-04-07 (PM update)
 | William Darity Jr., Ph.D. | william.darity@duke.edu | Duke Economics / Sanford | 🔇 NO RESPONSE | Follow-up sent 2026-04-07 |
 | Anne Washington, Ph.D. | anne.washington@duke.edu | Duke (Data Ethics) | ❌ DECLINED | |
 | David Hoffman | david.hoffman@duke.edu | Duke | 🔇 NO RESPONSE | Follow-up sent 2026-04-07 |
-| Mark McClellan, M.D. | mark.mcclellan@duke.edu | Duke Margolis Health Policy | 🔇 NO RESPONSE | Follow-up sent 2026-04-07 |
+| Mark McClellan, M.D. | mark.mcclellan@duke.edu | Duke Margolis Health Policy | ❌ DECLINED | Can't make it |
 | Lee Tiedrich, J.D. | lee.tiedrich@duke.edu | Duke Law (AI/Tech law) | 🔇 NO RESPONSE | Follow-up sent 2026-04-07 |
 | Nita Farahany | farahany@duke.edu | Duke Law (Neuroethics/AI) | ❌ DECLINED | |
 | Aaron Chatterji | ronnie@duke.edu | Duke Fuqua (Econ/Policy) | ❌ DECLINED | |
@@ -40,21 +40,30 @@ Last updated: 2026-04-07 (PM update)
 |------|-------|-------------|--------|-------|
 | Michael Munger | munger@duke.edu | Duke Poli Sci / PPE | ❌ DECLINED | No |
 | Lisa Gennetian | lisa.gennetian@duke.edu | Duke Sanford — child poverty, cash transfers | ❌ DECLINED | No; recommended Matt Johnson |
-| Matt Johnson | matthew.johnson@duke.edu | Duke (rec. by Gennetian) — workers at low end of income distribution | 🔇 NO RESPONSE | Contacted 2026-04-07 |
-| Wesley M. Cohen | wesley.cohen@duke.edu | Duke Econ/Fuqua — economics of tech change, AI & innovation | 🤝 MEETING | Wants to meet to chat; follow up to schedule |
+| Matt Johnson | matthew.johnson@duke.edu | Duke (rec. by Gennetian) — workers at low end of income distribution | ✅ YES | Confirmed 2026-04-08; has 1:00–2:00 PM conflict, needs panel scheduled around that |
+| Wesley M. Cohen | wesley.cohen@duke.edu | Duke Econ/Fuqua — economics of tech change, AI & innovation | ❌ DECLINED (soft) | Said no but suggested Dan Gross; left door open to re-contact. Sophie replied 2026-04-08 noting she already emailed Gross, waiting on 2 others, will follow up early next week |
 
-## New Targets — AI + Workforce/Job Displacement Focus (not yet contacted)
+## Newly Contacted — 2026-04-08
 
-All emails verified from Duke faculty pages (2026-04-07).
+| Name | Email | Affiliation | Status | Notes |
+|------|-------|-------------|--------|-------|
+| Gregor Jarosch, Ph.D. | gregor.jarosch@duke.edu | Duke Economics | 🔇 NO RESPONSE | Invited 2026-04-08. Wages, job loss scarring, labor market concentration. Fit: 9 |
+| Shaundra Daily, Ph.D. | shani.b@duke.edu | Duke ECE/CS; Athena AI Institute | 🔇 NO RESPONSE | Invited 2026-04-08. AI workforce development director, NSF Athena. Fit: 8 |
+| Robyn Caplan, Ph.D. | robyn.caplan@duke.edu | Duke Sanford Public Policy | 🔇 NO RESPONSE | Invited 2026-04-08. Platform governance, AI policy, labor valuation. Fit: 7 |
+| Ali Makhdoumi, Ph.D. | ali.makhdoumi@duke.edu | Duke Fuqua (Decision Sciences) + CS | 🔇 NO RESPONSE | Invited 2026-04-08. Trained by Acemoglu, AI data markets, mechanism design. Fit: 8 |
+| Daniel Gross | daniel.gross@duke.edu | Duke Fuqua Strategy, NBER Fellow | 🔇 NO RESPONSE | Contacted 2026-04-07 (rec'd by Cohen). AI automation & labor markets. Fit: 10 |
 
-| Name | Email | Affiliation | Panel Relevance (AI × workforce) | Fit (1-10) |
-|------|-------|-------------|----------------------------------|:----------:|
-| Daniel Gross | daniel.gross@duke.edu | Duke Fuqua Strategy, NBER Fellow | Studies **causes and consequences of automation on firms, workers, and labor markets**. NBER research on how AI reshapes employment. Directly studies what you care about. | **10** |
-| Richard Larrick | rick.larrick@duke.edu | Duke Fuqua — Hanes Prof, Assoc Dean DEI | Published in PNAS (2025): workers who use AI are judged as **less competent and lazier** — a "social evaluation penalty." Studies how AI changes workplace dynamics and hiring decisions. | **9** |
-| Jack Soll | jsoll@duke.edu | Duke Fuqua — Gregory Mario Prof | Co-author with Larrick on AI workplace penalty research. Expert in judgment/decision-making psychology. Panel angle: "how do humans actually respond when AI enters their workflow?" | **8** |
-| Jeff Ward | ward@law.duke.edu | Duke Law — Clinical Prof, AI & Robotics | Teaches Frontier AI & Robotics: Law & Ethics. Focus on **socio-economic effects of rapid tech change** and equitable access to economic growth. Legal/policy perspective on displacement. | **8** |
-| Manju Puri | mpuri@duke.edu | Duke Fuqua — J.B. Fuqua Prof of Finance, editor Review of Financial Studies | Expert in fintech disruption — digital credit, Buy Now Pay Later, financial inclusion. Can speak to "how AI/tech displaces AND creates financial services jobs." | **7** |
-| Kafui Dzirasa | kafui.dzirasa@duke.edu | Duke Psychiatry/BME — HHMI Investigator, Nat'l Academy of Medicine | Health equity + accessible tech. Panel angle: "who gets left behind when AI automates decisions?" Milken Institute speaker. Less directly workforce-focused but strong equity voice. | **6** |
+## Bench — Not Yet Contacted (go back to if needed)
+
+| Name | Email | Affiliation | Why Relevant | Fit (1-10) |
+|------|-------|-------------|-------------|:----------:|
+| Felix Tintelnot, Ph.D. | felix.tintelnot@duke.edu | Duke Economics | How trade, tech, and multinational production affect workers and jobs | **8** |
+| Philip Napoli, Ph.D. | philip.napoli@duke.edu | Duke Sanford; DeWitt Wallace Center Director | Information inequalities, digital divides, AI-driven economic inequality | **7** |
+| Richard Larrick | rick.larrick@duke.edu | Duke Fuqua — Hanes Prof, Assoc Dean DEI | PNAS 2025: AI users judged as less competent — "social evaluation penalty" | **9** |
+| Jack Soll | jsoll@duke.edu | Duke Fuqua — Gregory Mario Prof | Co-author with Larrick on AI workplace penalty. Judgment/decision-making | **8** |
+| Jeff Ward | ward@law.duke.edu | Duke Law — Clinical Prof, AI & Robotics | Socio-economic effects of rapid tech change, equitable access | **8** |
+| Manju Puri | mpuri@duke.edu | Duke Fuqua — J.B. Fuqua Prof of Finance | Fintech disruption, financial inclusion, AI displaces & creates jobs | **7** |
+| Kafui Dzirasa | kafui.dzirasa@duke.edu | Duke Psychiatry/BME — HHMI Investigator | Health equity + accessible tech. "Who gets left behind?" | **6** |
 
 ## Previous Suggestions — More AI/Tech Focused (lower priority for this panel)
 

@@ -86,21 +86,31 @@ async def _run_quorum_loop(quorum_id: str, autonomy_level: float):
             await asyncio.sleep(base_interval * jitter)
 
             # Check if quorum is still active
-            db = get_supabase()
-            quorum = (
-                db.table("quorums")
-                .select("status")
-                .eq("id", quorum_id)
-                .maybe_single()
-                .execute()
-            )
-            if not quorum.data or quorum.data["status"] in ("resolved", "archived"):
-                logger.info(
-                    "Quorum %s is %s -- stopping autonomy loop",
-                    quorum_id,
-                    quorum.data.get("status") if quorum.data else "gone",
+            try:
+                db = get_supabase()
+                quorum = (
+                    db.table("quorums")
+                    .select("status")
+                    .eq("id", quorum_id)
+                    .maybe_single()
+                    .execute()
                 )
-                break
+                if not quorum.data or quorum.data["status"] in ("resolved", "archived"):
+                    logger.info(
+                        "Quorum %s is %s -- stopping autonomy loop",
+                        quorum_id,
+                        quorum.data.get("status") if quorum.data else "gone",
+                    )
+                    break
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.error(
+                    "Status check failed for quorum %s — continuing loop",
+                    quorum_id,
+                    exc_info=True,
+                )
+                continue
 
     except asyncio.CancelledError:
         logger.info("Autonomy loop cancelled for quorum %s", quorum_id)

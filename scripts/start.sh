@@ -34,12 +34,14 @@ done
 
 # Frontend env is loaded by Next.js from apps/web/.env.local automatically
 
+# Always route frontend through the API backend
+export NEXT_PUBLIC_API_URL=http://localhost:8000
+
 if [ "$MODE" = "local" ]; then
   export QUORUM_LOCAL=true
   export QUORUM_TEST_MODE=true
   export QUORUM_LLM_PROVIDER=mock
   export QUORUM_DB_PATH="${ROOT}/apps/api/quorum_local.db"
-  export NEXT_PUBLIC_API_URL=http://localhost:8000
 fi
 
 # --- Dependency check ---

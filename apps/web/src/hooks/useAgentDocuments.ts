@@ -7,7 +7,7 @@
  * updates) so the DocumentPanel always shows the latest version.
  */
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import type { AgentDocument } from "@quorum/types";
 import {
   getAgentDocuments,
@@ -24,12 +24,18 @@ export interface AgentDocumentsState {
 export function useAgentDocuments(quorumId: string): AgentDocumentsState {
   const [documents, setDocuments] = useState<AgentDocument[]>([]);
   const [loading, setLoading] = useState(true);
+  const hasLoadedOnce = useRef(false);
 
   const fetchDocuments = useCallback(async () => {
-    setLoading(true);
+    // Only show loading spinner on initial fetch, not on refreshes.
+    // This prevents the dashboard from flashing blank during updates.
+    if (!hasLoadedOnce.current) {
+      setLoading(true);
+    }
     try {
       const docs = await getAgentDocuments(quorumId);
       setDocuments(docs);
+      hasLoadedOnce.current = true;
     } catch {
       // Non-fatal: leave the list as-is
     } finally {

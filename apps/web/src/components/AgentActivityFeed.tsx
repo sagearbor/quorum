@@ -42,9 +42,8 @@ export function AgentActivityFeed({ quorumId, roles, visible, onToggle }: Props)
   const [loading, setLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(true);
 
-  const roleMap = new Map(roles.map((r) => [r.id, r]));
-
   const fetchActivity = useCallback(async () => {
+    const roleMap = new Map(roles.map((r) => [r.id, r]));
     const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     try {
       setLoading(true);

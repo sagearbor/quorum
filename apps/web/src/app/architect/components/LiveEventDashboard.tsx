@@ -73,6 +73,7 @@ export function LiveEventDashboard() {
       description: cq.description,
       status: cq.status,
       heat_score: cq.heat_score,
+      autonomy_level: cq.autonomy_level ?? 0,
       carousel_mode: cq.carousel_mode,
       dashboard_types: cq.dashboard_types,
       created_at: cq.created_at,

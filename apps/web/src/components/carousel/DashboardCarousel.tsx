@@ -100,7 +100,7 @@ export function DashboardCarousel({
 
       {/* Dual-panel area */}
       <div className="flex-1 min-h-0 px-6 pb-4">
-        <AnimatePresence mode="wait">
+        <AnimatePresence mode="popLayout">
           <motion.div
             key={slideIndex}
             variants={slideVariants}

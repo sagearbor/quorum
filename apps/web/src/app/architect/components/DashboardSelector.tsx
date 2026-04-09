@@ -37,13 +37,13 @@ export function DashboardSelector() {
 
   return (
     <div>
-      <h4 className="text-sm font-medium text-gray-700 mb-1">
+      <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-1">
         Dashboard Types{" "}
-        <span className="text-gray-400 font-normal">
+        <span className="text-gray-500 dark:text-gray-400 font-normal">
           ({selected.length}/{MAX_DASHBOARDS})
         </span>
       </h4>
-      <p className="text-xs text-gray-500 mb-3">
+      <p className="text-xs text-gray-600 dark:text-gray-300 mb-3">
         Select 1-3 dashboard visualizations for this quorum.
       </p>
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
@@ -60,12 +60,12 @@ export function DashboardSelector() {
                 isSelected
                   ? "border-blue-500 bg-blue-50"
                   : isDisabled
-                    ? "border-gray-200 bg-gray-50 opacity-50 cursor-not-allowed"
-                    : "border-gray-200 hover:border-gray-300 bg-white"
+                    ? "border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 opacity-50 cursor-not-allowed"
+                    : "border-gray-200 dark:border-gray-700 hover:border-gray-300 bg-white dark:bg-gray-800"
               }`}
             >
               <div className="font-medium">{opt.label}</div>
-              <div className="text-xs text-gray-500 mt-0.5">
+              <div className="text-xs text-gray-600 dark:text-gray-300 mt-0.5">
                 {opt.description}
               </div>
             </button>
@@ -75,7 +75,7 @@ export function DashboardSelector() {
 
       <div className="mt-4">
         <label className="flex items-center gap-2 text-sm">
-          <span className="font-medium text-gray-700">Carousel Mode:</span>
+          <span className="font-medium text-gray-900 dark:text-gray-100">Carousel Mode:</span>
           <select
             value={quorumDraft.carousel_mode}
             onChange={(e) =>
@@ -83,7 +83,7 @@ export function DashboardSelector() {
                 carousel_mode: e.target.value as "multi-view" | "multi-quorum",
               })
             }
-            className="px-2 py-1 border border-gray-300 rounded text-sm"
+            className="px-2 py-1 border border-gray-300 dark:border-gray-600 rounded text-sm dark:bg-gray-800 dark:text-gray-100"
           >
             <option value="multi-view">Multi-view (same quorum, different dashboards)</option>
             <option value="multi-quorum">Multi-quorum (same dashboard, different quorums)</option>

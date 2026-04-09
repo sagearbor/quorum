@@ -49,9 +49,9 @@ class SupabaseBackend(CoordinationBackend):
     async def get_quorum(self, quorum_id: str) -> dict[str, Any] | None:
         db = get_supabase()
         result = (
-            db.table("quorums").select("*").eq("id", quorum_id).single().execute()
+            db.table("quorums").select("*").eq("id", quorum_id).maybe_single().execute()
         )
-        return result.data
+        return result.data if result else None
 
     async def update_quorum_status(self, quorum_id: str, status: str) -> None:
         db = get_supabase()

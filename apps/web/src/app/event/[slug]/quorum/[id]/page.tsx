@@ -18,6 +18,7 @@ import { useStationConversation } from "@/hooks/useStationConversation";
 import { useAgentDocuments } from "@/hooks/useAgentDocuments";
 import { useA2ARequests } from "@/hooks/useA2ARequests";
 import type { StationMessage } from "@quorum/types";
+import { AgentActivityFeed } from "@/components/AgentActivityFeed";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -126,6 +127,9 @@ export default function QuorumPage() {
 
   const [quorumTitle, setQuorumTitle] = useState<string>("");
   const [quorumDescription, setQuorumDescription] = useState<string>("");
+  const [autonomyLevel, setAutonomyLevel] = useState<number>(0);
+  const [showAutonomyControl, setShowAutonomyControl] = useState(false);
+  const [showAgentActivity, setShowAgentActivity] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
   const [contributions, setContributions] = useState<Contribution[]>([]);
   const [currentRole, setCurrentRole] = useState<Role | null>(null);
@@ -141,6 +145,17 @@ export default function QuorumPage() {
   // Audio mute — when true, synthesisText is withheld from AvatarPanel so
   // the browser TTS engine does not speak the facilitator reply.
   const [audioMuted, setAudioMuted] = useState(false);
+
+  // Webcam availability — only enable emotion tracking when a camera is present.
+  const [hasWebcam, setHasWebcam] = useState(false);
+  useEffect(() => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) return;
+    navigator.mediaDevices.enumerateDevices().then((devices) => {
+      setHasWebcam(devices.some((d) => d.kind === "videoinput"));
+    }).catch(() => {
+      setHasWebcam(false);
+    });
+  }, []);
 
   // Conversation hook — scoped to this station + current role
   const conversation = useStationConversation(
@@ -222,6 +237,7 @@ export default function QuorumPage() {
       if (quorum) {
         setQuorumTitle(quorum.title);
         setQuorumDescription(quorum.description);
+        setAutonomyLevel(quorum.autonomy_level ?? 0);
       }
       setRoles(qRoles as Role[]);
       setContributions(qContribs as Contribution[]);
@@ -244,8 +260,8 @@ export default function QuorumPage() {
   const handleVoiceTranscript = useCallback(
     (text: string) => {
       if (!currentRole) return;
-      if (currentRole.prompt_template.length > 0) {
-        const firstEmptyField = currentRole.prompt_template.find(
+      if ((currentRole.prompt_template ?? []).length > 0) {
+        const firstEmptyField = (currentRole.prompt_template ?? []).find(
           (f) => !fieldValues[f.field_name]
         );
         if (firstEmptyField) {
@@ -353,13 +369,13 @@ export default function QuorumPage() {
                 Demo Mode
               </span>
             )}
-            {/* Audio mute toggle — suppresses facilitator TTS when muted */}
+            {/* Audio output toggle — suppresses facilitator TTS when muted */}
             <button
               type="button"
               onClick={() => setAudioMuted((m) => !m)}
               data-testid="audio-mute-toggle"
               title={audioMuted ? "Unmute facilitator audio" : "Mute facilitator audio"}
-              className={`p-1.5 rounded-lg transition-colors ${
+              className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg transition-colors text-xs font-medium ${
                 audioMuted
                   ? "bg-red-500/20 text-red-400 hover:bg-red-500/30"
                   : "bg-white/10 text-white/60 hover:bg-white/20 hover:text-white/80"
@@ -382,6 +398,7 @@ export default function QuorumPage() {
                   <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
                 </svg>
               )}
+              {audioMuted ? "Audio Off" : "Audio On"}
             </button>
           </div>
         </div>
@@ -392,7 +409,7 @@ export default function QuorumPage() {
           <AvatarPanel
             quorumId={quorumId}
             showDirectionIndicator
-            enableEmotionTracking
+            enableEmotionTracking={hasWebcam}
             roleName={currentRole?.name}
             staticSynthesisText={audioMuted ? undefined : synthesisText}
           />
@@ -472,19 +489,61 @@ export default function QuorumPage() {
             </Link>
           </div>
           {quorumDescription && (
-            <p className="text-sm text-gray-500 mt-1">{quorumDescription}</p>
+            <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">{quorumDescription}</p>
           )}
           {station && (
             <span className="mt-2 inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-indigo-700 text-xs font-medium">
               Station {station}
             </span>
           )}
+          <button
+            type="button"
+            onClick={() => setShowAutonomyControl((v) => !v)}
+            className="mt-2 inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+          >
+            Autonomy: {autonomyLevel.toFixed(1)}
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d={showAutonomyControl ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
+            </svg>
+          </button>
+          {showAutonomyControl && (
+            <div className="mt-2 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-gray-600 dark:text-gray-300 w-16">Human</span>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.1"
+                  value={autonomyLevel}
+                  onChange={async (e) => {
+                    const val = parseFloat(e.target.value);
+                    setAutonomyLevel(val);
+                    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+                    await fetch(`${apiBase}/quorums/${quorumId}/autonomy`, {
+                      method: "PATCH",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ autonomy_level: val }),
+                    }).catch(() => {});
+                  }}
+                  className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                />
+                <span className="text-xs text-gray-600 dark:text-gray-300 w-16 text-right">Autonomous</span>
+                <span className="text-sm font-semibold text-blue-600 w-8 text-right tabular-nums">
+                  {autonomyLevel.toFixed(1)}
+                </span>
+              </div>
+              <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">
+                Adjust how proactively agents communicate. Changes take effect immediately.
+              </p>
+            </div>
+          )}
         </header>
 
         {/* Role selection */}
         {roles.length > 0 && (
           <section className="mb-6">
-            <h2 className="text-sm font-semibold text-gray-700 mb-2">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-2">
               Select your role
             </h2>
             <div className="flex flex-col gap-2">
@@ -529,12 +588,12 @@ export default function QuorumPage() {
               </div>
 
               <div className="space-y-4">
-                {currentRole.prompt_template.length > 0 ? (
-                  currentRole.prompt_template.map((field) => (
+                {(currentRole.prompt_template ?? []).length > 0 ? (
+                  (currentRole.prompt_template ?? []).map((field) => (
                     <div key={field.field_name}>
                       <label
                         htmlFor={field.field_name}
-                        className="block text-sm font-medium text-gray-700 mb-1"
+                        className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-1"
                       >
                         {field.prompt}
                       </label>
@@ -546,7 +605,7 @@ export default function QuorumPage() {
                           handleFieldChange(field.field_name, e.target.value)
                         }
                         rows={3}
-                        className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:outline-none resize-none"
+                        className="w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:outline-none resize-none dark:bg-gray-800 dark:text-gray-100"
                         placeholder={`Enter your ${field.field_name.replace(/_/g, " ")}...`}
                       />
                     </div>
@@ -555,7 +614,7 @@ export default function QuorumPage() {
                   <div>
                     <label
                       htmlFor="contribution"
-                      className="block text-sm font-medium text-gray-700 mb-1"
+                      className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-1"
                     >
                       Your contribution
                     </label>
@@ -567,7 +626,7 @@ export default function QuorumPage() {
                         handleFieldChange("contribution", e.target.value)
                       }
                       rows={4}
-                      className="w-full rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:outline-none resize-none"
+                      className="w-full rounded-lg border border-gray-300 dark:border-gray-600 px-3 py-2 text-sm focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100 focus:outline-none resize-none dark:bg-gray-800 dark:text-gray-100"
                       placeholder={`Share your perspective as ${currentRole.name}...`}
                     />
                   </div>
@@ -600,11 +659,21 @@ export default function QuorumPage() {
           </section>
         )}
 
+        {/* Agent activity feed — shows what autonomous agents are doing */}
+        <section className="mb-4">
+          <AgentActivityFeed
+            quorumId={quorumId}
+            roles={roles}
+            visible={showAgentActivity}
+            onToggle={() => setShowAgentActivity((v) => !v)}
+          />
+        </section>
+
         {/* Tabbed panel — Conversation | Documents | Contributions */}
-        <section className="flex-1 border border-gray-200 rounded-xl overflow-hidden flex flex-col min-h-[400px]">
+        <section className="flex-1 border border-gray-200 dark:border-gray-700 rounded-xl overflow-hidden flex flex-col min-h-[400px]">
           {/* Tab bar */}
           <div
-            className="flex border-b border-gray-200 bg-gray-50"
+            className="flex border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900"
             role="tablist"
             data-testid="quorum-tabs"
           >
@@ -624,8 +693,8 @@ export default function QuorumPage() {
                 data-testid={`tab-${id}`}
                 className={`px-4 py-2.5 text-sm font-medium transition-colors focus:outline-none ${
                   activeTab === id
-                    ? "text-indigo-600 border-b-2 border-indigo-600 bg-white"
-                    : "text-gray-500 hover:text-gray-700"
+                    ? "text-indigo-600 border-b-2 border-indigo-600 bg-white dark:bg-gray-800"
+                    : "text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200"
                 }`}
               >
                 {label}
@@ -692,7 +761,7 @@ export default function QuorumPage() {
                         <div
                           key={c.id}
                           data-testid={`contribution-${c.id}`}
-                          className="rounded-lg border border-gray-200 p-3 text-sm"
+                          className="rounded-lg border border-gray-200 dark:border-gray-700 p-3 text-sm"
                         >
                           <div className="flex items-center gap-2 mb-1">
                             <span
@@ -706,11 +775,11 @@ export default function QuorumPage() {
                             >
                               {role?.name ?? "Unknown"}
                             </span>
-                            <span className="text-xs text-gray-400 ml-auto">
+                            <span className="text-xs text-gray-500 dark:text-gray-400 ml-auto">
                               {new Date(c.created_at).toLocaleTimeString()}
                             </span>
                           </div>
-                          <p className="text-gray-700 line-clamp-2">
+                          <p className="text-gray-700 dark:text-gray-200 line-clamp-2">
                             {c.content}
                           </p>
                         </div>

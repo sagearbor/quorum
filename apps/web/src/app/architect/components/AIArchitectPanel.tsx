@@ -47,8 +47,8 @@ export function AIArchitectPanel() {
         }
       );
       if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(detail || "Failed to generate roles");
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail || `Failed to generate roles (HTTP ${res.status})`);
       }
       const data = await res.json();
       setRoles(data.roles);
@@ -82,8 +82,8 @@ export function AIArchitectPanel() {
         }
       );
       if (!res.ok) {
-        const detail = await res.text();
-        throw new Error(detail || "Failed to start quorum");
+        const body = await res.json().catch(() => null);
+        throw new Error(body?.detail || `Failed to start quorum (HTTP ${res.status})`);
       }
       const data = await res.json();
       window.location.href = data.share_url;
@@ -123,7 +123,7 @@ export function AIArchitectPanel() {
       <div>
         <label
           htmlFor="ai-problem"
-          className="block text-sm font-medium text-gray-700 mb-1"
+          className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-1"
         >
           Problem Description
         </label>
@@ -133,13 +133,13 @@ export function AIArchitectPanel() {
           onChange={(e) => setProblem(e.target.value)}
           placeholder="Describe the problem or decision this quorum needs to address..."
           rows={5}
-          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-y"
+          className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 resize-y dark:bg-gray-800 dark:text-gray-100"
         />
       </div>
 
       {/* Mode selection */}
       <fieldset>
-        <legend className="text-sm font-medium text-gray-700 mb-2">
+        <legend className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
           Start Mode
         </legend>
         <div className="flex gap-4">
@@ -152,7 +152,7 @@ export function AIArchitectPanel() {
               onChange={() => setMode("auto")}
               className="text-blue-600 focus:ring-blue-500"
             />
-            <span className="text-sm text-gray-700">
+            <span className="text-sm text-gray-900 dark:text-gray-100">
               Auto-start — trust the AI
             </span>
           </label>
@@ -165,7 +165,7 @@ export function AIArchitectPanel() {
               onChange={() => setMode("approved")}
               className="text-blue-600 focus:ring-blue-500"
             />
-            <span className="text-sm text-gray-700">
+            <span className="text-sm text-gray-900 dark:text-gray-100">
               Review roles before starting
             </span>
           </label>
@@ -232,7 +232,7 @@ export function AIArchitectPanel() {
           {roles.map((role, idx) => (
             <div
               key={idx}
-              className="border border-gray-200 rounded-lg p-4 space-y-3"
+              className="border border-gray-200 dark:border-gray-700 rounded-lg p-4 space-y-3"
             >
               <div className="flex items-start justify-between gap-2">
                 <input
@@ -240,7 +240,7 @@ export function AIArchitectPanel() {
                   value={role.name}
                   onChange={(e) => updateRole(idx, { name: e.target.value })}
                   placeholder="Role name"
-                  className="flex-1 px-2 py-1 border border-gray-200 rounded text-sm font-medium focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  className="flex-1 px-2 py-1 border border-gray-200 dark:border-gray-700 rounded text-sm font-medium focus:ring-1 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-gray-100"
                 />
                 <span
                   className={`px-2 py-0.5 rounded text-xs font-bold ${RANK_COLORS[role.authority_rank] || RANK_COLORS[1]}`}
@@ -250,7 +250,7 @@ export function AIArchitectPanel() {
                 <button
                   type="button"
                   onClick={() => removeRole(idx)}
-                  className="text-gray-400 hover:text-red-500 text-sm"
+                  className="text-gray-500 dark:text-gray-400 hover:text-red-500 text-sm"
                   aria-label={`Remove ${role.name || "role"}`}
                 >
                   &times;
@@ -263,9 +263,9 @@ export function AIArchitectPanel() {
                 }
                 placeholder="Role description"
                 rows={2}
-                className="w-full px-2 py-1 border border-gray-200 rounded text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 resize-y"
+                className="w-full px-2 py-1 border border-gray-200 dark:border-gray-700 rounded text-sm focus:ring-1 focus:ring-blue-500 focus:border-blue-500 resize-y dark:bg-gray-800 dark:text-gray-100"
               />
-              <div className="text-xs text-gray-500">
+              <div className="text-xs text-gray-600 dark:text-gray-300">
                 Focus: {role.suggested_prompt_focus || "—"}
               </div>
             </div>
@@ -275,7 +275,7 @@ export function AIArchitectPanel() {
           <div>
             <label
               htmlFor="quorum-title-ai"
-              className="block text-sm font-medium text-gray-700 mb-1"
+              className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-1"
             >
               Quorum Title
             </label>
@@ -285,7 +285,7 @@ export function AIArchitectPanel() {
               value={quorumTitle}
               onChange={(e) => setQuorumTitle(e.target.value)}
               placeholder="Title for this quorum"
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-gray-100"
             />
           </div>
 

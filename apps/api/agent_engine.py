@@ -166,9 +166,9 @@ async def process_agent_turn(
 
     # --- 1. Resolve role name and load agent definition ---
     try:
-        role_row = db.table("roles").select("name, authority_rank").eq("id", role_id).single().execute()
-        role_name: str = role_row.data["name"] if role_row.data else "unknown"
-        authority_rank: int = (role_row.data or {}).get("authority_rank", 0)
+        role_row = db.table("roles").select("name, authority_rank").eq("id", role_id).maybe_single().execute()
+        role_name: str = role_row.data["name"] if role_row and role_row.data else "unknown"
+        authority_rank: int = (role_row.data or {}).get("authority_rank", 0) if role_row and role_row.data else 0
     except Exception:
         logger.warning("agent_engine: could not load role %s", role_id, exc_info=True)
         role_name = "unknown"
@@ -299,8 +299,8 @@ async def process_a2a_request(
 
     # --- 1. Load request ---
     try:
-        req_result = db.table("agent_requests").select("*").eq("id", request_id).single().execute()
-        if not req_result.data:
+        req_result = db.table("agent_requests").select("*").eq("id", request_id).maybe_single().execute()
+        if not req_result or not req_result.data:
             logger.warning("process_a2a_request: request %s not found", request_id)
             return "Request not found."
         req = req_result.data
@@ -315,17 +315,17 @@ async def process_a2a_request(
 
     # --- 2. Load target role name + agent definition ---
     try:
-        role_row = db.table("roles").select("name, authority_rank").eq("id", to_role_id).single().execute()
-        target_role_name = role_row.data["name"] if role_row.data else "unknown"
-        authority_rank = (role_row.data or {}).get("authority_rank", 0)
+        role_row = db.table("roles").select("name, authority_rank").eq("id", to_role_id).maybe_single().execute()
+        target_role_name = role_row.data["name"] if role_row and role_row.data else "unknown"
+        authority_rank = (role_row.data or {}).get("authority_rank", 0) if role_row and role_row.data else 0
     except Exception:
         target_role_name = "unknown"
         authority_rank = 0
 
     # Load sender name for context
     try:
-        sender_row = db.table("roles").select("name").eq("id", from_role_id).single().execute()
-        sender_name = sender_row.data["name"] if sender_row.data else "another agent"
+        sender_row = db.table("roles").select("name").eq("id", from_role_id).maybe_single().execute()
+        sender_name = sender_row.data["name"] if sender_row and sender_row.data else "another agent"
     except Exception:
         sender_name = "another agent"
 
@@ -421,8 +421,8 @@ def _load_conversation_history(db, quorum_id: str, role_id: str, station_id: str
 def _load_quorum_context(db, quorum_id: str) -> dict | None:
     """Load basic quorum metadata for prompt context."""
     try:
-        result = db.table("quorums").select("title, description").eq("id", quorum_id).single().execute()
-        return result.data
+        result = db.table("quorums").select("title, description").eq("id", quorum_id).maybe_single().execute()
+        return result.data if result else None
     except Exception:
         return None
 
@@ -694,9 +694,23 @@ def _notify_relevant_agents(
         insight_tags:    Tags associated with the published insight.
         insight_content: Truncated insight text for the A2A request body.
     """
-    # Threshold for auto-wake: only send A2A for strong affinity matches.
-    # Lower-affinity agents will see the insight via context injection instead.
-    _A2A_NOTIFY_THRESHOLD = 0.6
+    # Load quorum autonomy level to gate A2A notifications
+    try:
+        q_result = db.table("quorums").select("autonomy_level").eq("id", quorum_id).maybe_single().execute()
+        autonomy = (q_result.data or {}).get("autonomy_level", 0.0)
+    except Exception:
+        autonomy = 0.0
+
+    if autonomy < 0.1:
+        return  # No A2A at very low autonomy
+
+    # Adjust notification threshold based on autonomy
+    if autonomy >= 0.8:
+        _A2A_NOTIFY_THRESHOLD = 0.2  # Very aggressive
+    elif autonomy >= 0.5:
+        _A2A_NOTIFY_THRESHOLD = 0.4  # Moderate
+    else:
+        _A2A_NOTIFY_THRESHOLD = 0.6  # Conservative (original default)
 
     if not insight_tags:
         return

@@ -88,6 +88,14 @@ export async function getEvents(): Promise<EventSummary[]> {
 }
 
 // ---------------------------------------------------------------------------
+// API base — when set, data is fetched from the API instead of Supabase
+// ---------------------------------------------------------------------------
+
+function getApiBase(): string | null {
+  return process.env.NEXT_PUBLIC_API_URL ?? null;
+}
+
+// ---------------------------------------------------------------------------
 // Quorum data
 // ---------------------------------------------------------------------------
 
@@ -99,7 +107,38 @@ export async function getQuorums(
     return engine.getQuorums(eventSlug);
   }
 
-  // Live mode — fetch from Supabase
+  const apiBase = getApiBase();
+  if (apiBase) {
+    try {
+      const idsRes = await fetch(`${apiBase}/events/${eventSlug}/quorum-ids`);
+      if (!idsRes.ok) return [];
+      const ids: string[] = await idsRes.json();
+      if (!ids.length) return [];
+
+      const quorums = await Promise.all(
+        ids.map(async (id) => {
+          try {
+            const [stateRes, rolesJson] = await Promise.all([
+              fetch(`${apiBase}/quorums/${id}/state`).then(r => r.ok ? r.json() : null),
+              fetch(`${apiBase}/quorums/${id}/roles`).then(r => r.ok ? r.json() : []).catch(() => []),
+            ]);
+            if (!stateRes) return null;
+            return {
+              ...stateRes.quorum,
+              roles: rolesJson ?? [],
+              contributions: stateRes.contributions ?? [],
+              artifact: stateRes.artifact ?? null,
+            };
+          } catch { return null; }
+        })
+      );
+      return quorums.filter(Boolean) as DemoQuorum[];
+    } catch {
+      return [];
+    }
+  }
+
+  // Supabase direct path
   const { supabase } = await import("./supabase");
   const { data: event } = await supabase
     .from("events")
@@ -117,7 +156,6 @@ export async function getQuorums(
 
   if (!quorums) return [];
 
-  // Enrich with roles, contributions, artifact for each quorum
   const enriched = await Promise.all(
     quorums.map(async (q) => {
       const [rolesRes, contribsRes, artifactRes] = await Promise.all([
@@ -144,6 +182,23 @@ export async function getQuorum(
   if (isDemoMode()) {
     const engine = await loadDemoEngine();
     return engine.getQuorum(quorumId) ?? null;
+  }
+
+  const apiBase = getApiBase();
+  if (apiBase) {
+    try {
+      const [stateRes, rolesJson] = await Promise.all([
+        fetch(`${apiBase}/quorums/${quorumId}/state`).then(r => r.ok ? r.json() : null),
+        fetch(`${apiBase}/quorums/${quorumId}/roles`).then(r => r.ok ? r.json() : []).catch(() => []),
+      ]);
+      if (!stateRes) return null;
+      return {
+        ...stateRes.quorum,
+        roles: rolesJson ?? [],
+        contributions: stateRes.contributions ?? [],
+        artifact: stateRes.artifact ?? null,
+      } as DemoQuorum;
+    } catch { return null; }
   }
 
   const { supabase } = await import("./supabase");
@@ -179,6 +234,15 @@ export async function getRoles(quorumId: string): Promise<DemoRole[]> {
     return engine.getRoles(quorumId);
   }
 
+  const apiBase = getApiBase();
+  if (apiBase) {
+    try {
+      const res = await fetch(`${apiBase}/quorums/${quorumId}/roles`);
+      if (!res.ok) return [];
+      return await res.json();
+    } catch { return []; }
+  }
+
   const { supabase } = await import("./supabase");
   const { data } = await supabase
     .from("roles")
@@ -201,6 +265,16 @@ export async function getContributions(
     return engine.getContributions(quorumId);
   }
 
+  const apiBase = getApiBase();
+  if (apiBase) {
+    try {
+      const res = await fetch(`${apiBase}/quorums/${quorumId}/state`);
+      if (!res.ok) return [];
+      const state = await res.json();
+      return state.contributions ?? [];
+    } catch { return []; }
+  }
+
   const { supabase } = await import("./supabase");
   const { data } = await supabase
     .from("contributions")
@@ -221,6 +295,16 @@ export async function getArtifact(
   if (isDemoMode()) {
     const engine = await loadDemoEngine();
     return engine.getArtifact(quorumId);
+  }
+
+  const apiBase = getApiBase();
+  if (apiBase) {
+    try {
+      const res = await fetch(`${apiBase}/quorums/${quorumId}/state`);
+      if (!res.ok) return null;
+      const state = await res.json();
+      return state.artifact ?? null;
+    } catch { return null; }
   }
 
   const { supabase } = await import("./supabase");

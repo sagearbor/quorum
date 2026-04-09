@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
@@ -60,6 +61,23 @@ from ws_manager import manager
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+
+# ---------------------------------------------------------------------------
+# Helpers: safe Supabase single-row fetch
+# ---------------------------------------------------------------------------
+
+def _fetch_single(db, table: str, column: str, value: str, *, select: str = "*", label: str = "Record"):
+    """Fetch a single row or raise a clean 404.
+
+    Supabase's .single() throws APIError when no row matches, which surfaces
+    as an opaque 500.  This helper uses .maybe_single() and converts a miss
+    into a proper HTTPException(404).
+    """
+    result = db.table(table).select(select).eq(column, value).maybe_single().execute()
+    if not result or not result.data:
+        raise HTTPException(status_code=404, detail=f"{label} not found")
+    return result
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +168,7 @@ async def get_event_quorum_ids(slug: str):
     """Return active quorum IDs for an event, looked up by slug."""
     db = get_supabase()
     event = db.table("events").select("id").eq("slug", slug).maybe_single().execute()
-    if not event.data:
+    if not event or not event.data:
         return []
     event_id = event.data["id"]
     result = (
@@ -170,6 +188,12 @@ async def get_event_quorum_ids(slug: str):
 @router.post("/events", response_model=CreateEventResponse)
 async def create_event(body: CreateEventRequest):
     db = get_supabase()
+
+    # Check for duplicate slug
+    existing = db.table("events").select("id").eq("slug", body.slug).maybe_single().execute()
+    if existing and existing.data:
+        raise HTTPException(status_code=409, detail=f"An event with slug '{body.slug}' already exists")
+
     event_id = str(uuid.uuid4())
     row = {
         "id": event_id,
@@ -196,9 +220,7 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
     db = get_supabase()
 
     # Verify event exists
-    event = db.table("events").select("id, slug").eq("id", event_id).single().execute()
-    if not event.data:
-        raise HTTPException(status_code=404, detail="Event not found")
+    event = _fetch_single(db, "events", "id", event_id, select="id, slug", label="Event")
 
     quorum_id = str(uuid.uuid4())
     quorum_row = {
@@ -208,6 +230,7 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
         "description": body.description,
         "status": "open",
         "carousel_mode": body.carousel_mode.value,
+        "autonomy_level": body.autonomy_level,
     }
     db.table("quorums").insert(quorum_row).execute()
 
@@ -270,6 +293,11 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
         except Exception:
             logger.warning("Auto-seed documents failed for quorum %s (non-fatal)", quorum_id, exc_info=True)
 
+    # Start autonomy loop if autonomy_level > 0
+    if body.autonomy_level > 0:
+        from autonomy_loop import start_autonomy_loop
+        asyncio.create_task(start_autonomy_loop(quorum_id, body.autonomy_level))
+
     return CreateQuorumResponse(id=quorum_id, status="open", share_url=share_url)
 
 
@@ -281,9 +309,7 @@ async def contribute(quorum_id: str, body: ContributeRequest):
     db = get_supabase()
 
     # Verify quorum exists and is not resolved/archived
-    quorum = db.table("quorums").select("id, status").eq("id", quorum_id).single().execute()
-    if not quorum.data:
-        raise HTTPException(status_code=404, detail="Quorum not found")
+    quorum = _fetch_single(db, "quorums", "id", quorum_id, select="id, status", label="Quorum")
     if quorum.data["status"] in ("resolved", "archived"):
         raise HTTPException(status_code=409, detail="Quorum is no longer accepting contributions")
 
@@ -426,9 +452,7 @@ async def list_roles(quorum_id: str):
     """
     db = get_supabase()
 
-    quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
-    if not quorum.data:
-        raise HTTPException(status_code=404, detail="Quorum not found")
+    _fetch_single(db, "quorums", "id", quorum_id, select="id", label="Quorum")
 
     roles = (
         db.table("roles")
@@ -447,9 +471,7 @@ async def list_roles(quorum_id: str):
 async def get_quorum_state(quorum_id: str):
     db = get_supabase()
 
-    quorum = db.table("quorums").select("*").eq("id", quorum_id).single().execute()
-    if not quorum.data:
-        raise HTTPException(status_code=404, detail="Quorum not found")
+    quorum = _fetch_single(db, "quorums", "id", quorum_id, label="Quorum")
 
     contributions = (
         db.table("contributions")
@@ -532,11 +554,7 @@ async def get_role_status(quorum_id: str):
 async def resolve_quorum(quorum_id: str, body: ResolveRequest):
     db = get_supabase()
 
-    quorum_result = (
-        db.table("quorums").select("*").eq("id", quorum_id).single().execute()
-    )
-    if not quorum_result.data:
-        raise HTTPException(status_code=404, detail="Quorum not found")
+    quorum_result = _fetch_single(db, "quorums", "id", quorum_id, label="Quorum")
     if quorum_result.data["status"] == "resolved":
         raise HTTPException(status_code=409, detail="Quorum already resolved")
 
@@ -719,9 +737,7 @@ async def architect_generate_roles(event_id: str, body: GenerateRolesRequest):
     db = get_supabase()
 
     # Verify event exists
-    event = db.table("events").select("id").eq("id", event_id).single().execute()
-    if not event.data:
-        raise HTTPException(status_code=404, detail="Event not found")
+    _fetch_single(db, "events", "id", event_id, select="id", label="Event")
 
     try:
         roles = await generate_roles(body.problem)
@@ -744,9 +760,7 @@ async def architect_ai_start(event_id: str, body: AIStartRequest):
     db = get_supabase()
 
     # Verify event exists
-    event = db.table("events").select("id, slug").eq("id", event_id).single().execute()
-    if not event.data:
-        raise HTTPException(status_code=404, detail="Event not found")
+    event = _fetch_single(db, "events", "id", event_id, select="id, slug", label="Event")
 
     quorum_id = str(uuid.uuid4())
     quorum_row = {
@@ -796,9 +810,7 @@ async def architect_guidance(quorum_id: str, body: GuidanceRequest):
     db = get_supabase()
 
     # Verify quorum exists
-    quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
-    if not quorum.data:
-        raise HTTPException(status_code=404, detail="Quorum not found")
+    _fetch_single(db, "quorums", "id", quorum_id, select="id", label="Quorum")
 
     result = await send_guidance(quorum_id, body.message, body.target_role_id)
     return GuidanceResponse(**result)
@@ -852,9 +864,7 @@ async def ask_facilitator(quorum_id: str, station_id: str, body: AskRequest):
     db = get_supabase()
 
     # Verify quorum exists
-    quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
-    if not quorum.data:
-        raise HTTPException(status_code=404, detail="Quorum not found")
+    _fetch_single(db, "quorums", "id", quorum_id, select="id", label="Quorum")
     try:
         reply, message_id, tags = await process_agent_turn(
             quorum_id=quorum_id,
@@ -939,9 +949,7 @@ async def create_document_endpoint(quorum_id: str, body: DocumentCreateRequest):
     """Create a new agent document for a quorum."""
     db = get_supabase()
 
-    quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
-    if not quorum.data:
-        raise HTTPException(status_code=404, detail="Quorum not found")
+    _fetch_single(db, "quorums", "id", quorum_id, select="id", label="Quorum")
 
     try:
         doc = await create_document(
@@ -988,15 +996,7 @@ async def update_document_endpoint(
 
     # Verify the document belongs to this quorum before attempting any write.
     # This prevents cross-quorum document mutations via a crafted quorum_id.
-    doc_check = (
-        db.table("agent_documents")
-        .select("id, quorum_id")
-        .eq("id", doc_id)
-        .single()
-        .execute()
-    )
-    if not doc_check.data:
-        raise HTTPException(status_code=404, detail="Document not found")
+    doc_check = _fetch_single(db, "agent_documents", "id", doc_id, select="id, quorum_id", label="Document")
     if doc_check.data["quorum_id"] != quorum_id:
         raise HTTPException(
             status_code=403,
@@ -1100,15 +1100,11 @@ async def create_a2a_request(quorum_id: str, body: A2ARequestCreate):
     db = get_supabase()
 
     # Verify quorum exists
-    quorum = db.table("quorums").select("id").eq("id", quorum_id).single().execute()
-    if not quorum.data:
-        raise HTTPException(status_code=404, detail="Quorum not found")
+    _fetch_single(db, "quorums", "id", quorum_id, select="id", label="Quorum")
 
     # Verify both roles exist
     for label, rid in [("from_role_id", body.from_role_id), ("to_role_id", body.to_role_id)]:
-        role = db.table("roles").select("id").eq("id", rid).single().execute()
-        if not role.data:
-            raise HTTPException(status_code=404, detail=f"Role not found: {label}={rid}")
+        _fetch_single(db, "roles", "id", rid, select="id", label=f"Role ({label})")
 
     request_id = str(uuid.uuid4())
     now = __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()
@@ -1193,15 +1189,8 @@ async def seed_documents(event_id: str, quorum_id: str):
     db = get_supabase()
 
     # Verify event + quorum exist and are related
-    quorum = (
-        db.table("quorums")
-        .select("id, title, event_id")
-        .eq("id", quorum_id)
-        .eq("event_id", event_id)
-        .single()
-        .execute()
-    )
-    if not quorum.data:
+    result = db.table("quorums").select("id, title, event_id").eq("id", quorum_id).eq("event_id", event_id).maybe_single().execute()
+    if not result or not result.data:
         raise HTTPException(
             status_code=404,
             detail="Quorum not found or does not belong to this event",
@@ -1289,6 +1278,29 @@ async def seed_documents(event_id: str, quorum_id: str):
             if doc["title"] not in skipped
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# PATCH /quorums/{quorum_id}/autonomy
+# ---------------------------------------------------------------------------
+@router.patch("/quorums/{quorum_id}/autonomy")
+async def update_autonomy(quorum_id: str, body: dict):
+    """Update autonomy_level for a quorum (architect control)."""
+    autonomy_level = body.get("autonomy_level", 0.0)
+    if not 0.0 <= autonomy_level <= 1.0:
+        raise HTTPException(status_code=422, detail="autonomy_level must be 0.0-1.0")
+
+    db = get_supabase()
+    db.table("quorums").update({"autonomy_level": autonomy_level}).eq("id", quorum_id).execute()
+
+    # Start or stop the autonomy loop
+    from autonomy_loop import start_autonomy_loop, stop_autonomy_loop
+    if autonomy_level > 0:
+        await start_autonomy_loop(quorum_id, autonomy_level)
+    else:
+        await stop_autonomy_loop(quorum_id)
+
+    return {"quorum_id": quorum_id, "autonomy_level": autonomy_level}
 
 
 # ---------------------------------------------------------------------------

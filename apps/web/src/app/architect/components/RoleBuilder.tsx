@@ -52,7 +52,7 @@ export function RoleBuilder() {
 
   return (
     <div>
-      <h4 className="text-sm font-medium text-gray-700 mb-2">Roles</h4>
+      <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">Roles</h4>
 
       <div className="flex gap-2 mb-4">
         <input
@@ -66,7 +66,7 @@ export function RoleBuilder() {
             }
           }}
           placeholder="Role name (e.g. IRB Representative)"
-          className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+          className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-gray-100"
           aria-label="New role name"
         />
         <button
@@ -90,7 +90,7 @@ export function RoleBuilder() {
             return (
               <div
                 key={role.id}
-                className="px-3 py-2 bg-gray-50 rounded-lg border border-gray-200"
+                className="px-3 py-2 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700"
               >
                 <div className="flex items-center gap-3">
                   <input
@@ -130,9 +130,9 @@ export function RoleBuilder() {
                 {/* Depends-on selector */}
                 {otherRoles.length > 0 && (
                   <div className="mt-2 ml-9">
-                    <label className="text-xs text-gray-500 block mb-1">Depends on:</label>
+                    <label className="text-xs text-gray-600 dark:text-gray-300 block mb-1">Depends on:</label>
                     <select
-                      className="text-xs border border-gray-300 rounded px-2 py-1"
+                      className="text-xs border border-gray-300 dark:border-gray-600 rounded px-2 py-1 dark:bg-gray-800 dark:text-gray-100"
                       value=""
                       aria-label={`Add dependency for ${role.name}`}
                       onChange={(e) => {

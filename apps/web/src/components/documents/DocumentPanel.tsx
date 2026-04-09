@@ -59,7 +59,7 @@ function DocumentViewer({
               {entries.map(([key]) => (
                 <th
                   key={key}
-                  className="border border-gray-200 px-2 py-1 bg-gray-50 text-left font-semibold text-gray-600"
+                  className="border border-gray-200 dark:border-gray-700 px-2 py-1 bg-gray-50 dark:bg-gray-900 text-left font-semibold text-gray-600 dark:text-gray-300"
                 >
                   {key}
                 </th>
@@ -71,7 +71,7 @@ function DocumentViewer({
               {entries.map(([key, val]) => (
                 <td
                   key={key}
-                  className="border border-gray-200 px-2 py-1 text-gray-700"
+                  className="border border-gray-200 dark:border-gray-700 px-2 py-1 text-gray-700 dark:text-gray-200"
                 >
                   {typeof val === "object" ? JSON.stringify(val) : String(val)}
                 </td>
@@ -86,7 +86,7 @@ function DocumentViewer({
   if (document.format === "markdown") {
     return (
       <pre
-        className="text-xs text-gray-700 whitespace-pre-wrap font-mono bg-gray-50 rounded p-3"
+        className="text-xs text-gray-700 dark:text-gray-200 whitespace-pre-wrap font-mono bg-gray-50 dark:bg-gray-900 rounded p-3"
         data-testid="doc-markdown-viewer"
       >
         {typeof document.content.text === "string"
@@ -99,7 +99,7 @@ function DocumentViewer({
   // json / yaml — render as formatted JSON
   return (
     <pre
-      className="text-xs text-gray-700 overflow-x-auto font-mono bg-gray-50 rounded p-3"
+      className="text-xs text-gray-700 dark:text-gray-200 overflow-x-auto font-mono bg-gray-50 dark:bg-gray-900 rounded p-3"
       data-testid="doc-json-viewer"
     >
       {JSON.stringify(document.content, null, 2)}
@@ -158,7 +158,7 @@ export function DocumentPanel({
   if (documents.length === 0) {
     return (
       <div
-        className="flex flex-col items-center justify-center py-12 text-gray-400"
+        className="flex flex-col items-center justify-center py-12 text-gray-500 dark:text-gray-400"
         data-testid="document-panel-empty"
       >
         <svg
@@ -193,14 +193,14 @@ export function DocumentPanel({
         return (
           <div
             key={doc.id}
-            className="rounded-xl border border-gray-200 overflow-hidden"
+            className="rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden"
             data-testid={`doc-card-${doc.id}`}
           >
             {/* Card header — always visible */}
             <button
               type="button"
               onClick={() => toggleDoc(doc.id)}
-              className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 transition-colors text-left"
+              className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors text-left"
               data-testid={`doc-expand-${doc.id}`}
             >
               <div className="flex-1 min-w-0 mr-3">
@@ -211,11 +211,11 @@ export function DocumentPanel({
                   <StatusBadge status={doc.status} />
                 </div>
                 <div className="flex items-center gap-2 mt-0.5">
-                  <span className="text-xs text-gray-500 uppercase tracking-wide">
+                  <span className="text-xs text-gray-600 dark:text-gray-300 uppercase tracking-wide">
                     {doc.format}
                   </span>
                   <span className="text-xs text-gray-400">·</span>
-                  <span className="text-xs text-gray-500">
+                  <span className="text-xs text-gray-600 dark:text-gray-300">
                     v{doc.version}
                   </span>
                   <span className="text-xs text-gray-400">·</span>
@@ -272,7 +272,7 @@ export function DocumentPanel({
                     <button
                       type="button"
                       onClick={() => toggleChangeLog(doc.id)}
-                      className="flex items-center gap-1.5 text-xs text-gray-500 hover:text-gray-700 transition-colors"
+                      className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
                       data-testid={`doc-changelog-toggle-${doc.id}`}
                     >
                       <svg
@@ -299,7 +299,7 @@ export function DocumentPanel({
                         {/* Change log is fetched externally; here we show what we have
                             in the document itself as metadata. A full implementation would
                             pass DocumentChange[] as a prop. */}
-                        <p className="text-xs text-gray-400 italic">
+                        <p className="text-xs text-gray-500 dark:text-gray-400 italic">
                           v{doc.version} — last updated{" "}
                           {new Date(doc.updated_at).toLocaleString()}
                         </p>

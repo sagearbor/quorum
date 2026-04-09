@@ -42,7 +42,7 @@ export interface AvatarControllerOptions {
   enableMic?: boolean;
   /** Enable webcam vision tracking (default true in browser) */
   enableVision?: boolean;
-  /** Enable webcam emotion detection (default false — callers opt in via prop) */
+  /** Enable webcam emotion detection (default false — callers control via enableEmotionTracking prop) */
   enableEmotion?: boolean;
   /** Latest synthesis text to speak */
   synthesisText?: string;

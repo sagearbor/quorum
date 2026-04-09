@@ -17,11 +17,11 @@ function QuorumCard({
   );
 
   return (
-    <div className="p-4 rounded-xl border-2 border-gray-200 bg-white">
+    <div className="p-4 rounded-xl border-2 border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
       <div className="flex items-start justify-between mb-2">
         <h3 className="font-semibold text-base">{quorum.title}</h3>
       </div>
-      <p className="text-xs text-gray-500 mb-3">{quorum.description}</p>
+      <p className="text-xs text-gray-600 dark:text-gray-300 mb-3">{quorum.description}</p>
 
       <div className="flex items-center gap-4 mb-3">
         <div className="text-center">
@@ -50,7 +50,7 @@ function QuorumCard({
         ))}
       </div>
 
-      <div className="mt-3 flex items-center gap-2 text-xs text-gray-400">
+      <div className="mt-3 flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400">
         <span
           className={`w-2 h-2 rounded-full ${
             quorum.status === "active" ? "bg-green-500" : "bg-blue-400"
@@ -73,6 +73,7 @@ export function LiveEventDashboard() {
       description: cq.description,
       status: cq.status,
       heat_score: cq.heat_score,
+      autonomy_level: cq.autonomy_level ?? 0,
       carousel_mode: cq.carousel_mode,
       dashboard_types: cq.dashboard_types,
       created_at: cq.created_at,
@@ -87,7 +88,7 @@ export function LiveEventDashboard() {
           <h3 className="font-semibold text-lg">
             {eventDraft.name || "Event"} — Dashboard
           </h3>
-          <p className="text-sm text-gray-500">
+          <p className="text-sm text-gray-600 dark:text-gray-300">
             {allQuorums.length} quorum{allQuorums.length !== 1 ? "s" : ""} created
           </p>
         </div>
@@ -102,7 +103,7 @@ export function LiveEventDashboard() {
       </div>
 
       {allQuorums.length === 0 ? (
-        <div className="text-center py-12 text-gray-400">
+        <div className="text-center py-12 text-gray-500 dark:text-gray-400">
           <p className="text-lg mb-2">No quorums yet</p>
           <p className="text-sm">Go back to step 2 to create quorums, or open the event page to see it live.</p>
         </div>

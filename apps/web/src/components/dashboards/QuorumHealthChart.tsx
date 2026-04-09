@@ -119,6 +119,7 @@ export function QuorumHealthChart({
                 color: "#fff",
               }}
               labelStyle={{ color: "rgba(255,255,255,0.5)" }}
+              cursor={{ stroke: "rgba(255,255,255,0.15)", strokeWidth: 1 }}
             />
             <Legend
               wrapperStyle={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}
@@ -146,7 +147,8 @@ export function QuorumHealthChart({
               name="Composite"
               stroke="#60a5fa"
               strokeWidth={2.5}
-              dot={false}
+              dot={{ r: 3, fill: "#60a5fa", strokeWidth: 0 }}
+              activeDot={{ r: 5, fill: "#60a5fa", stroke: "#fff", strokeWidth: 2 }}
               animationDuration={400}
               animationEasing="ease-out"
             />
@@ -161,7 +163,8 @@ export function QuorumHealthChart({
                 stroke={color}
                 strokeWidth={1.2}
                 strokeOpacity={0.6}
-                dot={false}
+                dot={{ r: 2, fill: color, strokeWidth: 0, fillOpacity: 0.6 }}
+                activeDot={{ r: 4, fill: color, stroke: "#fff", strokeWidth: 1.5 }}
                 animationDuration={400}
                 animationEasing="ease-out"
               />

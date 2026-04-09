@@ -42,6 +42,7 @@ export function CreateQuorumForm() {
         })),
         dashboard_types: quorumDraft.dashboard_types,
         carousel_mode: quorumDraft.carousel_mode,
+        autonomy_level: quorumDraft.autonomy_level,
       }),
     });
     if (!res.ok) return;
@@ -56,6 +57,7 @@ export function CreateQuorumForm() {
       heat_score: 0,
       carousel_mode: quorumDraft.carousel_mode,
       dashboard_types: quorumDraft.dashboard_types,
+      autonomy_level: quorumDraft.autonomy_level,
       created_at: new Date().toISOString(),
       roles: quorumDraft.roles.map((r) => ({
         id: `${data.id}-${r.id}`,
@@ -90,7 +92,7 @@ export function CreateQuorumForm() {
         <div>
           <label
             htmlFor="quorum-title"
-            className="block text-sm font-medium text-gray-700 mb-1"
+            className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-1"
           >
             Quorum Title
           </label>
@@ -100,14 +102,14 @@ export function CreateQuorumForm() {
             value={quorumDraft.title}
             onChange={(e) => setQuorumDraft({ title: e.target.value })}
             placeholder="Protocol Amendment Review"
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
             required
           />
         </div>
         <div>
           <label
             htmlFor="quorum-description"
-            className="block text-sm font-medium text-gray-700 mb-1"
+            className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-1"
           >
             Description
           </label>
@@ -117,7 +119,7 @@ export function CreateQuorumForm() {
             onChange={(e) => setQuorumDraft({ description: e.target.value })}
             placeholder="Describe what this quorum will address..."
             rows={3}
-            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
         </div>
       </div>
@@ -132,6 +134,41 @@ export function CreateQuorumForm() {
 
       <div className="border-t border-gray-200 pt-6">
         <DashboardSelector />
+      </div>
+
+      <div className="border-t border-gray-200 pt-6">
+        <label className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-3">
+          Agent Autonomy Level
+        </label>
+        <div className="space-y-2">
+          <div className="flex items-center gap-4">
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.1"
+              value={quorumDraft.autonomy_level}
+              onChange={(e) =>
+                setQuorumDraft({ autonomy_level: parseFloat(e.target.value) })
+              }
+              className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+            />
+            <span className="text-lg font-semibold text-blue-600 w-10 text-right tabular-nums">
+              {quorumDraft.autonomy_level.toFixed(1)}
+            </span>
+          </div>
+          <div className="flex justify-between text-xs text-gray-500">
+            <span>Human Only</span>
+            <span>Human-Led</span>
+            <span>Collaborative</span>
+            <span>Agent-Led</span>
+            <span>Autonomous</span>
+          </div>
+          <p className="text-xs text-gray-400 mt-1">
+            Controls how proactively AI agents communicate via A2A.
+            At 0 agents only respond to humans. At 1.0 agents autonomously solve the problem.
+          </p>
+        </div>
       </div>
 
       <div className="flex gap-3">

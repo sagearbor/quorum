@@ -13,3 +13,6 @@ __pycache__/
 .pytest_cache/
 uploads/
 tmp/
+
+# Source screenshots for panel brief — local only; the v4 .html/.docx finals inline images
+docs/panel/screenshots/

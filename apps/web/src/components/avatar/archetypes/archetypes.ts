@@ -207,23 +207,45 @@ export function isDukeBlueArchetype(id: ArchetypeId): boolean {
  *   3. The placeholder entry is always last and is always present, so this
  *      function always returns a non-empty string.
  */
+// Only these high-quality .glb avatars are actually shipped under /avatars/avaturn/.
+// Other archetypes fall through to the .gltf placeholders to avoid 404 spam.
+const AVAILABLE_AVATURN: ReadonlySet<string> = new Set([
+  '/avatars/avaturn/humanities_social.glb',
+  '/avatars/avaturn/neutral.glb',
+]);
+
 export function resolveGlbUrl(
   archetype: ArchetypeDefinition,
   preferredProvider?: GlbProvider,
 ): string {
+  const sourceExists = (s: { provider: GlbProvider; path: string }) => {
+    if (s.provider === 'avaturn') return AVAILABLE_AVATURN.has(s.path);
+    // MakeHuman dir is empty; placeholder files are .gltf, not .glb, so swap.
+    if (s.provider === 'makehuman') return false;
+    return true;
+  };
+
   if (preferredProvider) {
     const preferred = archetype.glbSources.find(
-      (s) => s.provider === preferredProvider,
+      (s) => s.provider === preferredProvider && sourceExists(s),
     );
-    if (preferred) {
-      return preferred.path;
-    }
+    if (preferred) return toPlaceholderGltf(preferred.path);
   }
 
-  // Fall through sources in declaration order; placeholder is guaranteed last.
-  const fallback = archetype.glbSources.find((s) => s.provider !== 'placeholder')
+  // Walk sources in declaration order, skipping ones we know don't ship.
+  const chosen =
+    archetype.glbSources.find((s) => s.provider !== 'placeholder' && sourceExists(s))
     ?? archetype.glbSources.find((s) => s.provider === 'placeholder');
 
-  // Defensive: if glbSources is somehow empty, fall back to legacy glb field.
-  return fallback?.path ?? `/avatars/${archetype.glb}`;
+  if (!chosen) return `/avatars/${archetype.glb}`;
+  return toPlaceholderGltf(chosen.path);
+}
+
+// Placeholder files are generated as .gltf, but archetypes.ts lists them as .glb.
+// Map placeholder paths to their actual on-disk extension.
+function toPlaceholderGltf(path: string): string {
+  if (path.startsWith('/avatars/') && !path.includes('/avaturn/') && !path.includes('/makehuman/')) {
+    return path.replace(/\.glb$/, '.gltf');
+  }
+  return path;
 }

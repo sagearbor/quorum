@@ -1,7 +1,15 @@
 # Duke Tech Expo 2026 — Panel Invitee Tracker
 
 Workshop: "Quorum: Multi-Agent AI Coordination for Real-World Decision-Making"
-Last updated: 2026-04-08
+Last updated: 2026-05-11
+
+## Final Panel (confirmed 2026-05-11)
+
+| Name | Email | Affiliation |
+|------|-------|-------------|
+| Sage Arbor (moderator) | — | — |
+| Daniel Gross (Dan) | daniel.gross@duke.edu | Duke Fuqua Strategy, NBER Fellow |
+| Matthew S Johnson | matthew.johnson@duke.edu | Duke — workers at low end of income distribution |
 
 ## Status Key
 - ✅ YES — confirmed
@@ -13,10 +21,10 @@ Last updated: 2026-04-08
 
 | Name | Email | Affiliation | Status | Notes |
 |------|-------|-------------|--------|-------|
-| Jana Schaich Borg | janaschaichborg@gmail.com | Duke (Neuro/AI Ethics) | ✅ YES | Confirmed in |
+| Jana Schaich Borg | janaschaichborg@gmail.com | Duke (Neuro/AI Ethics) | ❌ REMOVED | Was confirmed; removed from panel 2026-04-17 |
 | Chris Bail, Ph.D. | christopher.bail@duke.edu | Duke Sociology / BTSI | ❌ DECLINED | |
 | Arti Rai | rai@law.duke.edu | Duke Law (IP/AI policy) | 🤔 MAYBE | Depends on time |
-| William Darity Jr., Ph.D. | william.darity@duke.edu | Duke Economics / Sanford | 🔇 NO RESPONSE | Follow-up sent 2026-04-07 |
+| William Darity Jr., Ph.D. | william.darity@duke.edu | Duke Economics / Sanford | ❌ CANCELED | Was on final panel; canceled 2026-05-11 |
 | Anne Washington, Ph.D. | anne.washington@duke.edu | Duke (Data Ethics) | ❌ DECLINED | |
 | David Hoffman | david.hoffman@duke.edu | Duke | 🔇 NO RESPONSE | Follow-up sent 2026-04-07 |
 | Mark McClellan, M.D. | mark.mcclellan@duke.edu | Duke Margolis Health Policy | ❌ DECLINED | Can't make it |

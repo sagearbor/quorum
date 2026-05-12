@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quorum — Overnight Plan (Phase 10, 2026-05-12)</title>
+<style>
+  :root {
+    --bg:        #0c0e13;
+    --panel:     #151821;
+    --panel-2:   #1c2030;
+    --border:    #2a3045;
+    --text:      #e6e9f2;
+    --muted:     #8b93a8;
+    --accent:    #6ea8ff;
+    --ok:        #4ade80;
+    --warn:      #fb923c;
+    --bad:       #f87171;
+    --info:      #c084fc;
+    --line:      #3a4159;
+    --mono:      ui-monospace, "JetBrains Mono", "Fira Code", Menlo, monospace;
+    --sans:      "Inter", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+  body { padding: 32px 24px 80px; max-width: 1400px; margin: 0 auto; line-height: 1.55; }
+
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  h2 { font-size: 18px; margin: 32px 0 12px; letter-spacing: -0.01em; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { font-size: 13px; margin: 18px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  p  { margin: 8px 0; color: var(--text); }
+  code, .mono { font-family: var(--mono); font-size: 12.5px; }
+  code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; color: #d6dbeb; border: 1px solid var(--border); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .meta { color: var(--muted); font-size: 12.5px; font-family: var(--mono); }
+  .meta b { color: var(--text); font-weight: 600; }
+
+  /* Hero summary */
+  .hero {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+    margin: 18px 0 28px;
+  }
+  .stat {
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 14px 16px;
+  }
+  .stat .num { font-size: 28px; font-family: var(--mono); color: var(--text); letter-spacing: -0.02em; }
+  .stat .lbl { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.1em; margin-top: 4px; }
+  .stat.accent { border-color: rgba(110,168,255,0.4); }
+  .stat.warn   { border-color: rgba(251,146,60,0.4); }
+  .stat.ok     { border-color: rgba(74,222,128,0.4); }
+
+  /* Cluster columns */
+  .clusters {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+    margin: 18px 0 8px;
+  }
+  .cluster {
+    background: linear-gradient(180deg, var(--panel) 0%, #11141d 100%);
+    border: 1px solid var(--border); border-radius: 10px; padding: 14px;
+  }
+  .cluster h4 {
+    margin: 0 0 4px; font-size: 11px; letter-spacing: 0.12em;
+    color: var(--muted); text-transform: uppercase; font-family: var(--mono);
+  }
+  .cluster .when {
+    font-family: var(--mono); font-size: 11px; color: var(--accent);
+    margin-bottom: 12px;
+  }
+  .cluster ul { margin: 0; padding-left: 18px; }
+  .cluster li { font-size: 13px; margin-bottom: 5px; line-height: 1.4; }
+  .cluster li code { font-size: 11.5px; }
+
+  /* Item card */
+  .card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 18px;
+    margin: 12px 0;
+    position: relative;
+  }
+  .card .head {
+    display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .card .id {
+    font-family: var(--mono); font-size: 13px;
+    background: var(--panel-2); color: var(--accent);
+    padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border);
+  }
+  .card .title {
+    font-size: 15.5px; font-weight: 600; color: var(--text);
+  }
+  .card .pills { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 3px 9px; border-radius: 999px;
+    font-family: var(--mono); font-size: 10.5px;
+    border: 1px solid var(--border); background: var(--panel-2);
+    color: var(--muted);
+  }
+  .pill.crit { color: var(--bad); border-color: rgba(248,113,113,0.5); background: rgba(248,113,113,0.08); }
+  .pill.high { color: var(--warn); border-color: rgba(251,146,60,0.5); background: rgba(251,146,60,0.08); }
+  .pill.med  { color: var(--info); border-color: rgba(192,132,252,0.5); background: rgba(192,132,252,0.08); }
+  .pill.time { color: #d6dbeb; }
+  .pill.dep  { color: var(--accent); border-color: rgba(110,168,255,0.45); background: rgba(110,168,255,0.06); }
+
+  .card .why {
+    font-size: 13px; color: var(--muted);
+    background: var(--panel-2); border-left: 3px solid var(--border);
+    padding: 8px 12px; border-radius: 4px;
+    margin-bottom: 12px;
+  }
+  .card .why b { color: var(--text); font-weight: 600; }
+
+  .card .grid {
+    display: grid; grid-template-columns: 220px 1fr; gap: 10px 18px;
+    font-size: 13px;
+  }
+  .card .grid > .k {
+    font-family: var(--mono); font-size: 11px;
+    color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;
+    padding-top: 2px;
+  }
+  .card .grid > .v { color: var(--text); }
+  .card .grid ul { margin: 0; padding-left: 18px; }
+  .card .grid li { margin-bottom: 4px; }
+  .card .grid li code { font-size: 11.5px; }
+
+  /* Sticky table of contents */
+  .toc {
+    position: sticky; top: 14px;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 10px; padding: 12px 14px;
+    margin: 18px 0;
+    display: flex; flex-wrap: wrap; gap: 8px;
+    font-family: var(--mono); font-size: 12px;
+  }
+  .toc a {
+    color: var(--text); padding: 3px 8px; border-radius: 4px;
+    background: var(--panel-2); border: 1px solid var(--border);
+  }
+  .toc a:hover { background: rgba(110,168,255,0.1); border-color: rgba(110,168,255,0.4); text-decoration: none; }
+
+  .stop-safe {
+    background: linear-gradient(180deg, rgba(74,222,128,0.08), rgba(74,222,128,0.01));
+    border: 1px solid rgba(74,222,128,0.35);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin: 14px 0;
+  }
+  .stop-safe h3 { color: var(--ok); margin-top: 0; }
+  .stop-safe ul { margin: 6px 0 0; padding-left: 20px; }
+  .stop-safe li { margin-bottom: 6px; }
+
+  .risks {
+    background: linear-gradient(180deg, rgba(251,146,60,0.07), rgba(251,146,60,0.01));
+    border: 1px solid rgba(251,146,60,0.4);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin: 14px 0;
+  }
+  .risks h3 { color: var(--warn); margin-top: 0; }
+  .risks ul { margin: 6px 0 0; padding-left: 20px; }
+  .risks li { margin-bottom: 8px; }
+
+  footer { margin-top: 48px; border-top: 1px solid var(--border); padding-top: 16px; color: var(--muted); font-size: 12px; font-family: var(--mono); }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>Quorum — Overnight Plan</h1>
+<p class="meta">
+  Phase <b>demo_critical_overnight</b> · 10 items · est. <b>10–13h focused work</b><br>
+  Source <code>developer_checklist.yaml</code> on branch <b>feature/pydantic-ai-migration-plan</b><br>
+  Pairs with <a href="./2026-05-12-current-agent-flow.html">2026-05-12-current-agent-flow.html</a> (the audit it answers).
+</p>
+
+<div class="hero">
+  <div class="stat accent">
+    <div class="num">10</div>
+    <div class="lbl">Items</div>
+  </div>
+  <div class="stat warn">
+    <div class="num">5</div>
+    <div class="lbl">Critical · demo-blockers</div>
+  </div>
+  <div class="stat warn">
+    <div class="num">4</div>
+    <div class="lbl">High · stage hazards</div>
+  </div>
+  <div class="stat ok">
+    <div class="num">1</div>
+    <div class="lbl">Medium · graceful gain</div>
+  </div>
+</div>
+
+<h2>Execution clusters (suggested ordering)</h2>
+<div class="clusters">
+  <div class="cluster">
+    <h4>① Quick wins</h4>
+    <div class="when">~1.5h · do first</div>
+    <ul>
+      <li><code>10.7</code> synthesis_snapshots migration</li>
+      <li><code>10.8</code> RLS lockdown</li>
+      <li><code>10.6</code> Never speak the error</li>
+      <li><code>10.9</code> Disable auto-contribute</li>
+    </ul>
+  </div>
+  <div class="cluster">
+    <h4>② Highest leverage</h4>
+    <div class="when">~1.5–2h · isolated</div>
+    <ul>
+      <li><code>10.1</code> Agent definition YAMLs (7 roles)</li>
+    </ul>
+  </div>
+  <div class="cluster">
+    <h4>③ Backend correctness</h4>
+    <div class="when">~2–3h</div>
+    <ul>
+      <li><code>10.2</code> CAS pending→processing race fix</li>
+      <li><code>10.3</code> A2A HTTP wire (httpx POST + retries)</li>
+    </ul>
+  </div>
+  <div class="cluster">
+    <h4>④ The QR / mobile flow</h4>
+    <div class="when">~5–6h · biggest chunk</div>
+    <ul>
+      <li><code>10.4</code> Station-paired claim flow + JWT tickets + participants table</li>
+      <li><code>10.5</code> Mobile <code>/agent/&lt;role_id&gt;</code> route</li>
+      <li><code>10.10</code> Heartbeat / presence</li>
+    </ul>
+  </div>
+</div>
+
+<p class="meta">
+  Each cluster is self-contained — if I stop mid-list, the cluster's earlier items still ship value.
+  Cluster ④ is the only one that should be done as a unit (10.4 → 10.5 → 10.10 share a session model).
+</p>
+
+<div class="toc" id="toc">
+  <a href="#i101">10.1</a>
+  <a href="#i102">10.2</a>
+  <a href="#i103">10.3</a>
+  <a href="#i104">10.4</a>
+  <a href="#i105">10.5</a>
+  <a href="#i106">10.6</a>
+  <a href="#i107">10.7</a>
+  <a href="#i108">10.8</a>
+  <a href="#i109">10.9</a>
+  <a href="#i110">10.10</a>
+</div>
+
+<h2>Items in detail</h2>
+
+<!-- 10.1 -->
+<div class="card" id="i101">
+  <div class="head">
+    <span class="id">10.1</span>
+    <span class="title">Write agent definition YAMLs for all demo roles</span>
+    <div class="pills">
+      <span class="pill crit">critical</span>
+      <span class="pill time">~90–120 min</span>
+    </div>
+  </div>
+  <div class="why">
+    <b>Why:</b> <code>apps/api/agents/definitions/</code> is currently empty. The IRB Officer and the Patient Advocate emit nearly identical replies, differing only by name substitution. The whole "distinct AI personas deliberating" demo story is fiction until this lands. <b>Highest leverage fix on the list.</b>
+  </div>
+  <div class="grid">
+    <div class="k">Create</div>
+    <div class="v">
+      <code>apps/api/agents/definitions/medical_pi.yaml</code> · <code>irb_officer.yaml</code> · <code>biostatistician.yaml</code> · <code>patient_advocate.yaml</code> · <code>regulatory_affairs.yaml</code> · <code>ethics_reviewer.yaml</code> · <code>project_manager.yaml</code>
+    </div>
+    <div class="k">Schema</div>
+    <div class="v">
+      <code>name</code>, <code>slug</code>, <code>model</code>, <code>temperature</code>, <code>max_tokens</code>, <code>instructions</code> (300–500 word persona), <code>domain_tags</code> (8–15 tags), <code>authority_rank_hint</code>.
+    </div>
+    <div class="k">Done when</div>
+    <div class="v">
+      <ul>
+        <li>New test <code>tests/test_agent_definitions.py</code> loads every YAML, validates schema, asserts unique slugs and non-empty instructions.</li>
+        <li>Manual check: 3 turns with 3 roles at autonomy 0.5 — assistant messages differ visibly in vocabulary, concerns raised, and recommendation framing.</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- 10.2 -->
+<div class="card" id="i102">
+  <div class="head">
+    <span class="id">10.2</span>
+    <span class="title">Fix autonomy loop double-processing race via CAS pending→processing</span>
+    <div class="pills">
+      <span class="pill crit">critical</span>
+      <span class="pill time">~1h with tests</span>
+    </div>
+  </div>
+  <div class="why">
+    <b>Why:</b> At <code>autonomy_level=1.0</code> the loop tick can drop to 1.5s — well below typical LLM latency. The same <code>agent_requests</code> row gets picked twice → duplicate LLM calls, duplicate insights, duplicate WebSocket broadcasts. Visible on stage as repeated agent messages.
+  </div>
+  <div class="grid">
+    <div class="k">Edit</div>
+    <div class="v"><code>apps/api/autonomy_loop.py:138-151</code> · <code>apps/api/agent_engine.py:372-380</code></div>
+    <div class="k">Change</div>
+    <div class="v">
+      Before <code>process_a2a_request()</code>, do an atomic CAS:
+      <code>.update({"status":"processing"}).eq("id", req["id"]).eq("status","pending")</code>.
+      If the response shows 0 rows updated, SKIP — another worker/tick claimed it.
+      Add <code>.eq("version", req["version"])</code> on the final status update inside <code>process_a2a_request</code>.
+    </div>
+    <div class="k">Done when</div>
+    <div class="v">
+      <ul>
+        <li>New test <code>tests/test_autonomy_race.py</code>: two concurrent <code>asyncio.gather</code> ticks against the same pending request; exactly one LLM call observed (mock counter).</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- 10.3 -->
+<div class="card" id="i103">
+  <div class="head">
+    <span class="id">10.3</span>
+    <span class="title">Implement A2A HTTP wire (httpx POST with retries + Supabase fallback)</span>
+    <div class="pills">
+      <span class="pill crit">critical</span>
+      <span class="pill time">~1–2h</span>
+    </div>
+  </div>
+  <div class="why">
+    <b>Why:</b> <code>apps/api/a2a/a2a_client.py:29-44</code> logs and returns <code>{"status":"sent"}</code> without making an HTTP call. Every "A2A dispatched" log line is a lie. Pre-expo we won't run separate per-role HTTP services, so most POSTs will fall back to the Supabase queue — but the implementation must be correct so Phase 11 can register real endpoints later without changing anything else.
+  </div>
+  <div class="grid">
+    <div class="k">Edit</div>
+    <div class="v"><code>apps/api/a2a/a2a_client.py</code></div>
+    <div class="k">Use</div>
+    <div class="v"><code>httpx.AsyncClient</code> · 5s timeout · 3 retries with exponential backoff (0.5s, 1s, 2s).</div>
+    <div class="k">Contract</div>
+    <div class="v">
+      <ul>
+        <li>2xx with JSON → return body.</li>
+        <li>4xx/5xx/timeout/conn-error → log <code>warning</code>, return <code>None</code>.</li>
+        <li>Caller falls through to Supabase <code>agent_requests</code> enqueue (audit every call site).</li>
+      </ul>
+    </div>
+    <div class="k">Done when</div>
+    <div class="v">
+      Tests in <code>tests/test_a2a_client_http.py</code> covering 2xx / 500 / timeout. Startup logs a warning if <code>_agent_registry</code> is empty.
+    </div>
+  </div>
+</div>
+
+<!-- 10.4 -->
+<div class="card" id="i104">
+  <div class="head">
+    <span class="id">10.4</span>
+    <span class="title">Station-paired QR claim flow — participants table + /pair route + rotating JWT</span>
+    <div class="pills">
+      <span class="pill crit">critical</span>
+      <span class="pill time">~3–4h</span>
+      <span class="pill dep">depends: 10.2</span>
+    </div>
+  </div>
+  <div class="why">
+    <b>Why:</b> Today <code>user_token: "anon-local"</code> is hardcoded for every contribution (<code>quorum/[id]/page.tsx:290</code>) and QR codes encode the same station URL phones just open the laptop dashboard. Two attendees scanning the same QR collide on <code>station_id="station-N"</code> and the agent conversation interleaves. <b>This is the #1 visible-failure-on-stage risk.</b>
+  </div>
+  <div class="grid">
+    <div class="k">New migration</div>
+    <div class="v">
+      <code>supabase/migrations/2026XXXX_pairing_and_participants.sql</code> — tables <code>participants</code>, <code>station_sessions</code>, <code>pairing_tickets</code>.
+    </div>
+    <div class="k">New endpoints</div>
+    <div class="v">
+      <ul>
+        <li><code>POST /sessions/station-claim</code> → 201 <code>{station_session_id, user_token_anon, expires_at}</code> (4h TTL)</li>
+        <li><code>POST /sessions/pair-ticket</code> → 201 <code>{ticket_jwt, expires_at}</code> (90s TTL, signed HS256)</li>
+        <li><code>POST /sessions/claim</code> → 201 <code>{device_session_id, participant_id, role_id, role_name}</code> (single-use ticket consumption)</li>
+        <li><code>POST /sessions/heartbeat</code> → 204 (updates <code>participants.last_heartbeat_at</code>; foundation for 10.10)</li>
+      </ul>
+    </div>
+    <div class="k">JWT</div>
+    <div class="v">PyJWT · HS256 · secret <code>QUORUM_JWT_SECRET</code> (32+ chars) · payload <code>{sub, jti, role_id, exp}</code>.</div>
+    <div class="k">Frontend laptop</div>
+    <div class="v">On station page load, call <code>/sessions/station-claim</code>; sessionStorage stores result. Rotate <code>/sessions/pair-ticket</code> every 60s; render the rotating ticket as a QR pointing to <code>https://&lt;host&gt;/pair?ticket=&lt;jwt&gt;</code>.</div>
+    <div class="k">Schema</div>
+    <div class="v">Add <code>participant_id</code> column to <code>station_messages</code> and <code>contributions</code> (nullable; populated on new rows).</div>
+    <div class="k">Done when</div>
+    <div class="v">
+      <code>tests/test_pairing.py</code> covers happy path, ticket expiry, double-consume (409), wrong signature (401), rate limit (max 1 ticket per 5s per station_session_id).
+    </div>
+  </div>
+</div>
+
+<!-- 10.5 -->
+<div class="card" id="i105">
+  <div class="head">
+    <span class="id">10.5</span>
+    <span class="title">Mobile <code>/agent/&lt;role_id&gt;</code> route — focused 1:1 chat</span>
+    <div class="pills">
+      <span class="pill crit">critical</span>
+      <span class="pill time">~1.5h</span>
+      <span class="pill dep">depends: 10.4</span>
+    </div>
+  </div>
+  <div class="why">
+    <b>Why:</b> Phones should NOT see the laptop dashboard. The "scan and talk to <i>this</i> agent" mental model needs a focused 1:1 chat UI that fits 375px viewports.
+  </div>
+  <div class="grid">
+    <div class="k">New</div>
+    <div class="v">
+      <code>apps/web/src/app/pair/page.tsx</code> — reads <code>?ticket=&lt;jwt&gt;</code>, POSTs to <code>/sessions/claim</code>, redirects to <code>/agent/&lt;role_id&gt;?ds=&lt;device_session_id&gt;</code>. Clear error states for expired/used/invalid tickets.
+    </div>
+    <div class="k">New</div>
+    <div class="v">
+      <code>apps/web/src/app/agent/[roleId]/page.tsx</code> — mobile-first (<code>max-w-screen-sm</code>). Top: small health-chart widget. Body: <code>ConversationThread</code> filtered to this device's <code>participant_id</code>. Footer: input + single-shot mic. Heartbeat fires every 30s.
+    </div>
+    <div class="k">Done when</div>
+    <div class="v">Playwright spec <code>e2e/pair-flow.spec.ts</code> validates: scan → /pair → /agent works; second phone with same ticket rejected.</div>
+  </div>
+</div>
+
+<!-- 10.6 -->
+<div class="card" id="i106">
+  <div class="head">
+    <span class="id">10.6</span>
+    <span class="title">Never speak the error — graceful avatar fallback</span>
+    <div class="pills">
+      <span class="pill high">high</span>
+      <span class="pill time">~30 min</span>
+    </div>
+  </div>
+  <div class="why">
+    <b>Why:</b> <code>agent_engine.py:216</code> returns the literal string "I encountered an issue processing your message" on LLM exceptions. That string is treated as a normal assistant reply and the avatar SPEAKS IT on the 60-inch projector. Audience reads it as "the AI is broken."
+  </div>
+  <div class="grid">
+    <div class="k">Backend</div>
+    <div class="v">
+      Return a structured sentinel: <code>{"status":"facilitator_paused","reason":"&lt;llm_unavailable|tool_error|other&gt;"}</code>. Route serializes with HTTP 200 + <code>paused: true</code>.
+    </div>
+    <div class="k">Frontend</div>
+    <div class="v">
+      <code>useAvatarController.ts</code> — when <code>reply.paused === true</code>: skip <code>speak()</code>, set IdleScene to a thinking-cycle, show a "Facilitator paused — reconnecting" pill on <code>AvatarPanel</code>. Pill auto-dismisses on next successful reply.
+    </div>
+    <div class="k">Bonus</div>
+    <div class="v">
+      Architect panic key <code>Shift+Cmd+M</code> → <code>POST /events/&lt;slug&gt;/panic {muted: true}</code> mutes all autonomy + TTS across the event.
+    </div>
+  </div>
+</div>
+
+<!-- 10.7 -->
+<div class="card" id="i107">
+  <div class="head">
+    <span class="id">10.7</span>
+    <span class="title">Add missing <code>synthesis_snapshots</code> migration</span>
+    <div class="pills">
+      <span class="pill high">high</span>
+      <span class="pill time">~15 min</span>
+    </div>
+  </div>
+  <div class="why">
+    <b>Why:</b> <code>coordination/supabase_backend.py:64</code> inserts into a table that doesn't exist in any migration. Local SQLite stubs it; real Supabase crashes the moment any synthesis path runs.
+  </div>
+  <div class="grid">
+    <div class="k">New</div>
+    <div class="v">
+      <code>supabase/migrations/2026XXXX_synthesis_snapshots.sql</code> — table with <code>quorum_id</code>, <code>tier</code>, <code>content jsonb</code>, <code>contribution_ids uuid[]</code>, <code>token_cost</code>, <code>model</code>, <code>version</code>, <code>created_at</code>. Index on <code>(quorum_id, created_at DESC)</code>.
+    </div>
+    <div class="k">Done when</div>
+    <div class="v">Verify columns match what <code>supabase_backend.store_synthesis</code> inserts; adjust either side on drift.</div>
+  </div>
+</div>
+
+<!-- 10.8 -->
+<div class="card" id="i108">
+  <div class="head">
+    <span class="id">10.8</span>
+    <span class="title">RLS lockdown — read-open, write-service-role-only</span>
+    <div class="pills">
+      <span class="pill high">high</span>
+      <span class="pill time">~30 min</span>
+    </div>
+  </div>
+  <div class="why">
+    <b>Why:</b> All seven agent tables have <code>FOR ALL USING (true)</code>. Anyone reading the Supabase URL from devtools (visible on every frontend request) can write arbitrary rows during the demo.
+  </div>
+  <div class="grid">
+    <div class="k">New migration</div>
+    <div class="v">
+      For each of <code>agent_configs</code>, <code>station_messages</code>, <code>agent_documents</code>, <code>document_changes</code>, <code>agent_insights</code>, <code>agent_requests</code>, <code>oscillation_events</code>:
+      <ul>
+        <li><code>FOR SELECT USING (true)</code></li>
+        <li><code>FOR INSERT/UPDATE/DELETE</code> gated on <code>auth.role() = 'service_role'</code></li>
+      </ul>
+    </div>
+    <div class="k">Audit</div>
+    <div class="v">
+      Grep <code>apps/web/src/</code> for <code>.insert/.update/.delete</code> against agent_* and <code>station_messages</code>. Any direct write must be routed through FastAPI service role.
+    </div>
+    <div class="k">Done when</div>
+    <div class="v">
+      <code>tests/test_rls_lockdown.py</code> — anon-key client attempts insert into <code>station_messages</code>, asserts 403.
+    </div>
+  </div>
+</div>
+
+<!-- 10.9 -->
+<div class="card" id="i109">
+  <div class="head">
+    <span class="id">10.9</span>
+    <span class="title">Disable / LLM-synthesize the auto-contribute concatenation</span>
+    <div class="pills">
+      <span class="pill high">high</span>
+      <span class="pill time">~10 min (off) / ~40 min (synthesize)</span>
+    </div>
+  </div>
+  <div class="why">
+    <b>Why:</b> At <code>autonomy_level &gt;= 0.7</code>, agents auto-submit contributions by string-joining their last 3 assistant messages. Fragment salad: "The eGFR threshold should be 45. [...] Further review needed." That feeds the Tier 3 artifact synthesis and the final demo artifact reads poorly.
+  </div>
+  <div class="grid">
+    <div class="k">Edit</div>
+    <div class="v"><code>apps/api/autonomy_loop.py:326-345</code></div>
+    <div class="k">Add env var</div>
+    <div class="v">
+      <code>AUTONOMY_AUTO_CONTRIBUTE_MODE</code> · <code>off</code> (default · expo) · <code>concat</code> (legacy) · <code>synthesize</code> (pipe through <code>complete()</code> with prompt "Combine these N reflections from &lt;role&gt; into one cohesive contribution.")
+    </div>
+    <div class="k">Done when</div>
+    <div class="v">
+      Documented in <code>docs/CONTRACT.md</code>. Tests cover all three modes.
+    </div>
+  </div>
+</div>
+
+<!-- 10.10 -->
+<div class="card" id="i110">
+  <div class="head">
+    <span class="id">10.10</span>
+    <span class="title">Heartbeat / presence — detect walked-away attendees</span>
+    <div class="pills">
+      <span class="pill med">medium</span>
+      <span class="pill time">~1h</span>
+      <span class="pill dep">depends: 10.4</span>
+    </div>
+  </div>
+  <div class="why">
+    <b>Why:</b> If a station user walks away, the agent currently keeps talking to no one — and at autonomy &gt; 0 the projector keeps generating turns for that empty seat. The foundation (<code>POST /sessions/heartbeat</code>) was already added in 10.4; this item wires the consumer side.
+  </div>
+  <div class="grid">
+    <div class="k">Backend</div>
+    <div class="v">
+      <code>participants_is_active(p)</code> → <code>now() - last_heartbeat_at &lt; 90s</code>.
+      Autonomy loop: when a role has no active participant and no human contribution in the last 5min, agent emits a one-time "I'll wait for &lt;role_name&gt; to return" message, then suspends turns for that role until heartbeat resumes.
+    </div>
+    <div class="k">Frontend</div>
+    <div class="v">
+      <code>ParticipantPresenceDots</code> component — green / yellow (idle &gt;30s) / grey (walked-away &gt;90s). Subscribes to <code>participants</code> via Supabase Realtime.
+    </div>
+    <div class="k">Done when</div>
+    <div class="v">
+      Simulated heartbeat lapse flips role status within 30s on the dashboard.
+    </div>
+  </div>
+</div>
+
+<div class="stop-safe">
+  <h3>What survives if I stop early</h3>
+  <ul>
+    <li><b>After cluster ① (~1.5h):</b> demo is safer — RLS locked down, no avatar-spoken errors, no missing-table crash, no fragment-salad artifacts.</li>
+    <li><b>After cluster ② (~3.5h total):</b> agents have real personas and you can tell them apart on the projector.</li>
+    <li><b>After cluster ③ (~6.5h total):</b> autonomy is honest — no duplicate processing, A2A POSTs actually attempt HTTP.</li>
+    <li><b>After cluster ④ (~12.5h total):</b> the QR-and-phone story is real. Phones get focused 1:1 chats. Walked-away attendees show as grey dots.</li>
+  </ul>
+  <p style="margin: 10px 0 0;">Each item lands its own commit with passing tests, so the branch is always merge-ready. I won't push broken state.</p>
+</div>
+
+<div class="risks">
+  <h3>Things that may pause me overnight (and what I'll do)</h3>
+  <ul>
+    <li><b>Missing env var <code>QUORUM_JWT_SECRET</code> (for 10.4).</b> I'll generate a dev secret, add it to <code>.env.example</code>, and put a TODO at the top of the migration note asking you to rotate it for prod. Won't block.</li>
+    <li><b>Supabase migration tooling needs you to apply.</b> I'll author the migration files (they pair-program with the schema), but if the workflow requires <code>supabase db push</code> with your auth, that step waits for morning. I'll leave a clear "RUN THIS" note in the commit body.</li>
+    <li><b>Persona content for 10.1 — am I making up Medical-PI clinical priors?</b> I'll write reasonable defaults using public clinical-trial guidance (FDA / ICH / Belmont). You can tweak tone/voice in the morning; the schema and routing land regardless.</li>
+    <li><b>WhatsApp / SMS QR fallbacks (out of scope tonight).</b> Phones with no Wi-Fi at the expo can't reach localhost. <code>10.4</code> assumes same-LAN. Cellular-fallback is a different design — flagged but not built.</li>
+    <li><b>Pre-existing test failures.</b> The 5 failures from the autonomy-slider commit will still exist after this work. I won't fix them tonight unless they regress further from my changes.</li>
+  </ul>
+</div>
+
+<h2>What's NOT in tonight's plan</h2>
+<p style="color: var(--muted); font-size: 13px;">
+  All the post-expo work — Pydantic AI migration (Phase 9), A2A 1.0 / MCP / Magentic-One orchestrator (Phase 11), code hygiene (Phase 12) — is documented in <code>developer_checklist.yaml</code> but not part of this overnight session. Tonight is exclusively about making the Duke Tech Expo 2026 demo not embarrass us. The bigger architectural migration is its own multi-day branch.
+</p>
+
+<footer>
+  Generated 2026-05-12 ·
+  Branch <a href="https://github.com/sagearbor/quorum/tree/feature/pydantic-ai-migration-plan">feature/pydantic-ai-migration-plan</a> ·
+  Companion to <a href="./2026-05-12-current-agent-flow.html">current-state audit</a> ·
+  Plan source: <code>developer_checklist.yaml</code> phase <code>demo_critical_overnight</code>
+</footer>
+
+</body>
+</html>

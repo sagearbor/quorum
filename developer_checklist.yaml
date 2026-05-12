@@ -334,6 +334,101 @@ phases:
             station page; works after laptop reconnects to a different network
             without regenerating QR (mDNS path) or with one regeneration (IP path)
 
+  - id: pydantic_migration
+    name: Pydantic AI Migration — Replace Custom LLMProvider, Add Real Agents (Post-Expo)
+    description: >
+      Replace packages/llm/quorum_llm/ custom ABC + adapters with Pydantic AI.
+      Goal: stop maintaining provider adapters, get typed agents + tool calling for free,
+      keep multi-provider support (Azure for Duke / OpenAI for colleagues / Anthropic / Ollama).
+      Adds real agent behavior to tier 2/3 LLM stages and a facilitator agent with tools.
+      Conversation history persists to Supabase (new table) so each role sees evolving context
+      across turns without resending the full chat every call.
+
+    items:
+      - id: "9.1"
+        title: Swap LLMProvider adapters to Pydantic AI
+        tags: [backend, llm, infra]
+        priority: medium
+        acceptance: |
+          - packages/llm/quorum_llm/interface.py LLMProvider ABC kept at surface for
+            backward compatibility; bodies of providers/{azure,openai,anthropic,local}.py
+            re-implemented as thin wrappers around Pydantic AI Agent + model strings
+            (e.g. "azure:gpt-4o", "anthropic:claude-sonnet-4-6", "openai:gpt-4o").
+          - factory.py:get_llm_provider() unchanged at the call-site level.
+          - MockLLMProvider keeps its current behavior (QUORUM_TEST_MODE short-circuit).
+          - Per-provider parameter quirks (max_tokens vs max_completion_tokens,
+            reasoning-model temperature restrictions) handled inside Pydantic AI / shim.
+          - Existing pytest suite in packages/llm/tests/ stays green; no regressions in
+            Tier 1/2/3 call sites.
+          - ARCHITECTURE.md + DECISIONS.md note: why we migrated, why we kept the ABC.
+
+      - id: "9.2"
+        title: Add Supabase conversation-history table + read/write helpers
+        tags: [backend, db, realtime]
+        priority: medium
+        depends_on: ["9.1"]
+        acceptance: |
+          - supabase/migrations/ adds conversations table:
+              id uuid pk, quorum_id uuid fk, role_id uuid fk nullable,
+              agent_kind text (one of: facilitator, tier2_conflict, tier3_synthesis, role_a2a),
+              messages jsonb (Pydantic AI MessageHistory serialized form),
+              token_count int, model text, created_at, updated_at, version int
+          - Optimistic locking on version (CAS) matching the artifacts pattern.
+          - apps/api adds load_history(quorum_id, agent_kind, role_id?) and
+            save_history(...) helpers in apps/api/services/conversation_store.py.
+          - RLS policies: roles can only read their own conversation rows; service role
+            can read all (for tier 3 synthesis).
+          - Frontend dataProvider.ts gains subscribeToConversation(quorum_id, agent_kind)
+            for live transcript views.
+          - Integration test: a tier 2 conflict call loads + saves history, second call
+            sees the prior turn without resending full chat from the caller.
+
+      - id: "9.3"
+        title: Convert Tier 2 and Tier 3 to typed Pydantic AI agents
+        tags: [backend, llm]
+        priority: medium
+        depends_on: ["9.1", "9.2"]
+        acceptance: |
+          - packages/llm/quorum_llm/tier2.py rewritten as a Pydantic AI Agent with:
+              - input: ContributionPair (two contributions to compare)
+              - output: ConflictAssessment (Pydantic model: conflict_score float,
+                conflicting_fields list[str], explanation str, recommendation enum)
+              - structured output validated by Pydantic; no JSON-parsing glue code.
+          - packages/llm/quorum_llm/tier3.py rewritten as a Pydantic AI Agent with:
+              - input: QuorumSnapshot (contributions + roles + health history)
+              - output: ArtifactSynthesis (final structured artifact matching
+                existing artifacts table schema)
+              - message_history loaded from conversation table per 9.2 so subsequent
+                refreshes of the artifact see prior synthesis attempts.
+          - Tier 1 (keyword extraction) stays deterministic Python — not converted.
+          - Cost reporting per call (token in/out) wired to existing tier-cost telemetry.
+          - Backward-compat shim: legacy callers in apps/api still get the old return
+            shape via .dict() conversion. Removed in 9.4 cleanup phase.
+
+      - id: "9.4"
+        title: Facilitator agent prototype with tools
+        tags: [backend, llm, avatar]
+        priority: medium
+        depends_on: ["9.2", "9.3"]
+        acceptance: |
+          - packages/llm/quorum_llm/agents/facilitator.py defines FacilitatorAgent
+            (Pydantic AI) with tools:
+              - summarize_contributions(quorum_id) -> str
+              - flag_conflict(role_a_id, role_b_id, fields list[str]) -> str
+              - request_clarification(role_id, topic str) -> str
+              - get_health_history(quorum_id, window_minutes int) -> list[float]
+          - Tools are real Python functions wrapping existing apps/api endpoints
+            (or direct Supabase queries through service_role) — not stubbed.
+          - System prompt sourced from the resolved archetype (medical / ethics /
+            researcher) so the facilitator voice matches the avatar archetype.
+          - apps/web/src/components/avatar/ wires AvatarPanel to consume facilitator
+            synthesis output via a new subscribeToFacilitator() in dataProvider.ts,
+            replacing the current staticSynthesisText TODO at AvatarPanel.tsx:63-64.
+          - End-to-end test: seed clinical-trial.json, run 3 contributions, verify
+            facilitator calls flag_conflict at least once and TTS speaks the result.
+          - Cost budget: facilitator agent runs ≤ once every 30s per quorum (rate-limited).
+          - Demo script update: docs/AVATAR.md describes the new behavior.
+
   - id: stt_provider
     name: STT Provider Abstraction (Post-Expo)
     description: Pluggable STT backend for future voice pipeline; Deepgram + AssemblyAI options

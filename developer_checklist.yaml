@@ -259,6 +259,368 @@ phases:
           - Takes HOST as argument (default: localhost:3000)
           - README note: print + tape to laptops before doors open
 
+  - id: demo_critical_overnight
+    name: Demo-Critical Overnight Patches — Pre-Expo Stabilization
+    description: >
+      Triage list synthesized from three pessimistic critic agents (industry standards,
+      code review, UX/QR design). Every item here addresses a confirmed bug, stub, or
+      design hole that will cause a visible failure on a 60-inch projector at Duke Tech
+      Expo 2026 or shortly thereafter. Estimated total: 10-13 hours of focused work in
+      one session. Each item is self-contained with explicit file:line targets, acceptance
+      criteria, and a verification step so an autonomous overnight run can stop at any
+      item without leaving broken state on main.
+
+      Source critiques (sub-agent outputs):
+        - 2026-05-12 Industry standards report (A2A v1.0, MCP, Pydantic AI status)
+        - 2026-05-12 Pessimistic code review (20 issues, 5 critical)
+        - 2026-05-12 UX/QR design critique (top-5 demo risks, top-5 ROI fixes)
+
+    items:
+      - id: "10.1"
+        title: Write agent definition YAMLs for all demo roles
+        tags: [backend, llm, demo]
+        priority: critical
+        acceptance: |
+          - apps/api/agents/definitions/ is currently EMPTY → every agent runs on
+            generic auto-generated instructions, making all roles indistinguishable.
+          - Create one YAML per role used in seed/clinical-trial.json plus general
+            demo roles. Minimum set:
+              - medical_pi.yaml          (authority_rank 5, domain: clinical_design)
+              - irb_officer.yaml         (authority_rank 4, domain: ethics, regulatory)
+              - biostatistician.yaml     (authority_rank 3, domain: statistics, power)
+              - patient_advocate.yaml    (authority_rank 2, domain: patient_safety)
+              - regulatory_affairs.yaml  (authority_rank 4, domain: fda, compliance)
+              - ethics_reviewer.yaml     (authority_rank 3, domain: bioethics)
+              - project_manager.yaml     (authority_rank 2, domain: timeline, ops)
+          - Each YAML schema (matches apps/api/agents/__init__.py AgentDefinition):
+              name: str
+              slug: str (file basename)
+              model: str (e.g. "gpt-4o-mini" or "gpt-4o" — read via agent_configs)
+              temperature: float (typically 0.3 for regulatory, 0.6 for advocate)
+              max_tokens: int (1024 default)
+              instructions: str  ← 300-500 word PERSONA + decision style + when to flag
+                                    + when to defer + tag conventions
+              domain_tags: list[str] (8-15 tags for affinity routing)
+              authority_rank_hint: int (informational; DB row is source of truth)
+          - Test: tests/test_agent_definitions.py loads every YAML, validates schema,
+            asserts non-empty instructions, asserts unique slugs, asserts domain_tags
+            non-empty.
+          - Manual verification: run autonomy_loop on seed quorum with 3 roles at
+            autonomy 0.5; assistant messages from each role differ visibly in
+            vocabulary, concerns raised, and recommendation framing.
+          - Highest leverage fix in the list — 90-120 min of writing.
+
+      - id: "10.2"
+        title: Fix autonomy loop double-processing race via CAS pending→processing
+        tags: [backend, concurrency]
+        priority: critical
+        acceptance: |
+          - Bug confirmed: apps/api/autonomy_loop.py:138-151 reads pending A2A
+            requests and calls process_a2a_request() without state transition.
+            At autonomy_level=1.0, interval can drop to 1.5s (jitter), well below
+            typical LLM latency. Same row gets picked twice → duplicate LLM calls,
+            duplicate insights, duplicate WS broadcasts.
+          - Fix: before each process_a2a_request() call, issue a CAS update:
+              db.table("agent_requests")
+                .update({"status": "processing", "claimed_at": _now_iso()})
+                .eq("id", req["id"])
+                .eq("status", "pending")
+                .execute()
+          - Inspect response: if data is None or len(data) == 0, the row was claimed
+            by another worker/tick — SKIP it (do not call process_a2a_request).
+          - Add a second CAS using version column on the final status update inside
+            process_a2a_request (agent_engine.py:372-380): include
+            .eq("version", req["version"]) and increment version on success.
+          - Add a `processing` value to the a2a_status enum if not already present
+            (migration check).
+          - Test: tests/test_autonomy_race.py — simulate two concurrent
+            asyncio.gather(_run_autonomy_round(...), _run_autonomy_round(...)) calls
+            against the same pending request; assert exactly one LLM call observed
+            (via mock LLM call counter).
+
+      - id: "10.3"
+        title: Implement A2A HTTP wire OR consolidate to Supabase queue
+        tags: [backend, a2a]
+        priority: critical
+        acceptance: |
+          - Bug confirmed: apps/api/a2a/a2a_client.py:29-44 — send_message() logs
+            and returns {"status":"sent"} without any HTTP call. Every "A2A
+            dispatched" log line is a lie.
+          - Decision (overnight): implement the HTTP POST. Pre-expo we will not
+            actually run separate per-role HTTP services, so the POST will return
+            no-route in most cases — but the implementation must be correct so when
+            Phase 11 wires real agent endpoints, nothing else changes.
+          - Implementation:
+              - Use httpx.AsyncClient with 5s timeout, 3 retries with exponential
+                backoff (0.5s, 1s, 2s).
+              - Treat 2xx with JSON body as success → return body.
+              - 4xx/5xx, timeout, connection error → log warning, return None.
+              - On None return path, callers (architect_agent, A2ABackend) must
+                fall through to the Supabase agent_requests enqueue (already exists).
+                Verify that fallback runs in every call site.
+          - The process-local _agent_registry dict stays for now (Phase 11 moves
+            it to Supabase agent_endpoints table). Add a startup log warning if
+            registry is empty: "A2A: no agent endpoints registered — all sends
+            will fall back to Supabase queue."
+          - Tests: tests/test_a2a_client_http.py — mock httpx responses for
+            success / 500 / timeout; assert correct fallback behavior.
+
+      - id: "10.4"
+        title: Station-paired QR claim flow (participants table + /pair route)
+        tags: [backend, frontend, auth, demo]
+        priority: critical
+        depends_on: ["10.2"]
+        acceptance: |
+          - Bug confirmed: user_token: "anon-local" hardcoded at
+            apps/web/src/app/event/[slug]/quorum/[id]/page.tsx:290. QR codes
+            encode the same /event/<slug>/quorum/<id>?station=N URL (page.tsx:254).
+            Two attendees scanning the same QR both write under station_id="station-N"
+            and the agent conversation interleaves.
+          - New migration supabase/migrations/2026XXXX_pairing_and_participants.sql:
+              CREATE TABLE participants (
+                id uuid pk default gen_random_uuid(),
+                station_session_id uuid not null,
+                quorum_id uuid not null fk → quorums,
+                role_id uuid not null fk → roles,
+                device_kind text not null check (device_kind in ('laptop','phone')),
+                user_token_anon text not null,   -- random hex, NOT "anon-local"
+                created_at timestamptz default now(),
+                last_heartbeat_at timestamptz default now()
+              );
+              CREATE TABLE station_sessions (
+                id uuid pk default gen_random_uuid(),
+                quorum_id uuid not null fk → quorums,
+                station_label text not null,     -- "station-1" etc
+                user_token_anon text not null,
+                created_at timestamptz default now(),
+                expires_at timestamptz not null  -- created_at + 4 hours
+              );
+              CREATE TABLE pairing_tickets (
+                id uuid pk default gen_random_uuid(),
+                station_session_id uuid not null fk → station_sessions,
+                jwt text not null,
+                expires_at timestamptz not null, -- 90s from creation
+                consumed_at timestamptz,         -- null until single-use redeemed
+                created_at timestamptz default now()
+              );
+          - apps/api/routes.py new endpoints (gated under /sessions/*):
+              - POST /sessions/station-claim {quorum_id, station_label}
+                  → 201 {station_session_id, user_token_anon, expires_at}
+              - POST /sessions/pair-ticket {station_session_id, role_id}
+                  → 201 {ticket_jwt, expires_at}  (TTL 90s, signed HS256)
+                  Frontend polls/refreshes this on a 60s rotation so a photographed
+                  QR cannot be reused later.
+              - POST /sessions/claim {ticket_jwt}
+                  → 201 {device_session_id, participant_id, role_id, role_name}
+                  Validates signature + not-expired + not-consumed; marks consumed;
+                  inserts participants row with device_kind='phone'.
+              - POST /sessions/heartbeat {device_session_id} → 204 (updates
+                participants.last_heartbeat_at)
+          - JWT: use PyJWT (already implied), HS256, secret from env
+            QUORUM_JWT_SECRET (32+ char random); payload contains
+            {sub: station_session_id, jti: ticket_id, role_id, exp}.
+          - Frontend laptop: on station page load, call /sessions/station-claim,
+            store station_session_id in sessionStorage; poll
+            /sessions/pair-ticket every 60s; render the rotating ticket as a
+            QR code linking to https://<host>/pair?ticket=<jwt>.
+          - Frontend /pair route (next item 10.5) handles the exchange.
+          - All future contributions/messages must include participant_id
+            sourced from the device's session (laptop creates a laptop-kind
+            participant on station-claim; phone gets one via /sessions/claim).
+            Add participant_id column to station_messages, contributions (nullable
+            for backward compat; populated on new rows).
+          - Test: tests/test_pairing.py — happy path (claim → ticket → claim);
+            ticket expiry (>90s); double-consume (returns 409); wrong signature
+            (401). Also test rate limit on ticket minting (max 1 per 5s per
+            station_session_id).
+
+      - id: "10.5"
+        title: Mobile /agent/<role_id> route — focused 1:1 chat UI
+        tags: [frontend, demo]
+        priority: critical
+        depends_on: ["10.4"]
+        acceptance: |
+          - New: apps/web/src/app/pair/page.tsx
+              Client component. Reads ?ticket=<jwt> from URL, POSTs to
+              /sessions/claim, on success stores device_session_id in
+              sessionStorage and redirects to /agent/<role_id>?ds=<device_session_id>.
+              Error states: ticket expired, already used, invalid signature,
+              network error. Each shows a clear message + "Ask the station
+              attendant for a new QR" CTA. No retry-loop on error (don't allow
+              hammering).
+          - New: apps/web/src/app/agent/[roleId]/page.tsx
+              Mobile-first layout (max-w-screen-sm, tested at 375px viewport).
+              Structure:
+                [top]     small health-chart widget (HealthSparkline component,
+                          reuse from dashboards/) showing the quorum's current
+                          health score + delta.
+                [body]    ConversationThread.tsx in single-role mode — shows the
+                          history for THIS device's participant_id only, paginated
+                          if > 50 messages. Reuses existing useStationConversation
+                          hook adapted to filter by participant_id.
+                [footer]  Input box with mic button (single-shot, not ambient —
+                          mobile webspeech behavior is too lossy for ambient).
+                          Submit posts to /quorums/<id>/contributions with
+                          participant_id, role_id, station_id (derived from
+                          station_session_id), user_token_anon.
+                          Show "Facilitator is thinking…" indicator while LLM
+                          reply pending.
+              - When session is invalid or expired, redirect to /pair-expired
+                page with "scan a fresh code" message.
+              - Background heartbeat: usePresenceHeartbeat hook fires
+                /sessions/heartbeat every 30s; on 401 from heartbeat, redirect
+                to /pair-expired.
+          - Visual signal: the URL contains the role name (slug), so it's
+            shareable/readable from a phone lock screen — e.g.
+            /agent/medical_pi?ds=abc.
+          - Test: e2e/pair-flow.spec.ts (Playwright) — scan-equivalent flow
+            (POST ticket directly, navigate to /agent route), assert chat works,
+            assert second phone with same ticket gets rejected.
+
+      - id: "10.6"
+        title: Never speak the error — graceful avatar fallback for LLM failures
+        tags: [frontend, backend, avatar, demo]
+        priority: high
+        acceptance: |
+          - Bug confirmed: apps/api/agent_engine.py:216 returns a chat-string
+            error fallback ("I encountered an issue processing your message")
+            on LLM exceptions. This string is treated as a normal assistant
+            message → avatar speaks it on the 60-inch projector. Audience sees
+            "the AI is broken."
+          - Fix backend: return a structured sentinel instead of a string.
+              On exception in _call_llm or process_agent_turn, return
+              {"status": "facilitator_paused", "reason": "<llm_unavailable|tool_error|other>"}
+              The route serializes this with HTTP 200 + {paused: true, reason: "..."}
+              so the client distinguishes intentional pause from a real reply.
+          - Fix frontend: useAvatarController.ts — when reply.paused is true,
+              - DO NOT call provider.speak() or browserSpeakText().
+              - Set IdleScene to a "thinking" emotion + idle animation (use the
+                existing "engaged" state with a gentle head-tilt cycle).
+              - Render a status pill on AvatarPanel: "Facilitator paused —
+                reconnecting" with a small spinner. Pill auto-dismisses after
+                the next successful reply.
+          - Add an Architect-only keyboard shortcut (Shift+Cmd+M) that mutes
+            ALL autonomy loops + TTS across all quorums in the current event,
+            for emergency demo-floor recovery. Endpoint:
+              POST /events/<slug>/panic {muted: true|false} → updates a
+            row in a new event_runtime_flags table (or just a Supabase realtime
+            channel for ephemeral fan-out).
+          - Test: tests/test_agent_engine.py — patch _call_llm to raise
+            RuntimeError; assert process_agent_turn returns
+            {"status": "facilitator_paused"} not a chat string.
+
+      - id: "10.7"
+        title: Add missing synthesis_snapshots migration
+        tags: [backend, db]
+        priority: high
+        acceptance: |
+          - Bug confirmed: apps/api/coordination/supabase_backend.py:64 inserts
+            into a table that has no CREATE TABLE in supabase/migrations/. The
+            SQLite dev client (apps/api/db/sqlite_client.py:61) mocks it so
+            local mode works, but against real Supabase any call to
+            store_synthesis crashes with relation does not exist.
+          - New: supabase/migrations/2026XXXX_synthesis_snapshots.sql
+              CREATE TABLE synthesis_snapshots (
+                id uuid pk default gen_random_uuid(),
+                quorum_id uuid not null fk → quorums on delete cascade,
+                tier text not null check (tier in ('keyword','conflict','synthesis')),
+                content jsonb not null,
+                contribution_ids uuid[] not null,
+                token_cost integer,
+                model text,
+                version integer not null default 1,
+                created_at timestamptz default now()
+              );
+              CREATE INDEX synthesis_snapshots_quorum_idx
+                ON synthesis_snapshots (quorum_id, created_at DESC);
+          - Verify the column names match what supabase_backend.store_synthesis
+            actually inserts; adjust either side if drift.
+
+      - id: "10.8"
+        title: Lock down RLS for the expo — read-open, write-service-role-only
+        tags: [backend, db, security, demo]
+        priority: high
+        acceptance: |
+          - Bug confirmed: supabase/migrations/20260314000002_agent_system.sql:294-300
+            sets RLS on all seven agent tables to FOR ALL USING (true). Anyone
+            who reads the Supabase URL from the frontend devtools (visible on
+            every request) can write arbitrary rows to agent_configs,
+            station_messages, agent_documents, agent_insights, agent_requests,
+            oscillation_events, document_changes during the live demo.
+          - New: supabase/migrations/2026XXXX_agent_rls_lockdown.sql
+              For each of the seven tables:
+                DROP POLICY <existing> ON <table>;
+                CREATE POLICY <table>_select ON <table>
+                  FOR SELECT USING (true);
+                CREATE POLICY <table>_write ON <table>
+                  FOR INSERT WITH CHECK (auth.role() = 'service_role');
+                CREATE POLICY <table>_update ON <table>
+                  FOR UPDATE USING (auth.role() = 'service_role');
+                CREATE POLICY <table>_delete ON <table>
+                  FOR DELETE USING (auth.role() = 'service_role');
+          - Verify backend uses SUPABASE_SERVICE_ROLE_KEY (not anon key) for
+            writes — apps/api/database.py and any direct supabase calls.
+          - Frontend dataProvider.ts must NOT write to these tables directly.
+            Audit: grep for "\.insert\|\.update\|\.delete" against agent_*
+            and station_messages tables in apps/web/src/. Any such write must
+            be routed through a FastAPI endpoint.
+          - Test: tests/test_rls_lockdown.py — create anon-key Supabase client,
+            attempt insert into station_messages, assert 403/PermissionDenied.
+
+      - id: "10.9"
+        title: Disable or LLM-synthesize the auto-contribute concatenation
+        tags: [backend, llm, demo]
+        priority: high
+        acceptance: |
+          - Bug confirmed: apps/api/autonomy_loop.py:326-345 auto-submits
+            contributions at autonomy_level >= 0.7 by string-joining the last
+            3 assistant messages — produces fragment salad like
+            "The eGFR threshold should be 45. [...] Further review needed.
+            [...] I recommend..." which then feeds the Tier 3 artifact
+            synthesis. Artifact reads poorly.
+          - Add env var AUTONOMY_AUTO_CONTRIBUTE_MODE with values:
+              off       — autonomy never auto-submits contributions (default
+                          for expo demo; humans drive contributions)
+              concat    — current behavior (only for legacy parity)
+              synthesize — pass the concatenation through llm_provider.complete()
+                          with prompt: "Combine these N reflections from
+                          <role_name> into one cohesive contribution stating
+                          their position on <quorum.title>. Max 300 words.
+                          Do not include meta-commentary."
+                          Use LLMTier.AGENT_CHAT.
+          - Default to off in production .env templates AND in
+            docs/CONTRACT.md. Document the trade-off in DECISIONS.md
+            (entry: "Why auto-contribute is off by default").
+          - Tests: tests/test_autonomy_auto_contribute.py — verify mode=off
+            does nothing; mode=concat preserves legacy; mode=synthesize calls
+            LLM once with prompt fragment and submits the response.
+
+      - id: "10.10"
+        title: Heartbeat / presence — detect walked-away attendees
+        tags: [backend, frontend, demo]
+        priority: medium
+        depends_on: ["10.4"]
+        acceptance: |
+          - Foundation already added in 10.4 (POST /sessions/heartbeat). This
+            item wires the consumer side.
+          - Backend: add helper participants_is_active(p) returning
+              now() - p.last_heartbeat_at < interval '90 seconds'
+          - autonomy_loop: when generating turns, check active participants
+            for each role; if a role has no active participant and no recent
+            human contribution (last 5m), the agent emits a brief
+            "I'll wait for <role_name> to return" message (one-time, not
+            every tick), then suspends turns for that role until heartbeat
+            resumes.
+          - Frontend dashboard: ParticipantPresenceDots component shows one
+            dot per role with color: green=active, yellow=idle (>30s),
+            grey=walked-away (>90s). Subscribe to participants table via
+            Supabase Realtime.
+          - Test: simulate heartbeat lapse → assert role marked idle, then
+            walked-away, with corresponding dashboard state changes (vitest
+            + msw mocking the realtime channel).
+          - Acceptance threshold: in a 4-station demo, the projector accurately
+            reflects who is present within 30 seconds of someone leaving.
+
   - id: local_realtime
     name: Local-Mode Realtime — QR Multi-Device Demos Without Supabase
     description: >
@@ -428,6 +790,375 @@ phases:
             facilitator calls flag_conflict at least once and TTS speaks the result.
           - Cost budget: facilitator agent runs ≤ once every 30s per quorum (rate-limited).
           - Demo script update: docs/AVATAR.md describes the new behavior.
+
+  - id: agent_standards_migration
+    name: Industry-Standards Agent Migration — A2A 1.0, MCP, Pydantic AI, Blackboard
+    description: >
+      Post-expo migration from custom agent infrastructure (per-role conversation
+      histories, custom A2A queue, Jaccard tag relevance, random speaker election,
+      module-local registries) to industry standards.
+      Strategy per the May 2026 standards report: "Bet on the protocols, treat the
+      framework as replaceable." That means A2A 1.0 (Linux Foundation, donated by
+      Google) and MCP (Linux Foundation, donated by Anthropic) are LOAD-BEARING
+      and worth deep integration. The framework underneath (Pydantic AI today,
+      possibly MAF Python later) is swappable.
+      Phase 9 (pydantic_migration) covers the runtime framework swap. This phase
+      builds the protocols, blackboard architecture, and Magentic-One-style
+      orchestrator on top.
+      Re-evaluate framework choice in 3 months: Pydantic AI .to_a2a() bugs (#2910,
+      #3313) must be resolved before this phase's A2A work is robust.
+
+    items:
+      - id: "11.1"
+        title: Adopt A2A 1.0 SDK as the wire protocol between role-agents
+        tags: [backend, a2a, infra]
+        priority: medium
+        depends_on: ["10.3", "9.1"]
+        acceptance: |
+          - Add a2a-sdk to apps/api/requirements.txt (pin to ~=1.0 with a
+            major-only floor; expect 1.x churn until ~late 2026).
+          - Replace apps/api/a2a/a2a_client.py.send_message() implementation
+            with A2A SDK calls. Keep the function signature identical so callers
+            (architect_agent, A2ABackend, A2AOrchestrator, a2a_server) don't
+            change shape.
+          - Per role, generate an A2A AgentCard exposing:
+              - capabilities: based on agent definition YAML (10.1)
+              - authority_rank: as metadata (custom field)
+              - skills: derived from the role's domain_tags
+              - endpoint: served at /a2a/<role_slug> by a thin FastAPI router
+                (apps/api/a2a/router.py) that wraps process_agent_turn
+          - Agent endpoints registered in a NEW Supabase table
+            agent_endpoints (replaces process-local _agent_registry, see 11.5):
+              id, role_id, url, capabilities jsonb, registered_at, last_seen_at
+          - Supabase agent_requests table remains as durable journal. Every
+            successful A2A send also writes a journal row (idempotent on
+            request_id) so the system survives if the receiving agent is down.
+          - Tests: tests/test_a2a_protocol.py — round-trip: agent A sends task
+            to agent B's endpoint via A2A SDK, agent B's wrapper invokes
+            process_agent_turn, A receives the result. Use a2a-sdk's test
+            harness if available.
+          - Note: re-confirm spec version compatibility before starting. A2A
+            v1.2 may have landed by execution time; the AgentCard format may
+            have shifted. Read https://google.github.io/A2A and the spec repo
+            (a2aproject/A2A) first.
+
+      - id: "11.2"
+        title: Build 4 MCP servers for agent tool surface
+        tags: [backend, mcp, infra]
+        priority: medium
+        depends_on: ["9.1"]
+        acceptance: |
+          - Replace ad-hoc "context injection" (the documents/insights/requests
+            block in conversation.py:122-193) with MCP tool calls the agent
+            actively makes.
+          - Four servers, each a stand-alone module under apps/api/mcp/:
+              1. apps/api/mcp/state_server.py
+                 Tools: read_blackboard(quorum_id), update_blackboard(quorum_id,
+                 patch dict), list_proposals(quorum_id), record_dissent(quorum_id,
+                 proposal_id, dissenting_role_id, reason).
+                 Backed by the new quorum_state table (see 11.7).
+              2. apps/api/mcp/broadcast_server.py
+                 Tools: emit_health_update(quorum_id, score), emit_a2a_activity(
+                 quorum_id, summary), emit_insight_published(quorum_id,
+                 insight_id), emit_facilitator_status(quorum_id, status).
+                 Wraps the existing ws_manager.py broadcast logic; centralizes
+                 WebSocket fan-out so it can be audited.
+              3. apps/api/mcp/authority_server.py
+                 Tools: lookup_role(role_id), list_role_hierarchy(quorum_id),
+                 resolve_conflict(field, role_a_id, role_b_id) -> resolution.
+                 Encapsulates the authority_rank arbitration rules so the logic
+                 is no longer scattered across agent_engine and architect_agent.
+              4. apps/api/mcp/search_server.py
+                 Tools: search_insights(quorum_id, query, top_k),
+                 search_documents(quorum_id, query, top_k),
+                 search_contributions(quorum_id, query, top_k).
+                 Uses pgvector cosine similarity (depends on 11.4). Falls back
+                 to ILIKE substring search if embeddings unavailable.
+          - All 4 servers use the MCP Python SDK
+            (modelcontextprotocol/python-sdk). Run inside the FastAPI process
+            (stdio transport for now; can promote to Streamable HTTP later).
+          - Pydantic AI agents (Phase 9) register these MCP servers as tool
+            sources; the @agent.tool decorator pattern is replaced by MCP
+            server registration.
+          - Tests: per-server pytest module exercising each tool against an
+            in-memory SQLite fixture.
+
+      - id: "11.3"
+        title: Magentic-One style Orchestrator agent — replaces random speaker election
+        tags: [backend, llm, avatar, design]
+        priority: medium
+        depends_on: ["11.1", "11.2", "11.7"]
+        acceptance: |
+          - The most important coordination fix. Today autonomy_loop._run_autonomy_round
+            picks the next speaker via random.choice(active_roles) — that's an RNG,
+            not deliberation.
+          - New: apps/api/agents/orchestrator.py — a Pydantic AI Agent that holds
+            the plan + ledger and dispatches subtasks. System prompt frames it as
+            the "facilitator agent" — and AvatarPanel speaks AS THIS AGENT, not as
+            whichever role last replied. Replaces the staticSynthesisText TODO at
+            apps/web/src/components/avatar/AvatarPanel.tsx:62-64.
+          - Tools (via MCP servers from 11.2):
+              - read_blackboard, update_blackboard, list_proposals (state)
+              - lookup_role, list_role_hierarchy (authority)
+              - dispatch_to_role(role_id, prompt) — sends an A2A task to the role
+                agent (via 11.1) and observes the result
+              - emit_facilitator_status (broadcast)
+          - next_turn() algorithm:
+              1. read_blackboard → get open_questions, proposals, conflicts
+              2. Score each active role:
+                   + role's domain_tags overlap with open_questions
+                   + role mentioned as a blocker on the newest proposal
+                   - turns_since_last_speak (anti-monopoly)
+              3. Pick highest-scoring role; if tied, prefer higher authority_rank
+              4. dispatch_to_role with a planning-aware prompt
+              5. observe_result; update_blackboard with any new proposals/dissents
+              6. emit_facilitator_status with one-sentence narration ("Asking
+                 the biostatistician to validate the sample size assumption...")
+                 — this is what the avatar SPEAKS on the projector.
+          - autonomy_loop._run_autonomy_round replaced with:
+              orchestrator = get_orchestrator(quorum_id)
+              await orchestrator.next_turn()
+          - Test: integration test that seeds clinical-trial.json, runs 5 turns,
+            asserts: no role speaks twice in a row; each turn includes a
+            facilitator_status message; the blackboard accumulates ≥3 proposals.
+
+      - id: "11.4"
+        title: pgvector relevance — fix embedding providers, replace Jaccard with cosine
+        tags: [backend, llm, db]
+        priority: medium
+        depends_on: ["9.1"]
+        acceptance: |
+          - Bug 1: AnthropicProvider.embed() (packages/llm/quorum_llm/providers/
+            anthropic.py:67-84) returns a 256-dim keyword-hash fake vector;
+            schema expects vector(1536). Fix: route embed() to OpenAI (or Voyage
+            AI) endpoint independently of the chat provider; raise
+            NotImplementedError if no embedding provider configured.
+          - Bug 2: AzureOpenAIProvider.embed() (providers/azure.py:273-285) calls
+            embeddings against _deployment_t2 (the GPT-4o-mini chat deployment) —
+            Azure does NOT serve embeddings from chat deployments. Fix: add env
+            var AZURE_OPENAI_EMBEDDING_DEPLOYMENT, a deployment_embed
+            constructor param, and route embed() to it. Document in
+            docs/CONTRACT.md alongside the other Azure env vars.
+          - Background task: on insert into station_messages, agent_insights,
+            and contributions, enqueue an embedding job (asyncio task or Supabase
+            trigger calling a /internal/embed endpoint). Populate the embedding
+            column. Existing rows back-filled by a one-shot script
+            scripts/backfill_embeddings.py.
+          - Replace Jaccard in _load_relevant_insights and _load_relevant_documents
+            (agent_engine.py:430-457) with pgvector cosine query:
+              SELECT * FROM agent_insights
+                WHERE quorum_id = $1
+                  AND embedding IS NOT NULL
+                ORDER BY embedding <=> $2 ASC
+                LIMIT 5;
+            Fall back to Jaccard if no embeddings exist for the quorum.
+          - Tests: embed() returns 1536-dim vector for both providers; cosine
+            query returns insights in correct similarity order.
+
+      - id: "11.5"
+        title: Move all module-level singletons to Supabase tables
+        tags: [backend, infra, reliability]
+        priority: medium
+        acceptance: |
+          - Three process-local singletons identified in the code review:
+              1. autonomy_loop.py:24 — _active_loops: dict[str, asyncio.Task]
+              2. a2a/a2a_client.py:12 — _agent_registry: dict[str, str]
+              3. coordination/factory.py:16 — _backend: CoordinationBackend|None
+          - Each breaks under uvicorn --workers>1, process restart, and
+            horizontal scaling.
+          - Fixes:
+              1. _active_loops → new table autonomy_loop_state
+                   columns: quorum_id pk, status enum(stopped|running|paused),
+                   next_tick_at timestamptz, autonomy_level float, owner_worker_id text,
+                   heartbeat_at timestamptz
+                 A single leader-elected background task per process leases its
+                 owner_worker_id via CAS on heartbeat_at. Stale leases (>60s)
+                 are reclaimable by any worker.
+              2. _agent_registry → agent_endpoints (already defined in 11.1)
+              3. _backend → instantiate per-request via FastAPI Depends() with
+                 module-level @lru_cache(maxsize=1); cache key includes
+                 COORDINATION_BACKEND env var so changes at runtime are visible.
+                 OR delete the singleton — instantiation is cheap.
+          - Tests: tests/test_autonomy_lease.py — two workers race to claim the
+            same quorum's loop; exactly one wins; loser polls and inherits if
+            the winner's heartbeat lapses.
+
+      - id: "11.6"
+        title: Blackboard architecture — quorum_state table replaces implicit context
+        tags: [backend, db, design]
+        priority: medium
+        depends_on: ["11.2"]
+        acceptance: |
+          - Today there is no canonical "what we believe right now" state. Each
+            agent's prompt assembles a context block from documents + insights +
+            requests. Agents can contradict each other freely because there is
+            no shared model.
+          - New: quorum_state table (one row per quorum):
+              quorum_id uuid pk,
+              open_questions jsonb default '[]',  -- [{id, text, posed_by_role_id, tags[]}]
+              proposals jsonb default '[]',       -- [{id, field, content, role_id, supporters[], blockers[], version}]
+              decisions jsonb default '[]',       -- [{field, content, decided_by_role_id, supersedes[], version}]
+              conflicts jsonb default '[]',       -- [{field, proposals[], resolution_pending: bool}]
+              dissents jsonb default '[]',        -- [{decision_id, dissenting_role_id, reason}]
+              version integer default 1,
+              updated_at timestamptz default now()
+          - Updates via update_blackboard MCP tool (11.2) with CAS on version.
+            Conflict → 409 → caller refetches and merges.
+          - agent_engine._build_prompt loads quorum_state and includes a
+            BLACKBOARD section in the context block before insights.
+          - Frontend dashboard widget: render quorum_state.proposals as
+            sticky-note grid with supporter/blocker counts; show dissents as
+            red-flagged badges on the relevant decisions.
+
+      - id: "11.7"
+        title: Authority arbitration with explicit dissent
+        tags: [backend, design]
+        priority: medium
+        depends_on: ["11.6"]
+        acceptance: |
+          - Today nothing enforces authority_rank despite it being the product
+            premise. Two proposals on the same field just both appear in
+            everyone's context block.
+          - Add resolve_conflict() to authority MCP server (11.2):
+              When two proposals conflict on the same field:
+                - Higher authority_rank wins by default.
+                - Lower-rank agent automatically gets a dissent record written
+                  to quorum_state.dissents.
+                - If authority_rank is tied, conflicts.resolution_pending stays
+                  true and the Orchestrator (11.3) routes to the next senior
+                  rank for tie-breaking.
+          - Dissents are surfaced on the projector dashboard with a red badge
+            on the relevant proposal; never hidden.
+          - Tests: integration scenario where IRB (rank 4) and PI (rank 5)
+            propose conflicting values; assert PI wins, IRB dissent recorded.
+            Then test tied authority → escalation path.
+
+      - id: "11.8"
+        title: Consolidate parallel prompt-building implementations
+        tags: [backend, refactor]
+        priority: medium
+        acceptance: |
+          - Drift confirmed: agent_engine._build_prompt (lines 572-645) and
+            quorum_llm.conversation.build_agent_prompt are parallel
+            implementations. agent_engine is the one production calls.
+            conversation.py is tested but DEAD in the hot path.
+            agent_engine has _MAX_HISTORY=10 but never calls summarize_history();
+            conversation has SUMMARIZE_THRESHOLD=15 with summarize_history available.
+          - Fix: agent_engine.py imports build_agent_prompt and
+            summarize_history from quorum_llm.conversation. Delete
+            agent_engine._build_prompt and _build_system_prompt. Adapt the
+            data containers (currently dict, need dataclass) at the call site.
+          - Run the existing conversation.py tests (packages/llm/tests/
+            test_conversation.py) as a regression gate — they were passing
+            against a never-called codepath.
+
+      - id: "11.9"
+        title: agent_configs.temperature and max_tokens — actually use them
+        tags: [backend, llm]
+        priority: medium
+        depends_on: ["11.8"]
+        acceptance: |
+          - Bug confirmed: agent_configs.temperature and max_tokens are stored
+            in the DB and on AgentDefinition dataclass, but _call_llm passes
+            no overrides — relies on the tier's default. The architect can
+            set a role temperature to 0.8 and it does nothing.
+          - Fix: _call_llm signature accepts optional temperature, max_tokens.
+            agent_engine.process_agent_turn pulls these from agent_def (or
+            from agent_configs row override if set) and passes them through.
+          - Pydantic AI agents (from 9.1) take these as ModelSettings.
+          - Tests: per-role temperature override applied — verify LLM provider
+            mock receives the configured value, not the default.
+
+  - id: code_hygiene_postexpo
+    name: Code Hygiene Mop-Up (Post-Expo)
+    description: >
+      Smaller issues found in the May 2026 pessimistic code review. None will
+      cause a visible demo failure, but each is a latent maintenance trap or
+      test-coverage gap that should be cleaned up before the codebase grows
+      further. Suitable for parallel agent work.
+
+    items:
+      - id: "12.1"
+        title: Fix mock Supabase test helpers — .single() vs .maybe_single()
+        tags: [tests, backend]
+        priority: low
+        acceptance: |
+          - apps/api/tests/test_agent_endpoints.py:59-65 mock chain registers
+            .single() but production code uses .maybe_single() throughout
+            agent_engine.py. The mock returns the same object for any method
+            so tests don't catch the semantic difference (single raises on 0
+            rows; maybe_single returns None).
+          - Fix: add maybe_single to the mock; assert tests cover the 0-row
+            branch for process_agent_turn.
+
+      - id: "12.2"
+        title: Consolidate GuidanceRequest model
+        tags: [backend, refactor]
+        priority: low
+        acceptance: |
+          - GuidanceRequest is defined twice with different shapes:
+              models.py:237-239 (lacks quorum_id)
+              a2a/a2a_server.py:35-38 (has quorum_id)
+          - Delete the a2a_server version, import from models.py, add quorum_id
+            to the canonical definition.
+
+      - id: "12.3"
+        title: Remove dead schema fields from Pydantic models
+        tags: [backend, refactor]
+        priority: low
+        acceptance: |
+          - models.CreateEventRequest.require_access_code — no DB column.
+          - models.RoleDefinition.blocked_by — no DB column.
+          - Either delete the fields or add the columns to migration; do not
+            leave them as silent-ignore.
+
+      - id: "12.4"
+        title: Add tests for autonomy loop critical paths
+        tags: [tests, backend]
+        priority: low
+        acceptance: |
+          - Currently zero coverage on _run_autonomy_round, start_autonomy_loop,
+            _maybe_auto_contribute. Add:
+              - happy-path tick at autonomy_level=0.5 with 2 roles
+              - high-autonomy tick (1.0) with auto_contribute=synthesize
+              - race scenario (covered partially by 10.2 but add a regression
+                test here against the final consolidated code)
+              - role with no agent_definition (10.1 should have made this rare)
+
+      - id: "12.5"
+        title: Fix wrong tier in architect_agent.generate_roles
+        tags: [backend, llm]
+        priority: low
+        acceptance: |
+          - architect_agent.py:93-97 calls respond() with LLMTier.CONFLICT.
+            CONFLICT is the GPT-4o-mini tier; respond() is intended for
+            AGENT_RESPOND (GPT-5 via Responses API). Currently degrades to
+            chat completions but the tier label is misleading in logs.
+          - Fix: introduce a dedicated tier (or use AGENT_CHAT) and remove the
+            misleading respond() call when GPT-5 is not configured.
+
+      - id: "12.6"
+        title: Async Supabase or asyncio.to_thread wrapper
+        tags: [backend, performance]
+        priority: low
+        acceptance: |
+          - Supabase Python client is synchronous; called throughout async
+            FastAPI routes. Under heavy concurrent load (multiple high-autonomy
+            quorums), the event loop blocks on DB I/O.
+          - Either migrate to supabase-py AsyncClient or wrap calls with
+            asyncio.to_thread() in hot paths (agent_engine, autonomy_loop).
+            Document the choice in DECISIONS.md.
+
+      - id: "12.7"
+        title: COORDINATION_BACKEND env var — document or remove
+        tags: [backend, docs]
+        priority: low
+        acceptance: |
+          - COORDINATION_BACKEND=a2a routes to A2ABackend which uses the (now
+            implemented per 10.3) A2A client. Document this in
+            docs/CONTRACT.md and add a startup log line listing the active
+            backend. Or remove the toggle entirely if Supabase is the only
+            supported path post-expo.
 
   - id: stt_provider
     name: STT Provider Abstraction (Post-Expo)

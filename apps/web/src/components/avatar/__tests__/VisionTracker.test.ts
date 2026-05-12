@@ -106,6 +106,45 @@ describe("VisionTracker", () => {
     });
   });
 
+  describe("listCameras", () => {
+    it("returns only videoinput devices", async () => {
+      const fakeDevices: MediaDeviceInfo[] = [
+        { deviceId: "cam-1", kind: "videoinput", label: "USB Webcam", groupId: "g1" } as MediaDeviceInfo,
+        { deviceId: "mic-1", kind: "audioinput", label: "Mic", groupId: "g2" } as MediaDeviceInfo,
+        { deviceId: "cam-2", kind: "videoinput", label: "Built-in", groupId: "g3" } as MediaDeviceInfo,
+      ];
+      const original = (globalThis.navigator as Navigator | undefined)?.mediaDevices;
+      Object.defineProperty(globalThis.navigator, "mediaDevices", {
+        value: { enumerateDevices: vi.fn().mockResolvedValue(fakeDevices) },
+        configurable: true,
+      });
+
+      const cameras = await VisionTracker.listCameras();
+      expect(cameras.map((c) => c.deviceId)).toEqual(["cam-1", "cam-2"]);
+
+      Object.defineProperty(globalThis.navigator, "mediaDevices", {
+        value: original,
+        configurable: true,
+      });
+    });
+
+    it("returns [] when mediaDevices is unavailable", async () => {
+      const original = (globalThis.navigator as Navigator | undefined)?.mediaDevices;
+      Object.defineProperty(globalThis.navigator, "mediaDevices", {
+        value: undefined,
+        configurable: true,
+      });
+
+      const cameras = await VisionTracker.listCameras();
+      expect(cameras).toEqual([]);
+
+      Object.defineProperty(globalThis.navigator, "mediaDevices", {
+        value: original,
+        configurable: true,
+      });
+    });
+  });
+
   describe("gaze values", () => {
     it("should produce varying values over time (not constant)", () => {
       const gazeValues: number[] = [];

@@ -13,12 +13,15 @@ export interface VisionTrackerOptions {
   mock?: boolean;
   /** Detection interval in ms (default 100). */
   intervalMs?: number;
+  /** Specific camera deviceId from MediaDeviceInfo. When omitted, falls back to facingMode:"user". */
+  deviceId?: string;
 }
 
 export class VisionTracker {
   private onGaze: GazeCallback;
   private mock: boolean;
   private intervalMs: number;
+  private deviceId?: string;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private detector: any = null;
   private video: HTMLVideoElement | null = null;
@@ -31,6 +34,16 @@ export class VisionTracker {
     this.onGaze = options.onGaze;
     this.mock = options.mock ?? isMockEnv();
     this.intervalMs = options.intervalMs ?? 100;
+    this.deviceId = options.deviceId;
+  }
+
+  /** Enumerate available video input devices. Returns [] when not in a browser. */
+  static async listCameras(): Promise<MediaDeviceInfo[]> {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.enumerateDevices) {
+      return [];
+    }
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices.filter((d) => d.kind === "videoinput");
   }
 
   async start(): Promise<void> {
@@ -121,8 +134,11 @@ export class VisionTracker {
     this.video.style.display = "none";
     document.body.appendChild(this.video);
 
+    const videoConstraints: MediaTrackConstraints = this.deviceId
+      ? { deviceId: { exact: this.deviceId }, width: 320, height: 240 }
+      : { facingMode: "user", width: 320, height: 240 };
     this.stream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: "user", width: 320, height: 240 },
+      video: videoConstraints,
     });
     this.video.srcObject = this.stream;
     await this.video.play();

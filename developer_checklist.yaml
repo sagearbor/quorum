@@ -259,6 +259,81 @@ phases:
           - Takes HOST as argument (default: localhost:3000)
           - README note: print + tape to laptops before doors open
 
+  - id: local_realtime
+    name: Local-Mode Realtime — QR Multi-Device Demos Without Supabase
+    description: >
+      Enable airgapped/no-internet demos where multiple phones scan QR codes and see
+      contributions propagate live across stations in --local mode (SQLite + MockLLM,
+      no Supabase Realtime). Today dataProvider.ts has only two paths: DemoEngine
+      (in-memory, single tab) and Supabase Realtime (.subscribe channels). --local mode
+      has a network-reachable FastAPI but no broadcast layer, so multi-device views
+      don't sync. Also addresses dynamic LAN IPs that break pre-printed QR codes.
+
+    items:
+      - id: "8.1"
+        title: Polling fallback in dataProvider for --local mode
+        tags: [frontend, realtime, infra]
+        priority: medium
+        acceptance: |
+          - apps/web/src/lib/dataProvider.ts gains a third path activated when:
+            - NEXT_PUBLIC_QUORUM_TEST_MODE is not "true" AND
+            - NEXT_PUBLIC_SUPABASE_URL is missing/empty OR
+              NEXT_PUBLIC_REALTIME_MODE=polling is set explicitly
+          - subscribeToHealth, subscribeToContributions, subscribeToArtifact each
+            poll the FastAPI backend on a configurable interval (default 1500ms,
+            override via NEXT_PUBLIC_POLL_INTERVAL_MS)
+          - Polling functions return an unsubscribe() that clears the interval
+          - Diff-aware: only fire callback when payload changes (deep-equal or
+            updated_at/version compare) to avoid re-render storms
+          - Backoff on transport error (2x up to 10s) then resume on success
+          - Vitest tests: mock fetch, verify interval, change detection, cleanup
+          - Manual verification: 3 devices on same LAN see new contributions
+            within ~2s of submission
+
+      - id: "8.2"
+        title: FastAPI WebSocket broadcast endpoint (alternative to polling)
+        tags: [backend, realtime, api]
+        priority: medium
+        depends_on: ["8.1"]
+        acceptance: |
+          - apps/api gains /ws/quorum/{quorum_id} WebSocket endpoint
+          - In-memory connection manager fans out events on:
+            - new contribution (POST /contributions)
+            - health recompute
+            - artifact resolve (POST /quorums/{id}/resolve)
+          - Event envelope: { type, quorum_id, payload, ts }
+          - dataProvider.ts subscribe* functions prefer WebSocket when
+            NEXT_PUBLIC_REALTIME_MODE=ws (or auto-detected via /api/lan-info),
+            fall back to polling (8.1) if WS connect fails
+          - Heartbeat ping every 30s; auto-reconnect with exponential backoff
+          - pytest: connect, publish, receive across 2 clients; disconnect cleanup
+          - Sub-2-second propagation across 3+ devices on same LAN
+
+      - id: "8.3"
+        title: LAN-aware QR generation with dynamic IP handling
+        tags: [backend, frontend, infra, demo]
+        priority: medium
+        acceptance: |
+          - Backend helper apps/api/utils/lan.py: detect primary LAN IPv4
+            (skip loopback/docker/VPN interfaces); expose via GET /api/lan-info
+            returning { lan_ip, hostname, mdns_name, port_web, port_api }
+          - scripts/start.sh --local prints LAN URL banner at startup:
+            "Stations reachable at http://<lan-ip>:3000 — also try http://quorum.local:3000"
+          - mDNS advertisement: Bonjour/Avahi broadcast of quorum.local pointing
+            at LAN IP (use zeroconf python lib; document fallback if blocked)
+          - Server-side QR generation: GET /api/qr?station=N&slug=<event>
+            returns PNG with URL embedding current LAN IP, regenerated per
+            request so dynamic IP changes don't require reprint
+          - UI affordance on /architect and /event/[slug]: "Show QR for station N"
+            button opens modal with scannable QR + plain-text URL fallback
+          - Graceful degradation: if devices are on different subnets / VLANs,
+            show diagnostic ("device on 192.168.1.x, laptop on 10.0.0.x — connect
+            to same WiFi") instead of silent failure
+          - docs/SETUP.md "Airgapped Demo Mode" section with troubleshooting
+          - Manual verification: scan QR from 3+ phones on same LAN, all load
+            station page; works after laptop reconnects to a different network
+            without regenerating QR (mDNS path) or with one regeneration (IP path)
+
   - id: stt_provider
     name: STT Provider Abstraction (Post-Expo)
     description: Pluggable STT backend for future voice pipeline; Deepgram + AssemblyAI options

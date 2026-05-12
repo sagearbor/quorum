@@ -745,8 +745,24 @@ async def architect_generate_roles(event_id: str, body: GenerateRolesRequest):
         raise HTTPException(status_code=500, detail=f"Role generation failed: {type(e).__name__}: {e}")
     return GenerateRolesResponse(
         roles=[r.model_dump() for r in roles],
-        problem_summary=body.problem[:100],
+        problem_summary=_smart_title_from_problem(body.problem),
     )
+
+
+def _smart_title_from_problem(problem: str) -> str:
+    """Default quorum title: first sentence of the problem, or first 100 chars at a word
+    boundary. Avoids the prior `[:100]` which sliced mid-word.
+    """
+    import re
+    text = problem.strip()
+    if not text:
+        return text
+    m = re.match(r"^([^?.!]+[?.!])", text)
+    candidate = m.group(1) if m else text
+    if len(candidate) > 110:
+        cut = candidate[:107].rsplit(" ", 1)[0]
+        candidate = f"{cut}..."
+    return candidate
 
 
 # ---------------------------------------------------------------------------
@@ -770,6 +786,7 @@ async def architect_ai_start(event_id: str, body: AIStartRequest):
         "description": body.problem[:500],
         "status": "open",
         "carousel_mode": "multi-view",
+        "autonomy_level": body.autonomy_level,
     }
     db.table("quorums").insert(quorum_row).execute()
 
@@ -794,6 +811,11 @@ async def architect_ai_start(event_id: str, body: AIStartRequest):
     # Auto-activate if mode is "auto"
     if body.mode == "auto":
         db.table("quorums").update({"status": "active"}).eq("id", quorum_id).execute()
+
+    # Start autonomy loop if autonomy_level > 0 — mirrors the manual create-quorum path
+    if body.autonomy_level > 0:
+        from autonomy_loop import start_autonomy_loop
+        asyncio.create_task(start_autonomy_loop(quorum_id, body.autonomy_level))
 
     share_url = f"/event/{event.data['slug']}/quorum/{quorum_id}"
     return AIStartResponse(quorum_id=quorum_id, share_url=share_url, mode=body.mode)

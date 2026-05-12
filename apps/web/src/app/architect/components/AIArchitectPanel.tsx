@@ -26,6 +26,7 @@ export function AIArchitectPanel() {
   const [mode, setMode] = useState<"auto" | "approved">("approved");
   const [roles, setRoles] = useState<RoleSuggestion[]>([]);
   const [quorumTitle, setQuorumTitle] = useState("");
+  const [autonomyLevel, setAutonomyLevel] = useState(0.5);
   const [loading, setLoading] = useState(false);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -78,6 +79,7 @@ export function AIArchitectPanel() {
             roles,
             mode,
             quorum_title: quorumTitle,
+            autonomy_level: autonomyLevel,
           }),
         }
       );
@@ -287,6 +289,35 @@ export function AIArchitectPanel() {
               placeholder="Title for this quorum"
               className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-800 dark:text-gray-100"
             />
+          </div>
+
+          {/* Agent autonomy — also adjustable in real-time after launch via the
+              "Autonomy" button on the quorum page */}
+          <div>
+            <label
+              htmlFor="ai-autonomy"
+              className="block text-sm font-medium text-gray-900 dark:text-gray-100 mb-1"
+            >
+              Agent Autonomy Level
+            </label>
+            <div className="flex items-center gap-3">
+              <input
+                id="ai-autonomy"
+                type="range"
+                min={0}
+                max={1}
+                step={0.1}
+                value={autonomyLevel}
+                onChange={(e) => setAutonomyLevel(parseFloat(e.target.value))}
+                className="flex-1 accent-blue-600"
+              />
+              <span className="font-mono text-sm tabular-nums w-10 text-right text-gray-900 dark:text-gray-100">
+                {autonomyLevel.toFixed(1)}
+              </span>
+            </div>
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              0 = humans only · 1 = agents drive the quorum continuously. Tweak live on the quorum page once started.
+            </p>
           </div>
 
           {/* Start button */}

@@ -225,6 +225,7 @@ class AIStartRequest(BaseModel):
     roles: list[RoleSuggestionResponse]
     mode: str  # "auto" | "approved"
     quorum_title: str
+    autonomy_level: float = 0.5  # 0..1; default mid so AI-Architect quorums actually run
 
 
 class AIStartResponse(BaseModel):

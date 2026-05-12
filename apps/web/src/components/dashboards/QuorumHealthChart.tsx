@@ -28,7 +28,7 @@ const METRIC_LINES = [
   { key: "consensus_score", color: "#a78bfa", label: "Consensus" },
   { key: "role_coverage_pct", color: "#34d399", label: "Role Coverage" },
   { key: "critical_path_score", color: "#fb923c", label: "Critical Path" },
-  { key: "blocker_score", color: "#f472b6", label: "Blockers" },
+  { key: "blocker_score", color: "#f472b6", label: "Path Clear" },
 ] as const;
 
 function formatTime(ts: number): string {

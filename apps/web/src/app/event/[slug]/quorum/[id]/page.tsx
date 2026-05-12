@@ -144,7 +144,9 @@ export default function QuorumPage() {
 
   // Audio mute — when true, synthesisText is withheld from AvatarPanel so
   // the browser TTS engine does not speak the facilitator reply.
-  const [audioMuted, setAudioMuted] = useState(false);
+  // Audio (TTS + mic) is OFF by default — small expo room with multiple stations
+  // means cross-station audio bleed otherwise. User opts in via the Audio toggle.
+  const [audioMuted, setAudioMuted] = useState(true);
 
   // Webcam availability — only enable emotion tracking when a camera is present.
   const [hasWebcam, setHasWebcam] = useState(false);
@@ -409,7 +411,8 @@ export default function QuorumPage() {
           <AvatarPanel
             quorumId={quorumId}
             showDirectionIndicator
-            enableEmotionTracking={hasWebcam}
+            enableEmotionTracking={hasWebcam && !audioMuted}
+            enableMic={!audioMuted}
             roleName={currentRole?.name}
             staticSynthesisText={audioMuted ? undefined : synthesisText}
           />

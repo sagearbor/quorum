@@ -21,6 +21,8 @@ interface AvatarPanelProps {
   showDirectionIndicator?: boolean;
   /** Enable webcam emotion tracking (default false — only enable on station pages with webcam) */
   enableEmotionTracking?: boolean;
+  /** Enable microphone for stereo gaze (default false — must be user-opted in) */
+  enableMic?: boolean;
   /** For testing: bypass useQuorumLive with a static score */
   staticHealthScore?: number;
   /** For testing: synthesis text to speak */
@@ -33,6 +35,7 @@ export function AvatarPanel({
   quorumId,
   showDirectionIndicator = false,
   enableEmotionTracking = false,
+  enableMic = false,
   staticHealthScore,
   staticSynthesisText,
   roleName,
@@ -65,7 +68,7 @@ export function AvatarPanel({
   const avatarState = useAvatarController({
     healthScore,
     resolved,
-    enableMic: typeof window !== "undefined",
+    enableMic,
     enableEmotion: enableEmotionTracking,
     synthesisText: latestSynthesis,
   });

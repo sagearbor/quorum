@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Quorum — Overnight Plan (Phase 10, 2026-05-12)</title>
+<title>Quorum — Overnight Plan (REVISED, 2026-05-12)</title>
 <style>
   :root {
     --bg:        #0c0e13;
@@ -37,9 +37,50 @@
   .meta { color: var(--muted); font-size: 12.5px; font-family: var(--mono); }
   .meta b { color: var(--text); font-weight: 600; }
 
+  .rev-banner {
+    background: linear-gradient(180deg, rgba(110,168,255,0.12), rgba(110,168,255,0.02));
+    border: 1px solid rgba(110,168,255,0.4);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin: 12px 0 22px;
+    font-size: 13px;
+    color: var(--text);
+  }
+  .rev-banner b { color: var(--accent); }
+
+  /* Q&A answers */
+  .qna { margin: 18px 0 28px; }
+  .q {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin: 12px 0;
+  }
+  .q .qhead {
+    display: flex; align-items: baseline; gap: 10px;
+    margin-bottom: 8px;
+  }
+  .q .qid {
+    font-family: var(--mono); font-size: 12px;
+    background: var(--panel-2); color: var(--accent);
+    padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border);
+  }
+  .q .qtitle { font-weight: 600; color: var(--text); font-size: 14.5px; }
+  .q .qquote {
+    color: var(--muted); font-size: 12.5px; font-style: italic;
+    border-left: 2px solid var(--border); padding-left: 10px; margin: 6px 0 10px;
+  }
+  .q .qans { font-size: 13.5px; color: var(--text); }
+  .q .qans b { color: var(--text); font-weight: 600; }
+  .q.flip { border-color: rgba(74,222,128,0.4); background: linear-gradient(180deg, rgba(74,222,128,0.06), var(--panel)); }
+  .q.flip .qid { color: var(--ok); border-color: rgba(74,222,128,0.4); }
+  .q.confirm { border-color: rgba(192,132,252,0.4); background: linear-gradient(180deg, rgba(192,132,252,0.06), var(--panel)); }
+  .q.confirm .qid { color: var(--info); border-color: rgba(192,132,252,0.4); }
+
   /* Hero summary */
   .hero {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+    display: grid; grid-template-columns: repeat(5, 1fr); gap: 14px;
     margin: 18px 0 28px;
   }
   .stat {
@@ -51,27 +92,91 @@
   .stat.accent { border-color: rgba(110,168,255,0.4); }
   .stat.warn   { border-color: rgba(251,146,60,0.4); }
   .stat.ok     { border-color: rgba(74,222,128,0.4); }
+  .stat.info   { border-color: rgba(192,132,252,0.4); }
 
-  /* Cluster columns */
-  .clusters {
-    display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px;
+  /* Diagram grid (after-state) */
+  .diagram {
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--panel) 0%, #11141d 100%);
+    border-radius: 12px;
+    padding: 22px;
     margin: 18px 0 8px;
+    overflow-x: auto;
   }
-  .cluster {
+  .cols {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 18px;
+    min-width: 1000px;
+  }
+  .col h4 {
+    margin: 0 0 12px;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-family: var(--mono);
+    padding-bottom: 6px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .node {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    position: relative;
+    font-size: 13px;
+  }
+  .node .name { font-family: var(--mono); font-size: 12px; color: #c8cee0; }
+  .node .sub  { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+  .node .file { font-family: var(--mono); font-size: 10.5px; color: var(--accent); display: block; margin-top: 4px; }
+  .node.ok   { border-color: rgba(74,222,128,0.45); background: linear-gradient(180deg, rgba(74,222,128,0.08), var(--panel-2)); }
+  .node.new  { border-color: rgba(110,168,255,0.5); background: linear-gradient(180deg, rgba(110,168,255,0.08), var(--panel-2)); }
+  .node.info { border-color: rgba(192,132,252,0.5); }
+  .node .tag {
+    position: absolute; top: -8px; right: 10px;
+    font-family: var(--mono); font-size: 10px;
+    padding: 2px 6px; border-radius: 4px;
+    background: var(--panel); border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .node.ok  .tag { color: var(--ok);  border-color: rgba(74,222,128,0.45); background: rgba(74,222,128,0.08); }
+  .node.new .tag { color: var(--accent); border-color: rgba(110,168,255,0.5); background: rgba(110,168,255,0.08); }
+  .node.info .tag { color: var(--info); border-color: rgba(192,132,252,0.5); background: rgba(192,132,252,0.08); }
+
+  .arrows {
+    border-top: 1px dashed var(--border);
+    margin-top: 18px;
+    padding-top: 18px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.8;
+  }
+  .arrows b { color: var(--text); font-weight: 600; }
+  .arrows .step { display: flex; gap: 10px; align-items: baseline; }
+  .arrows .step .num { font-family: var(--mono); color: var(--accent); flex: 0 0 28px; text-align: right; padding-right: 6px; }
+
+  /* Tiers + clusters */
+  .tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 18px 0 8px; }
+  .tier {
     background: linear-gradient(180deg, var(--panel) 0%, #11141d 100%);
     border: 1px solid var(--border); border-radius: 10px; padding: 14px;
   }
-  .cluster h4 {
-    margin: 0 0 4px; font-size: 11px; letter-spacing: 0.12em;
-    color: var(--muted); text-transform: uppercase; font-family: var(--mono);
-  }
-  .cluster .when {
-    font-family: var(--mono); font-size: 11px; color: var(--accent);
-    margin-bottom: 12px;
-  }
-  .cluster ul { margin: 0; padding-left: 18px; }
-  .cluster li { font-size: 13px; margin-bottom: 5px; line-height: 1.4; }
-  .cluster li code { font-size: 11.5px; }
+  .tier h4 { margin: 0 0 4px; font-size: 11px; letter-spacing: 0.12em; color: var(--muted); text-transform: uppercase; font-family: var(--mono); }
+  .tier .when { font-family: var(--mono); font-size: 11px; color: var(--accent); margin-bottom: 12px; }
+  .tier ul { margin: 0; padding-left: 18px; }
+  .tier li { font-size: 13px; margin-bottom: 5px; line-height: 1.4; }
+  .tier li code { font-size: 11.5px; }
+  .tier.must    { border-color: rgba(74,222,128,0.5); }
+  .tier.aim     { border-color: rgba(110,168,255,0.45); }
+  .tier.stretch { border-color: rgba(192,132,252,0.45); }
+  .tier.defer   { border-color: rgba(251,146,60,0.4); }
+  .tier.must    h4 { color: var(--ok); }
+  .tier.aim     h4 { color: var(--accent); }
+  .tier.stretch h4 { color: var(--info); }
+  .tier.defer   h4 { color: var(--warn); }
 
   /* Item card */
   .card {
@@ -82,6 +187,8 @@
     margin: 12px 0;
     position: relative;
   }
+  .card.revised { border-color: rgba(74,222,128,0.4); }
+  .card.added   { border-color: rgba(110,168,255,0.4); }
   .card .head {
     display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap;
     margin-bottom: 10px;
@@ -91,9 +198,9 @@
     background: var(--panel-2); color: var(--accent);
     padding: 2px 8px; border-radius: 4px; border: 1px solid var(--border);
   }
-  .card .title {
-    font-size: 15.5px; font-weight: 600; color: var(--text);
-  }
+  .card.revised .id { color: var(--ok); border-color: rgba(74,222,128,0.5); }
+  .card.added   .id { color: var(--accent); border-color: rgba(110,168,255,0.5); }
+  .card .title { font-size: 15.5px; font-weight: 600; color: var(--text); }
   .card .pills { margin-left: auto; display: flex; gap: 6px; flex-wrap: wrap; }
   .pill {
     display: inline-flex; align-items: center; gap: 6px;
@@ -102,11 +209,16 @@
     border: 1px solid var(--border); background: var(--panel-2);
     color: var(--muted);
   }
-  .pill.crit { color: var(--bad); border-color: rgba(248,113,113,0.5); background: rgba(248,113,113,0.08); }
-  .pill.high { color: var(--warn); border-color: rgba(251,146,60,0.5); background: rgba(251,146,60,0.08); }
-  .pill.med  { color: var(--info); border-color: rgba(192,132,252,0.5); background: rgba(192,132,252,0.08); }
-  .pill.time { color: #d6dbeb; }
-  .pill.dep  { color: var(--accent); border-color: rgba(110,168,255,0.45); background: rgba(110,168,255,0.06); }
+  .pill.crit   { color: var(--bad);  border-color: rgba(248,113,113,0.5); background: rgba(248,113,113,0.08); }
+  .pill.high   { color: var(--warn); border-color: rgba(251,146,60,0.5); background: rgba(251,146,60,0.08); }
+  .pill.med    { color: var(--info); border-color: rgba(192,132,252,0.5); background: rgba(192,132,252,0.08); }
+  .pill.time   { color: #d6dbeb; }
+  .pill.dep    { color: var(--accent); border-color: rgba(110,168,255,0.45); background: rgba(110,168,255,0.06); }
+  .pill.rev    { color: var(--ok); border-color: rgba(74,222,128,0.5); background: rgba(74,222,128,0.08); }
+  .pill.added  { color: var(--accent); border-color: rgba(110,168,255,0.5); background: rgba(110,168,255,0.08); }
+  .pill.tier-must    { color: var(--ok); border-color: rgba(74,222,128,0.5); background: rgba(74,222,128,0.08); }
+  .pill.tier-aim     { color: var(--accent); border-color: rgba(110,168,255,0.5); background: rgba(110,168,255,0.08); }
+  .pill.tier-stretch { color: var(--info); border-color: rgba(192,132,252,0.5); background: rgba(192,132,252,0.08); }
 
   .card .why {
     font-size: 13px; color: var(--muted);
@@ -130,7 +242,6 @@
   .card .grid li { margin-bottom: 4px; }
   .card .grid li code { font-size: 11.5px; }
 
-  /* Sticky table of contents */
   .toc {
     position: sticky; top: 14px;
     background: var(--panel); border: 1px solid var(--border);
@@ -138,12 +249,22 @@
     margin: 18px 0;
     display: flex; flex-wrap: wrap; gap: 8px;
     font-family: var(--mono); font-size: 12px;
+    z-index: 5;
   }
   .toc a {
     color: var(--text); padding: 3px 8px; border-radius: 4px;
     background: var(--panel-2); border: 1px solid var(--border);
   }
   .toc a:hover { background: rgba(110,168,255,0.1); border-color: rgba(110,168,255,0.4); text-decoration: none; }
+
+  .scope-honest {
+    background: linear-gradient(180deg, rgba(251,146,60,0.07), rgba(251,146,60,0.01));
+    border: 1px solid rgba(251,146,60,0.4);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin: 14px 0;
+  }
+  .scope-honest h3 { color: var(--warn); margin-top: 0; }
 
   .stop-safe {
     background: linear-gradient(180deg, rgba(74,222,128,0.08), rgba(74,222,128,0.01));
@@ -156,448 +277,814 @@
   .stop-safe ul { margin: 6px 0 0; padding-left: 20px; }
   .stop-safe li { margin-bottom: 6px; }
 
-  .risks {
-    background: linear-gradient(180deg, rgba(251,146,60,0.07), rgba(251,146,60,0.01));
-    border: 1px solid rgba(251,146,60,0.4);
-    border-radius: 10px;
-    padding: 16px 20px;
-    margin: 14px 0;
-  }
-  .risks h3 { color: var(--warn); margin-top: 0; }
-  .risks ul { margin: 6px 0 0; padding-left: 20px; }
-  .risks li { margin-bottom: 8px; }
-
   footer { margin-top: 48px; border-top: 1px solid var(--border); padding-top: 16px; color: var(--muted); font-size: 12px; font-family: var(--mono); }
   footer a { color: var(--accent); }
 </style>
 </head>
 <body>
 
-<h1>Quorum — Overnight Plan</h1>
+<h1>Quorum — Overnight Plan (REVISED)</h1>
 <p class="meta">
-  Phase <b>demo_critical_overnight</b> · 10 items · est. <b>10–13h focused work</b><br>
+  Phase <b>demo_critical_overnight + Phase 9 + Phase 11 (folded)</b> ·
   Source <code>developer_checklist.yaml</code> on branch <b>feature/pydantic-ai-migration-plan</b><br>
-  Pairs with <a href="./2026-05-12-current-agent-flow.html">2026-05-12-current-agent-flow.html</a> (the audit it answers).
+  Pairs with <a href="./2026-05-12-current-agent-flow.html">2026-05-12-current-agent-flow.html</a>.
 </p>
 
-<div class="hero">
-  <div class="stat accent">
-    <div class="num">10</div>
-    <div class="lbl">Items</div>
+<div class="rev-banner">
+  <b>Revision 2026-05-12 (evening)</b> — incorporates your pushback on 10.1, 10.3, 10.4, 10.5
+  and folds in Phase 9 (Pydantic AI) and Phase 11 (A2A 1.0 / MCP / Magentic-One orchestrator).
+  Adds an <b>after-state architecture diagram</b> so you can see what the system looks like once the work lands.
+</div>
+
+<h2>Direct answers to your four questions</h2>
+
+<div class="qna">
+
+  <div class="q flip">
+    <div class="qhead">
+      <span class="qid">10.1</span>
+      <span class="qtitle">Agents on the fly — yes, you are right, my original framing was wrong</span>
+    </div>
+    <div class="qquote">"does the orchestrator create those in real time? i thought this could handle any situation so agents had to be made on the fly, so do we need to fix the creation of agents by architect?"</div>
+    <div class="qans">
+      <b>Confirmed by the code.</b> <code>apps/api/architect_agent.py:63</code> <em>already</em> generates roles
+      dynamically from the problem statement. The <code>roles</code> table gets populated correctly. The bug is that
+      <code>agent_configs</code> (the per-role <code>system_prompt</code>, <code>temperature</code>, <code>domain_tags</code>
+      table) is <b>never written</b> — <code>agent_engine</code> reads it (line 721) but no code ever inserts a row.
+      So every architect-created role falls back to a generic auto-generated system prompt.
+      <br><br>
+      <b>Revised 10.1:</b> when the architect creates each role, also make a follow-up LLM call to author a
+      <em>rich persona</em> for that role (300–500 word system prompt, 8–15 domain tags, recommended temperature)
+      and insert it into <code>agent_configs</code>. Drop the static-YAML fallback entirely.
+      Agents are dynamic, the architect IS the agent factory. See the revised card below.
+    </div>
   </div>
-  <div class="stat warn">
-    <div class="num">5</div>
-    <div class="lbl">Critical · demo-blockers</div>
+
+  <div class="q flip">
+    <div class="qhead">
+      <span class="qid">10.3</span>
+      <span class="qtitle">Real A2A — yes, doable overnight, here is exactly how it works</span>
+    </div>
+    <div class="qquote">"will this make real A2A? doesnt something have to be live somewhere to always get A2A interactions"</div>
+    <div class="qans">
+      <b>The "where do A2A endpoints live" question is the right one.</b> Short answer: <em>our FastAPI server hosts
+      all of them</em>. Each role gets a sub-route on the existing API process — no separate microservices, no Supabase
+      Functions needed for the protocol itself.
+      <br><br>
+      <b>How A2A 1.0 actually works:</b>
+      <ul>
+        <li>Each agent publishes an <code>AgentCard</code> at <code>/.well-known/agent.json</code> describing its
+            name, skills, and endpoint URL.</li>
+        <li>Other agents send tasks via HTTP POST to that endpoint (with optional SSE streaming for long-running tasks).</li>
+        <li>The endpoint is <em>any</em> reachable HTTP server. For Quorum: <code>http://&lt;host&gt;:8000/a2a/agents/&lt;role_id&gt;/...</code>
+            — all hosted by our existing FastAPI process.</li>
+      </ul>
+      <b>What's already in place:</b> the scaffold exists. <code>apps/api/a2a/agent_card.py</code> already builds A2A-style
+      cards, and <code>a2a_server.py</code> already has the <code>/a2a</code> router. The gaps are:
+      (a) replace the bespoke card builder with the official <code>a2a-sdk</code> Python package,
+      (b) add a per-role task endpoint that wraps <code>process_agent_turn</code>,
+      (c) make <code>a2a_client.send_message</code> actually HTTP POST,
+      (d) move the registry from a module-level dict into a Supabase <code>agent_endpoints</code> table (so it survives restart).
+      <br><br>
+      <b>About Supabase hosting:</b> Supabase stores the <em>durable journal</em> of A2A traffic (the existing
+      <code>agent_requests</code> table acts as a write-through log) and the <em>endpoint registry</em>
+      (new <code>agent_endpoints</code> table mapping <code>role_id → URL</code>). Supabase does NOT host the live
+      A2A protocol — that's our FastAPI. If Quorum ever needs to scale beyond one box, the URLs in
+      <code>agent_endpoints</code> point at whatever host the agents run on; A2A is just HTTP.
+      <br><br>
+      <b>The "always live" piece</b> is just "FastAPI is running." If you're demo'ing, the API is up. If A2A wants to
+      send to an agent and FastAPI is down, the request lands in the Supabase journal and gets processed when FastAPI
+      comes back. That's the resilience pattern.
+      <br><br>
+      Tonight I'll do this properly with the <code>a2a-sdk</code> from the Linux Foundation Agentic AI Foundation
+      so you can truthfully say <em>"we're using A2A"</em> at the expo. See revised card 10.3 + new card 11.1 below.
+    </div>
   </div>
-  <div class="stat warn">
-    <div class="num">4</div>
-    <div class="lbl">High · stage hazards</div>
+
+  <div class="q flip">
+    <div class="qhead">
+      <span class="qid">10.4</span>
+      <span class="qtitle">QR codes today + multi-attendee — you are right, the framing was wrong</span>
+    </div>
+    <div class="qquote">"Do QR codes work now? if multiple people opened that and could interact and see each others comments thats fine."</div>
+    <div class="qans">
+      <b>QR codes today:</b> yes, technically they work — they just encode the laptop's station URL
+      (<code>/event/&lt;slug&gt;/quorum/&lt;id&gt;?station=N</code>). A phone scanning loads the same dashboard the laptop
+      shows, which is heavy on a small screen but doesn't break anything.
+      <br><br>
+      <b>"Multi-attendee at one station seeing each other" — that's actually the right model.</b> I overstated this as a
+      bug. The product premise IS "a station is a place where humans walk up, chat with that role-agent, and see each
+      other's contributions in the thread." Two people at the IRB station SHOULD see each other; that's deliberation.
+      <br><br>
+      <b>What IS missing</b> is per-human identity within that shared station — today every contribution writes
+      <code>user_token: "anon-local"</code> hardcoded (<code>quorum/[id]/page.tsx:290</code>), so the system has no
+      idea WHICH human wrote which message. The agent can't say "Sophie raised a concern about timeline; Sarah followed
+      up about IRB"; it just sees a fused stream from "anon-local."
+      <br><br>
+      <b>Revised 10.4 (lighter):</b>
+      <ul>
+        <li>Each QR scan creates a fresh <code>participant_id</code> (just a UUID — no JWT, no token-exchange complexity).
+            Different humans = different participants. The thread is still shared at that station.</li>
+        <li>Each contribution and message persists with <code>participant_id</code> so the agent and dashboard can
+            attribute who said what.</li>
+        <li>Optional: a per-participant display name (auto-assigned like "Visitor 1", "Visitor 2", or self-set in the
+            phone UI) so the projector can show personality.</li>
+        <li>NO laptop↔phone pairing flow (overkill for this product). Just "scan → new participant → join the
+            conversation at that station."</li>
+      </ul>
+      This drops effort from 3–4h to ~1.5h and matches the product better.
+    </div>
   </div>
-  <div class="stat ok">
-    <div class="num">1</div>
-    <div class="lbl">Medium · graceful gain</div>
+
+  <div class="q confirm">
+    <div class="qhead">
+      <span class="qid">10.5</span>
+      <span class="qtitle">Mobile route + audio off — confirmed</span>
+    </div>
+    <div class="qquote">"a phone scanning should see role to interact with. Since its a small loud room probably also default to not speaking or using microphone."</div>
+    <div class="qans">
+      Confirmed. The <code>/agent/&lt;role_id&gt;</code> route ships with:
+      <ul>
+        <li>Speaker <b>off</b> by default (no TTS playback on mobile; visual reply only).</li>
+        <li>Mic <b>off</b> by default (text input only); a single-shot mic button is available but starts disabled.</li>
+        <li>A small toggle in the header lets the participant turn either on if they want.</li>
+        <li>Header shows the role name + a small avatar archetype icon so they know who they're chatting with.</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<h2>What the system looks like AFTER overnight work</h2>
+
+<div class="diagram">
+  <div class="cols">
+
+    <div class="col">
+      <h4>1 · User devices</h4>
+      <div class="node ok">
+        <div class="name">Laptop browser (station)</div>
+        <div class="sub">Same station page; full dashboard. Now each contribution carries a <code>participant_id</code>.</div>
+        <span class="tag">unchanged + attribution</span>
+      </div>
+      <div class="node new">
+        <div class="name">Phone (QR scan)</div>
+        <div class="sub">QR → <code>/pair?qr=&lt;quorum_id&gt;&amp;st=&lt;station&gt;</code> → mints new <code>participant_id</code> → redirect to <code>/agent/&lt;role_id&gt;</code>. Audio + mic OFF by default.</div>
+        <span class="tag">new flow</span>
+      </div>
+      <div class="node ok">
+        <div class="name">Projector (display route)</div>
+        <div class="sub">Adds "presence dots" per role. Avatar now speaks AS the orchestrator (not whichever role last replied). Avatar NEVER speaks LLM error strings.</div>
+        <span class="tag">safer</span>
+      </div>
+    </div>
+
+    <div class="col">
+      <h4>2 · Frontend (Next.js)</h4>
+      <div class="node ok">
+        <div class="name">dataProvider.ts</div>
+        <div class="sub">Subscribes to <code>quorum_state</code> (blackboard), <code>agent_endpoints</code>, <code>participants</code> in addition to existing channels.</div>
+        <span class="tag">extended</span>
+      </div>
+      <div class="node new">
+        <div class="name">/pair route</div>
+        <div class="sub">Lightweight participant minter. POSTs to <code>/sessions/participant</code>, stores result in sessionStorage, redirects.</div>
+        <span class="tag">new</span>
+      </div>
+      <div class="node new">
+        <div class="name">/agent/[roleId] mobile route</div>
+        <div class="sub">375px-first 1:1 chat with the role-agent. Top: small health sparkline. Audio + mic off by default. Heartbeat every 30s.</div>
+        <span class="tag">new</span>
+      </div>
+      <div class="node ok">
+        <div class="name">AvatarPanel + facilitator</div>
+        <div class="sub">Speaks orchestrator narration (e.g. "asking the biostatistician to check sample size..."). Falls back to "thinking" idle on LLM errors with a status pill instead of a spoken error string.</div>
+        <span class="tag">honest</span>
+      </div>
+    </div>
+
+    <div class="col">
+      <h4>3 · API (FastAPI)</h4>
+      <div class="node new">
+        <div class="name">A2A router /a2a/agents/&lt;role_id&gt;</div>
+        <div class="sub">Real A2A 1.0 endpoints per role. <code>GET .well-known/agent.json</code> returns AgentCard. <code>POST tasks/send</code> dispatches into <code>process_agent_turn</code>.</div>
+        <span class="tag">A2A 1.0</span>
+      </div>
+      <div class="node new">
+        <div class="name">Magentic-One Orchestrator</div>
+        <div class="sub">Pydantic AI Agent. Reads blackboard, picks next speaker by relevance + anti-monopoly, dispatches via A2A, observes results, emits one-sentence narration to the avatar. <b>Replaces <code>random.choice</code>.</b></div>
+        <span class="tag">planning</span>
+      </div>
+      <div class="node ok">
+        <div class="name">agent_engine.process_agent_turn</div>
+        <div class="sub">Now reads <code>agent_configs.system_prompt</code> populated by architect (10.1). Returns structured paused-sentinel on errors (not chat-string). CAS pending→processing prevents race (10.2).</div>
+        <span class="tag">honest replies</span>
+      </div>
+      <div class="node new">
+        <div class="name">MCP servers · 4 small</div>
+        <div class="sub"><code>state</code> (blackboard) · <code>broadcast</code> (WS) · <code>authority</code> (rank lookup) · <code>search</code> (pgvector or Jaccard fallback). Agents call these as tools, not via context-injection.</div>
+        <span class="tag">tools</span>
+      </div>
+      <div class="node ok">
+        <div class="name">autonomy_loop (slimmed)</div>
+        <div class="sub">Calls <code>orchestrator.next_turn()</code> instead of <code>random.choice</code>. Auto-contribute disabled by default (env-flag).</div>
+        <span class="tag">deliberation</span>
+      </div>
+    </div>
+
+    <div class="col">
+      <h4>4 · Agent runtime (Pydantic AI)</h4>
+      <div class="node new">
+        <div class="name">Pydantic AI Agent layer</div>
+        <div class="sub">Replaces custom <code>LLMProvider</code> ABC + 5 adapters. Model strings: <code>azure:gpt-4o</code>, <code>anthropic:claude-sonnet-4-6</code>, <code>openai:gpt-4o</code>, <code>local:ollama/...</code>. Mock retained.</div>
+        <span class="tag">framework</span>
+      </div>
+      <div class="node new">
+        <div class="name">Role-Agent (one per role)</div>
+        <div class="sub">Each has typed input (TaskInput) + typed output (Contribution / Proposal). Tools registered via MCP. <code>system_prompt</code> loaded from <code>agent_configs</code> at startup.</div>
+        <span class="tag">typed</span>
+      </div>
+      <div class="node new">
+        <div class="name">MessageHistory persistence</div>
+        <div class="sub">Pydantic AI's <code>message_history</code> serialized to new <code>conversations</code> table; loaded on next turn. Replaces ad-hoc <code>station_messages</code> chunking.</div>
+        <span class="tag">stateful</span>
+      </div>
+      <div class="node ok">
+        <div class="name">Tier 1 deterministic (Python)</div>
+        <div class="sub">Keyword extraction stays as plain code. Not an agent.</div>
+        <span class="tag">unchanged</span>
+      </div>
+    </div>
+
+    <div class="col">
+      <h4>5 · Data (Supabase)</h4>
+      <div class="node new">
+        <div class="name">agent_configs (POPULATED)</div>
+        <div class="sub">Architect now inserts one row per role with rich <code>system_prompt</code> (300–500 words), <code>domain_tags</code>, <code>temperature</code>. Read by Pydantic AI Agent at startup.</div>
+        <span class="tag">filled</span>
+      </div>
+      <div class="node new">
+        <div class="name">agent_endpoints</div>
+        <div class="sub">role_id → A2A URL · last_seen_at · capabilities. Replaces process-local <code>_agent_registry</code> dict.</div>
+        <span class="tag">new table</span>
+      </div>
+      <div class="node new">
+        <div class="name">participants</div>
+        <div class="sub">UUID per scan/visit. quorum_id, role_id (the station they joined), display_name, device_kind, last_heartbeat_at. Attributes every contribution + message.</div>
+        <span class="tag">new table</span>
+      </div>
+      <div class="node new">
+        <div class="name">quorum_state (blackboard)</div>
+        <div class="sub">One row per quorum: open_questions, proposals[], decisions[], conflicts[], dissents[]. Single source of truth for "what we believe now."</div>
+        <span class="tag">new table</span>
+      </div>
+      <div class="node new">
+        <div class="name">conversations</div>
+        <div class="sub">Pydantic AI message_history (jsonb) per (quorum, role, participant). CAS on version.</div>
+        <span class="tag">new table</span>
+      </div>
+      <div class="node ok">
+        <div class="name">station_messages, agent_documents, agent_insights, agent_requests</div>
+        <div class="sub">Still present. RLS locked down — SELECT open, writes service-role-only. <code>agent_requests</code> = A2A durable journal.</div>
+        <span class="tag">locked down</span>
+      </div>
+      <div class="node ok">
+        <div class="name">synthesis_snapshots (FIXED)</div>
+        <div class="sub">Missing migration added (10.7). Real Supabase no longer crashes on the synthesis path.</div>
+        <span class="tag">fixed</span>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="arrows">
+    <h3 style="margin-top: 0; color: var(--muted);">Primary data flow — AFTER overnight</h3>
+    <div class="step"><span class="num">1.</span><span><b>Architect</b> creates an event with N roles. For each role, a follow-up LLM call writes a rich persona into <code>agent_configs.system_prompt</code>. A row is also created in <code>agent_endpoints</code> with the A2A URL <code>http://&lt;host&gt;/a2a/agents/&lt;role_id&gt;</code>.</span></div>
+    <div class="step"><span class="num">2.</span><span><b>Laptop</b> at station N calls <code>POST /sessions/participant</code> → gets a <code>participant_id</code>. Same call mints a QR linking to <code>/pair?qr=&lt;quorum_id&gt;&amp;st=N</code>.</span></div>
+    <div class="step"><span class="num">3.</span><span><b>Phone</b> scans QR → <code>/pair</code> creates a NEW participant (different human, same station) → redirects to <code>/agent/&lt;role_id&gt;</code>. Audio+mic off by default.</span></div>
+    <div class="step"><span class="num">4.</span><span><b>Either device</b> posts a contribution: <code>POST /quorums/&lt;id&gt;/contributions</code> with <code>participant_id</code>, <code>role_id</code>. Routes call <code>process_agent_turn</code> → returns either a structured reply or <code>{paused: true, reason}</code>. Avatar never speaks errors.</span></div>
+    <div class="step"><span class="num">5.</span><span><b>autonomy_loop</b> calls <code>orchestrator.next_turn()</code>. Orchestrator reads blackboard, picks the highest-relevance role, A2A-dispatches a task to <code>http://&lt;host&gt;/a2a/agents/&lt;role_id&gt;/tasks/send</code>. The receiving agent (same FastAPI process) runs its turn via Pydantic AI, returns a structured Contribution or Proposal.</span></div>
+    <div class="step"><span class="num">6.</span><span><b>Orchestrator</b> updates the <code>quorum_state</code> blackboard via the MCP <code>state</code> server. Emits a one-sentence narration via the MCP <code>broadcast</code> server. <b>Avatar speaks the narration.</b></span></div>
+    <div class="step"><span class="num">7.</span><span><b>WebSocket</b> + Supabase Realtime fan out new rows to all connected dashboards. Presence dots reflect <code>participants.last_heartbeat_at</code> (30s heartbeat, 90s idle threshold).</span></div>
   </div>
 </div>
 
-<h2>Execution clusters (suggested ordering)</h2>
-<div class="clusters">
-  <div class="cluster">
-    <h4>① Quick wins</h4>
-    <div class="when">~1.5h · do first</div>
+<h2>Scope — what's realistic overnight</h2>
+
+<div class="scope-honest">
+  <h3>Honest scope statement</h3>
+  <p>Folding Phase 9 + Phase 10 + Phase 11 together is genuinely ambitious. A realistic focused-night is
+    <b>12–16 hours of work</b>. The full combined scope is ~40–60 hours. I'll attack the items below in priority
+    order. Each lands as its own commit with passing tests, so when I stop, the branch is always merge-ready.</p>
+  <p>I won't push broken state. If an item is taking 2× its estimate, I'll either find a smaller win that ships
+    the same product value or descope and leave a note in the commit message.</p>
+  <p style="margin-bottom: 0;"><b>Expected outcome:</b> all four "Must tonight" items land (5–6h), most of "Aim for tonight" lands
+    (another 6–8h), maybe one "Stretch" item. The full Phase 11 will run into a second session.</p>
+</div>
+
+<div class="tiers">
+  <div class="tier must">
+    <h4>① Must tonight</h4>
+    <div class="when">~5–6h · drop everything else if needed</div>
     <ul>
+      <li><code>10.1*</code> Architect populates <code>agent_configs</code> (REVISED)</li>
+      <li><code>10.6</code> Never speak the error</li>
       <li><code>10.7</code> synthesis_snapshots migration</li>
       <li><code>10.8</code> RLS lockdown</li>
-      <li><code>10.6</code> Never speak the error</li>
-      <li><code>10.9</code> Disable auto-contribute</li>
+      <li><code>10.9</code> Disable auto-contribute (off mode)</li>
+      <li><code>10.2</code> CAS pending→processing race</li>
     </ul>
   </div>
-  <div class="cluster">
-    <h4>② Highest leverage</h4>
-    <div class="when">~1.5–2h · isolated</div>
+  <div class="tier aim">
+    <h4>② Aim for tonight</h4>
+    <div class="when">~6–8h</div>
     <ul>
-      <li><code>10.1</code> Agent definition YAMLs (7 roles)</li>
+      <li><code>11.1*</code> Full A2A 1.0 SDK wire (REVISED — replaces old 10.3)</li>
+      <li><code>10.4*</code> participant_id + /pair (REVISED, lighter)</li>
+      <li><code>10.5*</code> Mobile /agent/[roleId], audio off (REVISED)</li>
+      <li><code>9.1</code> Pydantic AI provider swap</li>
     </ul>
   </div>
-  <div class="cluster">
-    <h4>③ Backend correctness</h4>
-    <div class="when">~2–3h</div>
+  <div class="tier stretch">
+    <h4>③ Stretch (one if time)</h4>
+    <div class="when">~3–5h each</div>
     <ul>
-      <li><code>10.2</code> CAS pending→processing race fix</li>
-      <li><code>10.3</code> A2A HTTP wire (httpx POST + retries)</li>
-    </ul>
-  </div>
-  <div class="cluster">
-    <h4>④ The QR / mobile flow</h4>
-    <div class="when">~5–6h · biggest chunk</div>
-    <ul>
-      <li><code>10.4</code> Station-paired claim flow + JWT tickets + participants table</li>
-      <li><code>10.5</code> Mobile <code>/agent/&lt;role_id&gt;</code> route</li>
+      <li><code>11.3</code> Magentic-One Orchestrator (+ replaces facilitator stub)</li>
+      <li><code>9.2</code> conversations table for message_history</li>
+      <li><code>11.6</code> quorum_state blackboard table</li>
       <li><code>10.10</code> Heartbeat / presence</li>
     </ul>
   </div>
+  <div class="tier defer">
+    <h4>④ Defer — multi-day work</h4>
+    <div class="when">post-expo or next session</div>
+    <ul>
+      <li><code>11.2</code> 4 MCP servers (6–8h)</li>
+      <li><code>11.4</code> pgvector relevance (fix Azure + Anthropic embed)</li>
+      <li><code>11.5</code> Singletons → Supabase tables (3–4h)</li>
+      <li><code>11.7</code> Authority arbitration + dissent</li>
+      <li><code>9.3</code> Tier 2/3 to typed agents</li>
+      <li>Phase 12 hygiene mop-up</li>
+    </ul>
+  </div>
 </div>
 
-<p class="meta">
-  Each cluster is self-contained — if I stop mid-list, the cluster's earlier items still ship value.
-  Cluster ④ is the only one that should be done as a unit (10.4 → 10.5 → 10.10 share a session model).
-</p>
-
 <div class="toc" id="toc">
-  <a href="#i101">10.1</a>
+  <a href="#i101r">10.1*</a>
   <a href="#i102">10.2</a>
-  <a href="#i103">10.3</a>
-  <a href="#i104">10.4</a>
-  <a href="#i105">10.5</a>
+  <a href="#i103r">10.3* / 11.1*</a>
+  <a href="#i104r">10.4*</a>
+  <a href="#i105r">10.5*</a>
   <a href="#i106">10.6</a>
   <a href="#i107">10.7</a>
   <a href="#i108">10.8</a>
   <a href="#i109">10.9</a>
   <a href="#i110">10.10</a>
+  <a href="#i91">9.1</a>
+  <a href="#i92">9.2</a>
+  <a href="#i113">11.3</a>
+  <a href="#i116">11.6</a>
 </div>
 
-<h2>Items in detail</h2>
+<h2>Item cards (revised + added)</h2>
 
-<!-- 10.1 -->
-<div class="card" id="i101">
+<!-- 10.1 REVISED -->
+<div class="card revised" id="i101r">
   <div class="head">
-    <span class="id">10.1</span>
-    <span class="title">Write agent definition YAMLs for all demo roles</span>
+    <span class="id">10.1*</span>
+    <span class="title">Architect populates <code>agent_configs</code> with rich personas (REVISED)</span>
     <div class="pills">
+      <span class="pill rev">revised</span>
       <span class="pill crit">critical</span>
-      <span class="pill time">~90–120 min</span>
+      <span class="pill tier-must">must tonight</span>
+      <span class="pill time">~1.5–2h</span>
     </div>
   </div>
   <div class="why">
-    <b>Why:</b> <code>apps/api/agents/definitions/</code> is currently empty. The IRB Officer and the Patient Advocate emit nearly identical replies, differing only by name substitution. The whole "distinct AI personas deliberating" demo story is fiction until this lands. <b>Highest leverage fix on the list.</b>
+    <b>You were right:</b> the architect already generates roles dynamically. The bug is that <code>agent_configs</code>
+    is read but never written. So every role uses a generic fallback prompt. Fix the architect to author personas
+    inline.
   </div>
   <div class="grid">
-    <div class="k">Create</div>
+    <div class="k">Edit</div>
     <div class="v">
-      <code>apps/api/agents/definitions/medical_pi.yaml</code> · <code>irb_officer.yaml</code> · <code>biostatistician.yaml</code> · <code>patient_advocate.yaml</code> · <code>regulatory_affairs.yaml</code> · <code>ethics_reviewer.yaml</code> · <code>project_manager.yaml</code>
+      <code>apps/api/architect_agent.py</code> · add <code>author_persona(role, problem)</code> helper that calls the LLM
+      once per role to produce: 300–500 word system_prompt, 8–15 domain_tags, recommended temperature (0.3 for regulatory,
+      0.6 for advocate). Persona generation runs in parallel for all roles via <code>asyncio.gather</code>.
     </div>
     <div class="k">Schema</div>
     <div class="v">
-      <code>name</code>, <code>slug</code>, <code>model</code>, <code>temperature</code>, <code>max_tokens</code>, <code>instructions</code> (300–500 word persona), <code>domain_tags</code> (8–15 tags), <code>authority_rank_hint</code>.
+      Insert one <code>agent_configs</code> row per role at event creation time. Use existing table. RLS already
+      service-role-only after 10.8.
+    </div>
+    <div class="k">Engine</div>
+    <div class="v">
+      <code>agent_engine._load_agent_definition</code> updated to prefer <code>agent_configs</code> over the empty
+      <code>agents/definitions/</code> directory. Static YAML fallback removed in 12.x mop-up.
     </div>
     <div class="k">Done when</div>
     <div class="v">
-      <ul>
-        <li>New test <code>tests/test_agent_definitions.py</code> loads every YAML, validates schema, asserts unique slugs and non-empty instructions.</li>
-        <li>Manual check: 3 turns with 3 roles at autonomy 0.5 — assistant messages differ visibly in vocabulary, concerns raised, and recommendation framing.</li>
-      </ul>
+      Architect-created event with 4 roles produces 4 distinct personas; running 3 turns each shows visibly different
+      vocabulary, concerns, and recommendations. Test asserts agent_configs row count == role count.
     </div>
   </div>
 </div>
 
-<!-- 10.2 -->
+<!-- 10.2 unchanged -->
 <div class="card" id="i102">
   <div class="head">
     <span class="id">10.2</span>
-    <span class="title">Fix autonomy loop double-processing race via CAS pending→processing</span>
+    <span class="title">CAS pending→processing on agent_requests</span>
     <div class="pills">
       <span class="pill crit">critical</span>
-      <span class="pill time">~1h with tests</span>
+      <span class="pill tier-must">must tonight</span>
+      <span class="pill time">~1h</span>
     </div>
   </div>
   <div class="why">
-    <b>Why:</b> At <code>autonomy_level=1.0</code> the loop tick can drop to 1.5s — well below typical LLM latency. The same <code>agent_requests</code> row gets picked twice → duplicate LLM calls, duplicate insights, duplicate WebSocket broadcasts. Visible on stage as repeated agent messages.
+    Race confirmed at autonomy 1.0 — duplicate LLM calls, duplicate insights. Single CAS update before
+    <code>process_a2a_request</code> closes the window.
   </div>
   <div class="grid">
     <div class="k">Edit</div>
-    <div class="v"><code>apps/api/autonomy_loop.py:138-151</code> · <code>apps/api/agent_engine.py:372-380</code></div>
-    <div class="k">Change</div>
-    <div class="v">
-      Before <code>process_a2a_request()</code>, do an atomic CAS:
-      <code>.update({"status":"processing"}).eq("id", req["id"]).eq("status","pending")</code>.
-      If the response shows 0 rows updated, SKIP — another worker/tick claimed it.
-      Add <code>.eq("version", req["version"])</code> on the final status update inside <code>process_a2a_request</code>.
-    </div>
+    <div class="v"><code>autonomy_loop.py:138-151</code> · <code>agent_engine.py:372-380</code></div>
     <div class="k">Done when</div>
     <div class="v">
-      <ul>
-        <li>New test <code>tests/test_autonomy_race.py</code>: two concurrent <code>asyncio.gather</code> ticks against the same pending request; exactly one LLM call observed (mock counter).</li>
-      </ul>
+      <code>tests/test_autonomy_race.py</code> — two concurrent ticks, exactly one LLM call observed.
     </div>
   </div>
 </div>
 
-<!-- 10.3 -->
-<div class="card" id="i103">
+<!-- 10.3 REVISED → merged with 11.1 -->
+<div class="card revised" id="i103r">
   <div class="head">
-    <span class="id">10.3</span>
-    <span class="title">Implement A2A HTTP wire (httpx POST with retries + Supabase fallback)</span>
+    <span class="id">10.3* / 11.1*</span>
+    <span class="title">Full A2A 1.0 SDK wire — real protocol, real endpoints, real journal (MERGED + REVISED)</span>
     <div class="pills">
+      <span class="pill rev">revised + merged</span>
       <span class="pill crit">critical</span>
-      <span class="pill time">~1–2h</span>
-    </div>
-  </div>
-  <div class="why">
-    <b>Why:</b> <code>apps/api/a2a/a2a_client.py:29-44</code> logs and returns <code>{"status":"sent"}</code> without making an HTTP call. Every "A2A dispatched" log line is a lie. Pre-expo we won't run separate per-role HTTP services, so most POSTs will fall back to the Supabase queue — but the implementation must be correct so Phase 11 can register real endpoints later without changing anything else.
-  </div>
-  <div class="grid">
-    <div class="k">Edit</div>
-    <div class="v"><code>apps/api/a2a/a2a_client.py</code></div>
-    <div class="k">Use</div>
-    <div class="v"><code>httpx.AsyncClient</code> · 5s timeout · 3 retries with exponential backoff (0.5s, 1s, 2s).</div>
-    <div class="k">Contract</div>
-    <div class="v">
-      <ul>
-        <li>2xx with JSON → return body.</li>
-        <li>4xx/5xx/timeout/conn-error → log <code>warning</code>, return <code>None</code>.</li>
-        <li>Caller falls through to Supabase <code>agent_requests</code> enqueue (audit every call site).</li>
-      </ul>
-    </div>
-    <div class="k">Done when</div>
-    <div class="v">
-      Tests in <code>tests/test_a2a_client_http.py</code> covering 2xx / 500 / timeout. Startup logs a warning if <code>_agent_registry</code> is empty.
-    </div>
-  </div>
-</div>
-
-<!-- 10.4 -->
-<div class="card" id="i104">
-  <div class="head">
-    <span class="id">10.4</span>
-    <span class="title">Station-paired QR claim flow — participants table + /pair route + rotating JWT</span>
-    <div class="pills">
-      <span class="pill crit">critical</span>
+      <span class="pill tier-aim">aim tonight</span>
       <span class="pill time">~3–4h</span>
-      <span class="pill dep">depends: 10.2</span>
     </div>
   </div>
   <div class="why">
-    <b>Why:</b> Today <code>user_token: "anon-local"</code> is hardcoded for every contribution (<code>quorum/[id]/page.tsx:290</code>) and QR codes encode the same station URL phones just open the laptop dashboard. Two attendees scanning the same QR collide on <code>station_id="station-N"</code> and the agent conversation interleaves. <b>This is the #1 visible-failure-on-stage risk.</b>
+    <b>You said:</b> "lets just do it robustly correctly so i can say we are using A2A at tech expo." Done — using the
+    official <code>a2a-sdk</code> from the Linux Foundation Agentic AI Foundation. Endpoints hosted on our existing
+    FastAPI process; Supabase stores the durable journal + endpoint registry.
   </div>
   <div class="grid">
-    <div class="k">New migration</div>
+    <div class="k">Add dep</div>
+    <div class="v"><code>a2a-sdk ~= 1.0</code> in <code>apps/api/requirements.txt</code></div>
+    <div class="k">Replace</div>
     <div class="v">
-      <code>supabase/migrations/2026XXXX_pairing_and_participants.sql</code> — tables <code>participants</code>, <code>station_sessions</code>, <code>pairing_tickets</code>.
+      <code>apps/api/a2a/agent_card.py</code> bespoke builder → <code>a2a-sdk</code>'s <code>AgentCard</code> + <code>AgentSkill</code> classes.
     </div>
     <div class="k">New endpoints</div>
     <div class="v">
       <ul>
-        <li><code>POST /sessions/station-claim</code> → 201 <code>{station_session_id, user_token_anon, expires_at}</code> (4h TTL)</li>
-        <li><code>POST /sessions/pair-ticket</code> → 201 <code>{ticket_jwt, expires_at}</code> (90s TTL, signed HS256)</li>
-        <li><code>POST /sessions/claim</code> → 201 <code>{device_session_id, participant_id, role_id, role_name}</code> (single-use ticket consumption)</li>
-        <li><code>POST /sessions/heartbeat</code> → 204 (updates <code>participants.last_heartbeat_at</code>; foundation for 10.10)</li>
+        <li><code>GET  /a2a/agents/&lt;role_id&gt;/.well-known/agent.json</code> — returns AgentCard</li>
+        <li><code>POST /a2a/agents/&lt;role_id&gt;/tasks/send</code> — accepts an A2A Task, dispatches to <code>process_agent_turn</code>, returns a Task with the agent's reply</li>
+        <li>Optional SSE streaming for long tasks — flagged but not required for expo</li>
       </ul>
     </div>
-    <div class="k">JWT</div>
-    <div class="v">PyJWT · HS256 · secret <code>QUORUM_JWT_SECRET</code> (32+ chars) · payload <code>{sub, jti, role_id, exp}</code>.</div>
-    <div class="k">Frontend laptop</div>
-    <div class="v">On station page load, call <code>/sessions/station-claim</code>; sessionStorage stores result. Rotate <code>/sessions/pair-ticket</code> every 60s; render the rotating ticket as a QR pointing to <code>https://&lt;host&gt;/pair?ticket=&lt;jwt&gt;</code>.</div>
-    <div class="k">Schema</div>
-    <div class="v">Add <code>participant_id</code> column to <code>station_messages</code> and <code>contributions</code> (nullable; populated on new rows).</div>
+    <div class="k">Client</div>
+    <div class="v">
+      <code>a2a/a2a_client.py.send_message</code> replaced with real <code>a2a-sdk</code> client call (httpx under the hood; 5s timeout; 3 retries). On any failure, falls through to the Supabase <code>agent_requests</code> journal so the message is durable.
+    </div>
+    <div class="k">New table</div>
+    <div class="v">
+      <code>agent_endpoints</code> (role_id, url, capabilities jsonb, registered_at, last_seen_at). Replaces process-local <code>_agent_registry</code>. Populated when architect creates roles (10.1).
+    </div>
     <div class="k">Done when</div>
     <div class="v">
-      <code>tests/test_pairing.py</code> covers happy path, ticket expiry, double-consume (409), wrong signature (401), rate limit (max 1 ticket per 5s per station_session_id).
+      <code>curl http://localhost:8000/a2a/agents/&lt;role_id&gt;/.well-known/agent.json</code> returns a spec-compliant
+      AgentCard. Integration test: agent A POSTs a task to agent B's endpoint, B's wrapper runs <code>process_agent_turn</code>,
+      A receives the result.
     </div>
   </div>
 </div>
 
-<!-- 10.5 -->
-<div class="card" id="i105">
+<!-- 10.4 REVISED (lighter) -->
+<div class="card revised" id="i104r">
   <div class="head">
-    <span class="id">10.5</span>
-    <span class="title">Mobile <code>/agent/&lt;role_id&gt;</code> route — focused 1:1 chat</span>
+    <span class="id">10.4*</span>
+    <span class="title">Participant identity + /pair (LIGHTER — no JWT, no pairing flow)</span>
     <div class="pills">
+      <span class="pill rev">revised</span>
       <span class="pill crit">critical</span>
+      <span class="pill tier-aim">aim tonight</span>
       <span class="pill time">~1.5h</span>
-      <span class="pill dep">depends: 10.4</span>
     </div>
   </div>
   <div class="why">
-    <b>Why:</b> Phones should NOT see the laptop dashboard. The "scan and talk to <i>this</i> agent" mental model needs a focused 1:1 chat UI that fits 375px viewports.
+    Multi-attendee at one station is a FEATURE not a bug. The real fix is per-human attribution within the shared
+    station conversation. Drops the JWT + token-exchange complexity from my earlier draft.
   </div>
   <div class="grid">
-    <div class="k">New</div>
+    <div class="k">New table</div>
     <div class="v">
-      <code>apps/web/src/app/pair/page.tsx</code> — reads <code>?ticket=&lt;jwt&gt;</code>, POSTs to <code>/sessions/claim</code>, redirects to <code>/agent/&lt;role_id&gt;?ds=&lt;device_session_id&gt;</code>. Clear error states for expired/used/invalid tickets.
+      <code>participants</code> · id uuid pk, quorum_id, role_id, display_name, device_kind, last_heartbeat_at, created_at
     </div>
-    <div class="k">New</div>
+    <div class="k">New endpoint</div>
     <div class="v">
-      <code>apps/web/src/app/agent/[roleId]/page.tsx</code> — mobile-first (<code>max-w-screen-sm</code>). Top: small health-chart widget. Body: <code>ConversationThread</code> filtered to this device's <code>participant_id</code>. Footer: input + single-shot mic. Heartbeat fires every 30s.
+      <code>POST /sessions/participant {quorum_id, role_id, device_kind}</code> → 201 <code>{participant_id, display_name}</code>. <code>display_name</code> auto-assigned ("Visitor 1", "Visitor 2", etc., per station).
+    </div>
+    <div class="k">QR change</div>
+    <div class="v">
+      Architect page generates QRs encoding <code>/pair?qr=&lt;quorum_id&gt;&amp;st=&lt;station_label&gt;</code>.
+      <code>/pair</code> page calls <code>/sessions/participant</code>, stores result in sessionStorage, redirects to
+      <code>/agent/&lt;role_id&gt;?ds=&lt;participant_id&gt;</code>.
+    </div>
+    <div class="k">Schema add</div>
+    <div class="v">
+      Add nullable <code>participant_id</code> column to <code>station_messages</code> and <code>contributions</code>.
+      Populated on new rows; existing rows null (unattributed). Drop hardcoded <code>user_token: "anon-local"</code>.
     </div>
     <div class="k">Done when</div>
-    <div class="v">Playwright spec <code>e2e/pair-flow.spec.ts</code> validates: scan → /pair → /agent works; second phone with same ticket rejected.</div>
+    <div class="v">
+      Two phones scanning the same station QR get different participant_ids and different display names; both can
+      contribute to the same shared thread; agent sees attribution.
+    </div>
   </div>
 </div>
 
-<!-- 10.6 -->
+<!-- 10.5 REVISED (audio defaults) -->
+<div class="card revised" id="i105r">
+  <div class="head">
+    <span class="id">10.5*</span>
+    <span class="title">Mobile <code>/agent/[roleId]</code> route — audio + mic OFF by default</span>
+    <div class="pills">
+      <span class="pill rev">revised</span>
+      <span class="pill crit">critical</span>
+      <span class="pill tier-aim">aim tonight</span>
+      <span class="pill time">~1.5h</span>
+      <span class="pill dep">depends: 10.4*</span>
+    </div>
+  </div>
+  <div class="why">
+    Confirmed: small loud room → no speaker, no mic by default. Visual chat only. Optional toggle for participants
+    who want either on.
+  </div>
+  <div class="grid">
+    <div class="k">New</div>
+    <div class="v"><code>apps/web/src/app/pair/page.tsx</code> · <code>apps/web/src/app/agent/[roleId]/page.tsx</code></div>
+    <div class="k">Layout</div>
+    <div class="v">
+      Mobile-first (<code>max-w-screen-sm</code>). Header: role name + archetype icon + 2 toggles (speaker / mic). Body: ConversationThread filtered to this participant_id. Footer: text input + (disabled-by-default) mic button.
+    </div>
+    <div class="k">Defaults</div>
+    <div class="v">
+      Speaker: <b>off</b>. Mic: <b>off</b>. Heartbeat: <b>on</b>. Participant display_name shown in the header for confirmation.
+    </div>
+    <div class="k">Done when</div>
+    <div class="v">
+      Playwright spec at 375px viewport — load /pair → /agent → submit text → see reply, no audio plays, mic does not activate.
+    </div>
+  </div>
+</div>
+
+<!-- 10.6 unchanged -->
 <div class="card" id="i106">
   <div class="head">
     <span class="id">10.6</span>
     <span class="title">Never speak the error — graceful avatar fallback</span>
     <div class="pills">
       <span class="pill high">high</span>
+      <span class="pill tier-must">must tonight</span>
       <span class="pill time">~30 min</span>
     </div>
   </div>
   <div class="why">
-    <b>Why:</b> <code>agent_engine.py:216</code> returns the literal string "I encountered an issue processing your message" on LLM exceptions. That string is treated as a normal assistant reply and the avatar SPEAKS IT on the 60-inch projector. Audience reads it as "the AI is broken."
-  </div>
-  <div class="grid">
-    <div class="k">Backend</div>
-    <div class="v">
-      Return a structured sentinel: <code>{"status":"facilitator_paused","reason":"&lt;llm_unavailable|tool_error|other&gt;"}</code>. Route serializes with HTTP 200 + <code>paused: true</code>.
-    </div>
-    <div class="k">Frontend</div>
-    <div class="v">
-      <code>useAvatarController.ts</code> — when <code>reply.paused === true</code>: skip <code>speak()</code>, set IdleScene to a thinking-cycle, show a "Facilitator paused — reconnecting" pill on <code>AvatarPanel</code>. Pill auto-dismisses on next successful reply.
-    </div>
-    <div class="k">Bonus</div>
-    <div class="v">
-      Architect panic key <code>Shift+Cmd+M</code> → <code>POST /events/&lt;slug&gt;/panic {muted: true}</code> mutes all autonomy + TTS across the event.
-    </div>
+    Avatar speaking "I encountered an issue processing your message" on a 60" projector reads as "the AI is broken."
+    Return a structured <code>{paused: true, reason}</code> sentinel; frontend shows a "Facilitator paused — reconnecting" pill.
   </div>
 </div>
 
-<!-- 10.7 -->
+<!-- 10.7 unchanged -->
 <div class="card" id="i107">
   <div class="head">
     <span class="id">10.7</span>
     <span class="title">Add missing <code>synthesis_snapshots</code> migration</span>
     <div class="pills">
       <span class="pill high">high</span>
+      <span class="pill tier-must">must tonight</span>
       <span class="pill time">~15 min</span>
     </div>
   </div>
-  <div class="why">
-    <b>Why:</b> <code>coordination/supabase_backend.py:64</code> inserts into a table that doesn't exist in any migration. Local SQLite stubs it; real Supabase crashes the moment any synthesis path runs.
-  </div>
-  <div class="grid">
-    <div class="k">New</div>
-    <div class="v">
-      <code>supabase/migrations/2026XXXX_synthesis_snapshots.sql</code> — table with <code>quorum_id</code>, <code>tier</code>, <code>content jsonb</code>, <code>contribution_ids uuid[]</code>, <code>token_cost</code>, <code>model</code>, <code>version</code>, <code>created_at</code>. Index on <code>(quorum_id, created_at DESC)</code>.
-    </div>
-    <div class="k">Done when</div>
-    <div class="v">Verify columns match what <code>supabase_backend.store_synthesis</code> inserts; adjust either side on drift.</div>
-  </div>
+  <div class="why">Code inserts into a table that doesn't exist in any migration. Real Supabase will crash on the synthesis path.</div>
 </div>
 
-<!-- 10.8 -->
+<!-- 10.8 unchanged -->
 <div class="card" id="i108">
   <div class="head">
     <span class="id">10.8</span>
-    <span class="title">RLS lockdown — read-open, write-service-role-only</span>
+    <span class="title">RLS lockdown — read-open, writes service-role-only</span>
     <div class="pills">
       <span class="pill high">high</span>
+      <span class="pill tier-must">must tonight</span>
       <span class="pill time">~30 min</span>
     </div>
   </div>
-  <div class="why">
-    <b>Why:</b> All seven agent tables have <code>FOR ALL USING (true)</code>. Anyone reading the Supabase URL from devtools (visible on every frontend request) can write arbitrary rows during the demo.
-  </div>
-  <div class="grid">
-    <div class="k">New migration</div>
-    <div class="v">
-      For each of <code>agent_configs</code>, <code>station_messages</code>, <code>agent_documents</code>, <code>document_changes</code>, <code>agent_insights</code>, <code>agent_requests</code>, <code>oscillation_events</code>:
-      <ul>
-        <li><code>FOR SELECT USING (true)</code></li>
-        <li><code>FOR INSERT/UPDATE/DELETE</code> gated on <code>auth.role() = 'service_role'</code></li>
-      </ul>
-    </div>
-    <div class="k">Audit</div>
-    <div class="v">
-      Grep <code>apps/web/src/</code> for <code>.insert/.update/.delete</code> against agent_* and <code>station_messages</code>. Any direct write must be routed through FastAPI service role.
-    </div>
-    <div class="k">Done when</div>
-    <div class="v">
-      <code>tests/test_rls_lockdown.py</code> — anon-key client attempts insert into <code>station_messages</code>, asserts 403.
-    </div>
-  </div>
+  <div class="why">7 tables currently FOR ALL USING (true). Audience can write arbitrary rows during the demo. Tighten before expo.</div>
 </div>
 
-<!-- 10.9 -->
+<!-- 10.9 unchanged -->
 <div class="card" id="i109">
   <div class="head">
     <span class="id">10.9</span>
-    <span class="title">Disable / LLM-synthesize the auto-contribute concatenation</span>
+    <span class="title">Disable auto-contribute concatenation (default off)</span>
     <div class="pills">
       <span class="pill high">high</span>
-      <span class="pill time">~10 min (off) / ~40 min (synthesize)</span>
+      <span class="pill tier-must">must tonight</span>
+      <span class="pill time">~10 min</span>
     </div>
   </div>
-  <div class="why">
-    <b>Why:</b> At <code>autonomy_level &gt;= 0.7</code>, agents auto-submit contributions by string-joining their last 3 assistant messages. Fragment salad: "The eGFR threshold should be 45. [...] Further review needed." That feeds the Tier 3 artifact synthesis and the final demo artifact reads poorly.
-  </div>
-  <div class="grid">
-    <div class="k">Edit</div>
-    <div class="v"><code>apps/api/autonomy_loop.py:326-345</code></div>
-    <div class="k">Add env var</div>
-    <div class="v">
-      <code>AUTONOMY_AUTO_CONTRIBUTE_MODE</code> · <code>off</code> (default · expo) · <code>concat</code> (legacy) · <code>synthesize</code> (pipe through <code>complete()</code> with prompt "Combine these N reflections from &lt;role&gt; into one cohesive contribution.")
-    </div>
-    <div class="k">Done when</div>
-    <div class="v">
-      Documented in <code>docs/CONTRACT.md</code>. Tests cover all three modes.
-    </div>
-  </div>
+  <div class="why">Today: agents at autonomy ≥ 0.7 join their last 3 messages as a contribution → fragment salad in the final artifact. Default <code>AUTONOMY_AUTO_CONTRIBUTE_MODE=off</code> for the expo; "synthesize" mode added but not enabled.</div>
 </div>
 
-<!-- 10.10 -->
+<!-- 10.10 unchanged -->
 <div class="card" id="i110">
   <div class="head">
     <span class="id">10.10</span>
     <span class="title">Heartbeat / presence — detect walked-away attendees</span>
     <div class="pills">
       <span class="pill med">medium</span>
+      <span class="pill tier-stretch">stretch</span>
       <span class="pill time">~1h</span>
-      <span class="pill dep">depends: 10.4</span>
+      <span class="pill dep">depends: 10.4*</span>
     </div>
   </div>
   <div class="why">
-    <b>Why:</b> If a station user walks away, the agent currently keeps talking to no one — and at autonomy &gt; 0 the projector keeps generating turns for that empty seat. The foundation (<code>POST /sessions/heartbeat</code>) was already added in 10.4; this item wires the consumer side.
+    30s heartbeat, 90s idle threshold. Dashboard <code>ParticipantPresenceDots</code> shows who's present. Agent suspends turns for a role with no active participant. Foundation is in 10.4*; this wires the consumer side.
+  </div>
+</div>
+
+<!-- 9.1 ADDED -->
+<div class="card added" id="i91">
+  <div class="head">
+    <span class="id">9.1</span>
+    <span class="title">Pydantic AI provider swap (ADDED to overnight scope)</span>
+    <div class="pills">
+      <span class="pill added">added</span>
+      <span class="pill high">high</span>
+      <span class="pill tier-aim">aim tonight</span>
+      <span class="pill time">~4–5h</span>
+    </div>
+  </div>
+  <div class="why">
+    Stop maintaining 5 provider adapters. Pydantic AI handles model-string routing, prompt cache, structured outputs,
+    retries, and provider-specific param differences. Surface-level call signatures preserved so callers don't change.
   </div>
   <div class="grid">
-    <div class="k">Backend</div>
+    <div class="k">Replace</div>
     <div class="v">
-      <code>participants_is_active(p)</code> → <code>now() - last_heartbeat_at &lt; 90s</code>.
-      Autonomy loop: when a role has no active participant and no human contribution in the last 5min, agent emits a one-time "I'll wait for &lt;role_name&gt; to return" message, then suspends turns for that role until heartbeat resumes.
+      <code>packages/llm/quorum_llm/providers/{azure,openai,anthropic,local}.py</code> bodies → thin wrappers around
+      Pydantic AI <code>Agent</code> calls. Model strings: <code>azure:gpt-4o</code>, <code>anthropic:claude-sonnet-4-6</code>,
+      <code>openai:gpt-4o</code>, <code>local:ollama/...</code>.
     </div>
-    <div class="k">Frontend</div>
+    <div class="k">Keep</div>
     <div class="v">
-      <code>ParticipantPresenceDots</code> component — green / yellow (idle &gt;30s) / grey (walked-away &gt;90s). Subscribes to <code>participants</code> via Supabase Realtime.
+      <code>LLMProvider</code> ABC at the surface. <code>MockLLMProvider</code> short-circuit for <code>QUORUM_TEST_MODE</code>.
+      Factory + tier-routing unchanged.
+    </div>
+    <div class="k">Risk</div>
+    <div class="v">
+      Pydantic AI's <code>.to_a2a()</code> has known bugs (#2910 dep injection, #3313 lifespan) — but we're NOT using
+      <code>.to_a2a()</code>. We're using Pydantic AI as the agent runtime and the official <code>a2a-sdk</code> for
+      the A2A wire separately. Safe split.
     </div>
     <div class="k">Done when</div>
     <div class="v">
-      Simulated heartbeat lapse flips role status within 30s on the dashboard.
+      Existing <code>packages/llm/tests/</code> stays green. Tier 1/2/3 behave identically at call sites. Architect role
+      generation (10.1) routes through Pydantic AI cleanly.
+    </div>
+  </div>
+</div>
+
+<!-- 9.2 ADDED (stretch) -->
+<div class="card added" id="i92">
+  <div class="head">
+    <span class="id">9.2</span>
+    <span class="title">conversations table for Pydantic AI MessageHistory (ADDED, stretch)</span>
+    <div class="pills">
+      <span class="pill added">added</span>
+      <span class="pill med">medium</span>
+      <span class="pill tier-stretch">stretch</span>
+      <span class="pill time">~2h</span>
+      <span class="pill dep">depends: 9.1</span>
+    </div>
+  </div>
+  <div class="why">
+    Replaces ad-hoc chunking of <code>station_messages</code> with a typed message_history persisted per (quorum, role,
+    participant). Cleaner agent state model.
+  </div>
+  <div class="grid">
+    <div class="k">New table</div>
+    <div class="v">
+      <code>conversations</code> · id, quorum_id, role_id, participant_id, messages jsonb, token_count, model, version, created_at, updated_at
+    </div>
+    <div class="k">Done when</div>
+    <div class="v">
+      Tier 2 conflict call loads + saves history. Second call sees prior turn without resending full chat from the caller.
+    </div>
+  </div>
+</div>
+
+<!-- 11.3 ADDED (stretch) -->
+<div class="card added" id="i113">
+  <div class="head">
+    <span class="id">11.3</span>
+    <span class="title">Magentic-One Orchestrator + facilitator-voice (ADDED, stretch)</span>
+    <div class="pills">
+      <span class="pill added">added</span>
+      <span class="pill high">high</span>
+      <span class="pill tier-stretch">stretch</span>
+      <span class="pill time">~4h</span>
+      <span class="pill dep">depends: 9.1 + 11.6 (or simpler: in-memory blackboard)</span>
+    </div>
+  </div>
+  <div class="why">
+    Replaces <code>random.choice(active_roles)</code> with planning. The orchestrator IS the facilitator avatar's voice
+    — solves the <code>staticSynthesisText</code> TODO at <code>AvatarPanel.tsx:62-64</code>.
+  </div>
+  <div class="grid">
+    <div class="k">New</div>
+    <div class="v">
+      <code>apps/api/agents/orchestrator.py</code> — Pydantic AI Agent with tools: <code>read_blackboard</code>,
+      <code>dispatch_to_role</code> (A2A call), <code>update_blackboard</code>, <code>emit_facilitator_status</code>.
+    </div>
+    <div class="k">Algorithm</div>
+    <div class="v">
+      <ul>
+        <li>Read open questions + blockers from blackboard (or <code>quorum_state</code> table from 11.6 if landed,
+          else in-memory dict scoped to <code>autonomy_loop</code> task).</li>
+        <li>Score each active role by: domain tag overlap with open questions, blocker mentions, anti-monopoly (turns since last spoke).</li>
+        <li>Dispatch task via A2A SDK to highest-scoring role's <code>/a2a/agents/&lt;role_id&gt;/tasks/send</code>.</li>
+        <li>Emit one-sentence narration via <code>emit_facilitator_status</code> — this is what the avatar SPEAKS.</li>
+      </ul>
+    </div>
+    <div class="k">Avatar wire</div>
+    <div class="v">
+      Frontend <code>dataProvider.subscribeToFacilitator(quorum_id)</code> → <code>AvatarPanel</code> consumes the
+      orchestrator's narration as <code>synthesisText</code>. Solves the long-standing TODO.
+    </div>
+    <div class="k">Done when</div>
+    <div class="v">
+      Integration test seeds clinical-trial.json, runs 5 turns, asserts: no role speaks twice in a row; each turn emits
+      a facilitator_status; avatar's <code>synthesisText</code> is the orchestrator narration, not the last role's reply.
+    </div>
+  </div>
+</div>
+
+<!-- 11.6 ADDED (stretch) -->
+<div class="card added" id="i116">
+  <div class="head">
+    <span class="id">11.6</span>
+    <span class="title">quorum_state blackboard table (ADDED, stretch)</span>
+    <div class="pills">
+      <span class="pill added">added</span>
+      <span class="pill med">medium</span>
+      <span class="pill tier-stretch">stretch</span>
+      <span class="pill time">~2h</span>
+    </div>
+  </div>
+  <div class="why">
+    Single source of truth for "what we believe right now." Open questions, proposals, decisions, conflicts, dissents.
+    Orchestrator (11.3) reads and writes via the state MCP server — or directly via Supabase if MCP server doesn't ship tonight.
+  </div>
+  <div class="grid">
+    <div class="k">New table</div>
+    <div class="v">
+      <code>quorum_state</code> — one row per quorum. jsonb columns for the list-shaped fields. CAS on version.
     </div>
   </div>
 </div>
 
 <div class="stop-safe">
-  <h3>What survives if I stop early</h3>
+  <h3>What ships even if I only land "Must tonight"</h3>
   <ul>
-    <li><b>After cluster ① (~1.5h):</b> demo is safer — RLS locked down, no avatar-spoken errors, no missing-table crash, no fragment-salad artifacts.</li>
-    <li><b>After cluster ② (~3.5h total):</b> agents have real personas and you can tell them apart on the projector.</li>
-    <li><b>After cluster ③ (~6.5h total):</b> autonomy is honest — no duplicate processing, A2A POSTs actually attempt HTTP.</li>
-    <li><b>After cluster ④ (~12.5h total):</b> the QR-and-phone story is real. Phones get focused 1:1 chats. Walked-away attendees show as grey dots.</li>
-  </ul>
-  <p style="margin: 10px 0 0;">Each item lands its own commit with passing tests, so the branch is always merge-ready. I won't push broken state.</p>
-</div>
-
-<div class="risks">
-  <h3>Things that may pause me overnight (and what I'll do)</h3>
-  <ul>
-    <li><b>Missing env var <code>QUORUM_JWT_SECRET</code> (for 10.4).</b> I'll generate a dev secret, add it to <code>.env.example</code>, and put a TODO at the top of the migration note asking you to rotate it for prod. Won't block.</li>
-    <li><b>Supabase migration tooling needs you to apply.</b> I'll author the migration files (they pair-program with the schema), but if the workflow requires <code>supabase db push</code> with your auth, that step waits for morning. I'll leave a clear "RUN THIS" note in the commit body.</li>
-    <li><b>Persona content for 10.1 — am I making up Medical-PI clinical priors?</b> I'll write reasonable defaults using public clinical-trial guidance (FDA / ICH / Belmont). You can tweak tone/voice in the morning; the schema and routing land regardless.</li>
-    <li><b>WhatsApp / SMS QR fallbacks (out of scope tonight).</b> Phones with no Wi-Fi at the expo can't reach localhost. <code>10.4</code> assumes same-LAN. Cellular-fallback is a different design — flagged but not built.</li>
-    <li><b>Pre-existing test failures.</b> The 5 failures from the autonomy-slider commit will still exist after this work. I won't fix them tonight unless they regress further from my changes.</li>
+    <li><b>Dynamic agents with real personas</b> (10.1*) — every architect-created role gets a unique system prompt and domain tags. The IRB Officer and the Biostatistician actually sound different. <em>Biggest demo win.</em></li>
+    <li><b>Stage safety</b> — no error strings spoken aloud (10.6), no missing-table crash (10.7), no audience writes (10.8), no fragment-salad artifacts (10.9), no duplicate processing (10.2).</li>
+    <li>That alone is ~5–6h of work and dramatically improves the expo demo.</li>
   </ul>
 </div>
 
-<h2>What's NOT in tonight's plan</h2>
-<p style="color: var(--muted); font-size: 13px;">
-  All the post-expo work — Pydantic AI migration (Phase 9), A2A 1.0 / MCP / Magentic-One orchestrator (Phase 11), code hygiene (Phase 12) — is documented in <code>developer_checklist.yaml</code> but not part of this overnight session. Tonight is exclusively about making the Duke Tech Expo 2026 demo not embarrass us. The bigger architectural migration is its own multi-day branch.
-</p>
+<div class="stop-safe" style="background: linear-gradient(180deg, rgba(110,168,255,0.08), rgba(110,168,255,0.01)); border-color: rgba(110,168,255,0.35);">
+  <h3 style="color: var(--accent);">What ships if "Must + Aim" land (~12h)</h3>
+  <ul>
+    <li>Everything above, plus:</li>
+    <li><b>Real A2A 1.0</b> — you can truthfully say "we use A2A" at the expo. Real <code>a2a-sdk</code> endpoints per role, official AgentCards, durable Supabase journal.</li>
+    <li><b>Pydantic AI</b> as the framework runtime — modern stack, multi-provider, typed agents.</li>
+    <li><b>QR-scan-to-chat</b> — phones get a focused mobile chat with the role-agent. Audio off by default for the loud expo floor.</li>
+    <li><b>Per-human attribution</b> — multiple attendees at one station get their own participant_id, dashboard shows who said what.</li>
+  </ul>
+</div>
 
 <footer>
-  Generated 2026-05-12 ·
+  Revised 2026-05-12 ·
   Branch <a href="https://github.com/sagearbor/quorum/tree/feature/pydantic-ai-migration-plan">feature/pydantic-ai-migration-plan</a> ·
   Companion to <a href="./2026-05-12-current-agent-flow.html">current-state audit</a> ·
-  Plan source: <code>developer_checklist.yaml</code> phase <code>demo_critical_overnight</code>
+  Plan source: <code>developer_checklist.yaml</code> phases <code>demo_critical_overnight</code> + <code>pydantic_migration</code> + <code>agent_standards_migration</code>
 </footer>
 
 </body>

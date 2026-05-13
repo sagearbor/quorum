@@ -147,14 +147,14 @@ export function CreateQuorumForm() {
               min="0"
               max="1"
               step="0.1"
-              value={quorumDraft.autonomy_level}
+              value={quorumDraft.autonomy_level ?? 0}
               onChange={(e) =>
                 setQuorumDraft({ autonomy_level: parseFloat(e.target.value) })
               }
               className="flex-1 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
             />
             <span className="text-lg font-semibold text-blue-600 w-10 text-right tabular-nums">
-              {quorumDraft.autonomy_level.toFixed(1)}
+              {(quorumDraft.autonomy_level ?? 0).toFixed(1)}
             </span>
           </div>
           <div className="flex justify-between text-xs text-gray-500">

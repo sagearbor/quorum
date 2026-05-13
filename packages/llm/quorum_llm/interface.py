@@ -36,8 +36,8 @@ class LLMProvider(ABC):
         self,
         messages: list[dict[str, str]],
         tier: LLMTier,
-        temperature: float = 0.4,
-        max_tokens: int = 1024,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
         *,
         message_history: list | None = None,
     ) -> str:
@@ -55,10 +55,16 @@ class LLMProvider(ABC):
             tier: LLM tier controlling model selection and cost tracking.
                   Typically ``LLMTier.AGENT_CHAT`` for facilitator turns or
                   ``LLMTier.AGENT_REASON`` for escalation / deep reasoning.
-            temperature: Sampling temperature (0.0–1.0).  Ignored by the
-                         default flat-prompt fallback — passed through in
-                         provider overrides.
-            max_tokens: Upper bound on output tokens.  Same caveat as above.
+            temperature: Sampling temperature (0.0–1.0).  ``None`` (the
+                         default) means "use the tier default" — pulled from
+                         ``_TIER_DEFAULTS`` in ``_pai_common``.  Per-agent
+                         overrides (architect-authored ``agent_configs.temperature``)
+                         are threaded in here so each role can have its own
+                         creativity dial (item 11.9).  Ignored by the default
+                         flat-prompt fallback — passed through in provider
+                         overrides.
+            max_tokens: Upper bound on output tokens.  Same ``None`` →
+                        tier-default semantics as ``temperature``.
             message_history: Optional list of ``pydantic_ai.messages.ModelMessage``
                              instances from a prior persisted conversation
                              (loaded via the conversations table — see
@@ -80,8 +86,8 @@ class LLMProvider(ABC):
         self,
         messages: list[dict[str, str]],
         tier: LLMTier,
-        temperature: float = 0.4,
-        max_tokens: int = 1024,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
         *,
         message_history: list | None = None,
     ):

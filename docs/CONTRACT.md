@@ -286,8 +286,8 @@ agent_configs:
   quorum_id: uuid FK quorums.id
   agent_slug: text               # matches filename in agents/definitions/
   system_prompt: text
-  temperature: float DEFAULT 0.4
-  max_tokens: integer DEFAULT 1024
+  temperature: float DEFAULT 0.4 # respected at call time (item 11.9); reasoning models drop it
+  max_tokens: integer DEFAULT 1024 # respected at call time (item 11.9)
   doc_permissions: text[]
   auto_create_docs: boolean DEFAULT false
   auto_suggest_dashboards: boolean DEFAULT false

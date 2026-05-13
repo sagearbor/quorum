@@ -97,6 +97,95 @@ def _is_gpt5_model(model: str) -> bool:
     return model.startswith("gpt-5")
 
 
+def _is_reasoning_model(model: str) -> bool:
+    """Return True if the model name indicates a reasoning model.
+
+    Reasoning models (GPT-5 family, o1/o3/o4 series, Claude reasoning variants)
+    reject the ``temperature`` parameter at the API level.  When the architect
+    pins an ``agent_configs.temperature`` to such a model we DROP the override
+    with a warning rather than letting the SDK 400.  Pydantic AI also strips
+    unsupported params via the model profile, but we add the upstream warning
+    so the architect gets feedback that the slider had no effect.
+    """
+    if not model:
+        return False
+    name = model.lower()
+    if "gpt-5" in name:
+        return True
+    if any(name.startswith(p) for p in ("o1", "o3", "o4")):
+        return True
+    # Some Claude reasoning variants surface as ``claude-*-reasoning``.
+    if "reasoning" in name:
+        return True
+    return False
+
+
+def _resolve_call_settings(
+    agent_def,
+) -> tuple[float | None, int | None]:
+    """Pull ``temperature`` / ``max_tokens`` overrides from an agent_def.
+
+    Returns ``(temperature, max_tokens)``, either of which may be ``None``
+    meaning "use the tier default".  Validation rules:
+
+    - ``temperature`` is clamped to the [0.0, 1.0] range per the
+      ``agent_configs.temperature`` CHECK constraint in Supabase / SQLite.
+      Out-of-range values are clamped + logged at WARNING so the architect
+      can see the slider was capped.
+    - ``temperature`` is dropped (returned as ``None``) when the agent's
+      model is a reasoning model — those endpoints reject the parameter and
+      Pydantic AI will silently drop it anyway, but we surface a WARNING so
+      the architect knows their setting had no effect.
+    - ``max_tokens`` is preserved as-is; null in the DB → None here → tier
+      default downstream.
+    """
+    if agent_def is None:
+        return None, None
+
+    raw_temp = getattr(agent_def, "temperature", None)
+    raw_max = getattr(agent_def, "max_tokens", None)
+
+    temperature: float | None = None
+    if raw_temp is not None:
+        try:
+            t = float(raw_temp)
+        except (TypeError, ValueError):
+            t = None
+        if t is not None:
+            if t < 0.0 or t > 1.0:
+                clamped = max(0.0, min(1.0, t))
+                logger.warning(
+                    "agent_engine: clamped out-of-range temperature %.3f → %.3f "
+                    "for agent '%s' (CHECK temperature BETWEEN 0 AND 1)",
+                    t,
+                    clamped,
+                    getattr(agent_def, "name", "unknown"),
+                )
+                t = clamped
+            temperature = t
+
+    if temperature is not None and _is_reasoning_model(getattr(agent_def, "model", "")):
+        logger.warning(
+            "agent_engine: dropping temperature=%.3f override for agent '%s' — "
+            "reasoning model %r does not accept temperature",
+            temperature,
+            getattr(agent_def, "name", "unknown"),
+            getattr(agent_def, "model", ""),
+        )
+        temperature = None
+
+    max_tokens: int | None = None
+    if raw_max is not None:
+        try:
+            m = int(raw_max)
+            if m > 0:
+                max_tokens = m
+        except (TypeError, ValueError):
+            max_tokens = None
+
+    return temperature, max_tokens
+
+
 async def _call_llm(
     llm_provider,
     messages: list[dict],
@@ -130,6 +219,22 @@ async def _call_llm(
     """
     from quorum_llm.models import LLMTier
 
+    # Resolve per-agent overrides from agent_configs (item 11.9).  These are
+    # the architect-authored temperature/max_tokens sliders.  ``None`` means
+    # "use the tier default" — the provider's ``tier_settings()`` helper
+    # falls through to ``_TIER_DEFAULTS`` in that case, so unconfigured
+    # agents see no behavioural change.
+    temperature, max_tokens = _resolve_call_settings(agent_def)
+
+    # Build the per-call override kwargs.  Only include keys that are not
+    # None so legacy provider mocks that don't accept these params keep
+    # working — see ``_safe_call_with_overrides`` below.
+    call_overrides: dict = {}
+    if temperature is not None:
+        call_overrides["temperature"] = temperature
+    if max_tokens is not None:
+        call_overrides["max_tokens"] = max_tokens
+
     # Route gpt-5 agents through the Responses API when available.  The
     # Responses API doesn't expose Pydantic AI's new_messages() in a useful
     # way (the call is single-shot per the legacy contract), so we return
@@ -146,6 +251,10 @@ async def _call_llm(
                 user_messages = [m for m in messages if m["role"] == "user"]
                 input_text = user_messages[-1]["content"] if user_messages else ""
 
+                # GPT-5 / reasoning models reject temperature.  ``respond()``
+                # already drops it via the model profile, but we don't even
+                # try to pass it through — ``_resolve_call_settings`` set
+                # temperature to None for these models anyway.
                 reply, _ = await llm_provider.respond(
                     instructions=instructions,
                     input_text=input_text,
@@ -165,9 +274,11 @@ async def _call_llm(
     # plain chat() below.
     if hasattr(llm_provider, "chat_with_history"):
         try:
-            result = await llm_provider.chat_with_history(
+            result = await _safe_call_with_overrides(
+                llm_provider.chat_with_history,
                 messages,
                 LLMTier.AGENT_CHAT,
+                call_overrides=call_overrides,
                 message_history=message_history,
             )
             # ChatResult has a ``new_messages`` attribute (list) — see
@@ -180,20 +291,19 @@ async def _call_llm(
             )
 
     # Standard path: use chat() for full message-list context — pass
-    # message_history through as a kwarg.  Providers that don't accept it
-    # raise TypeError, which we catch and retry without the kwarg so legacy
-    # mocks (e.g. unittest.mock.AsyncMock) keep working.
+    # message_history + overrides as kwargs.  Providers that don't accept
+    # them raise TypeError, which ``_safe_call_with_overrides`` catches and
+    # retries without the extras so legacy mocks (e.g. unittest.mock.AsyncMock)
+    # keep working.
     if hasattr(llm_provider, "chat"):
         try:
-            try:
-                reply = await llm_provider.chat(
-                    messages,
-                    LLMTier.AGENT_CHAT,
-                    message_history=message_history,
-                )
-            except TypeError:
-                # Legacy chat() without message_history kwarg — call without it.
-                reply = await llm_provider.chat(messages, LLMTier.AGENT_CHAT)
+            reply = await _safe_call_with_overrides(
+                llm_provider.chat,
+                messages,
+                LLMTier.AGENT_CHAT,
+                call_overrides=call_overrides,
+                message_history=message_history,
+            )
             return reply, []
         except Exception:
             logger.warning(
@@ -201,10 +311,61 @@ async def _call_llm(
                 exc_info=True,
             )
 
-    # Final fallback: flatten to a single prompt and use complete()
+    # Final fallback: flatten to a single prompt and use complete().
+    # complete() has no temperature/max_tokens slot in the ABC, so per-agent
+    # overrides are silently lost on this leg — the providers all override
+    # ``chat()`` so we only land here for the deepest legacy fallback.
     flat = _flatten_messages(messages)
     text = await llm_provider.complete(flat, LLMTier.AGENT_CHAT)
     return text, []
+
+
+async def _safe_call_with_overrides(
+    method,
+    messages,
+    tier,
+    *,
+    call_overrides: dict,
+    message_history,
+):
+    """Invoke ``method(messages, tier, **kwargs)`` with graceful degradation.
+
+    Tries the call with the full set of kwargs first
+    (``message_history`` + per-agent overrides like ``temperature`` and
+    ``max_tokens``).  If the underlying callable doesn't accept one of those
+    kwargs (``TypeError``), we progressively strip them and retry.  Order of
+    removal: overrides first (because they're the newest item-11.9 plumbing
+    most likely to be absent on legacy mocks), then ``message_history``.
+
+    This keeps the call site clean while preserving backward compatibility
+    with every shape of provider/mock we've shipped — including
+    ``unittest.mock.AsyncMock`` wrappers in tests written before per-agent
+    settings existed.
+    """
+    # Attempt 1: pass everything.
+    try:
+        return await method(
+            messages,
+            tier,
+            message_history=message_history,
+            **call_overrides,
+        )
+    except TypeError:
+        pass
+
+    # Attempt 2: drop the overrides, keep message_history.
+    if call_overrides:
+        try:
+            return await method(
+                messages,
+                tier,
+                message_history=message_history,
+            )
+        except TypeError:
+            pass
+
+    # Attempt 3: drop message_history too — legacy two-arg shape.
+    return await method(messages, tier)
 
 
 # ---------------------------------------------------------------------------

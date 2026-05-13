@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import uuid
 from datetime import datetime, timezone
@@ -292,24 +293,41 @@ async def _run_autonomy_round(
         )
 
     # --- Phase 3: Auto-contribute at high autonomy ---
+    # AUTONOMY_AUTO_CONTRIBUTE_MODE controls the behaviour:
+    #   "off"        — never auto-submit. Humans drive contributions. (Default for
+    #                  Duke Tech Expo 2026 — prevents fragment-salad artifacts on the
+    #                  projector. See checklist item 10.9.)
+    #   "concat"     — legacy behaviour: string-join the agent's last 3 assistant
+    #                  messages as a contribution. Produces incoherent input for the
+    #                  Tier 3 artifact synthesis.
+    #   "synthesize" — pass the concatenated messages through an LLM call asking it
+    #                  to combine them into one cohesive contribution stating the
+    #                  role's position. Higher quality but adds an LLM call per turn.
+    mode = os.environ.get("AUTONOMY_AUTO_CONTRIBUTE_MODE", "off").lower()
+    if mode == "off":
+        return
     if autonomy_level >= 0.7 and round_num >= 3:
-        # At high autonomy after a few rounds, agents can submit contributions
-        # to move toward resolution
         try:
-            _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num)
+            _maybe_auto_contribute(
+                db, quorum_id, role, autonomy_level, round_num, mode=mode
+            )
         except Exception:
             logger.warning(
                 "Auto-contribute failed for role %s", role["id"], exc_info=True
             )
 
 
-def _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num):
+def _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num, mode="concat"):
     """At high autonomy, agents can submit contributions toward resolution.
 
     Only contributes if:
     - autonomy_level >= 0.7
     - This role hasn't contributed yet
     - We've had enough rounds to have context
+
+    Mode:
+    - "concat":     legacy join-the-messages behaviour
+    - "synthesize": LLM-synthesised single-position contribution
     """
     # Check if this role already has a contribution
     existing = (
@@ -338,10 +356,36 @@ def _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num):
     if not messages.data:
         return
 
-    # Synthesize a contribution from the agent's messages
-    combined = " ".join(m["content"] for m in reversed(messages.data))
-    if len(combined) < 50:
+    raw = " ".join(m["content"] for m in reversed(messages.data))
+    if len(raw) < 50:
         return
+
+    if mode == "synthesize":
+        from llm import llm_provider
+        from quorum_llm.models import LLMTier
+
+        prompt = (
+            f"Combine the following reflections from the '{role['name']}' role "
+            f"into one cohesive contribution stating their position. Max 300 words. "
+            f"Do not include meta-commentary, role labels, or section headers — "
+            f"write it as if the role is speaking directly.\n\n"
+            f"Reflections:\n{raw}"
+        )
+        try:
+            combined = asyncio.get_event_loop().run_until_complete(
+                llm_provider.complete(prompt, LLMTier.AGENT_CHAT)
+            )
+        except RuntimeError:
+            combined = raw[:2000]
+        except Exception:
+            logger.warning(
+                "Auto-contribute synthesize failed for role %s; falling back to concat",
+                role["id"],
+                exc_info=True,
+            )
+            combined = raw[:2000]
+    else:
+        combined = raw[:2000]
 
     contribution_id = str(uuid.uuid4())
     db.table("contributions").insert(
@@ -357,5 +401,8 @@ def _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num):
     ).execute()
 
     logger.info(
-        "Auto-contributed for role %s in quorum %s", role["name"], quorum_id
+        "Auto-contributed for role %s in quorum %s (mode=%s)",
+        role["name"],
+        quorum_id,
+        mode,
     )

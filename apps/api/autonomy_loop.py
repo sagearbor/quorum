@@ -16,9 +16,15 @@ import asyncio
 import logging
 import random
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
+
+# How long a row may sit in 'processing' before the reaper treats it as
+# abandoned and flips it back to 'pending'. Tuned to be larger than the
+# slowest expected LLM round-trip (~10s) plus jitter, but small enough that
+# a crashed worker's claims don't permanently block a request.
+_STALE_PROCESSING_TIMEOUT_S = 60
 
 
 def _now_iso() -> str:
@@ -139,6 +145,35 @@ async def _run_autonomy_round(
     """
     from agent_engine import process_a2a_request, process_agent_turn
     from ws_manager import manager
+
+    # --- Phase 0: Reap stale 'processing' claims ---
+    # If a worker crashed mid-LLM call (uvicorn restart, OOM, etc.), its row
+    # stays stuck in 'processing' forever and the CAS-claim guard below will
+    # never let any subsequent tick re-dispatch it. Flip any row older than
+    # _STALE_PROCESSING_TIMEOUT_S back to 'pending' so the next iteration can
+    # pick it up. Best-effort; never raises into the main loop.
+    try:
+        stale_cutoff = (
+            datetime.now(timezone.utc) - timedelta(seconds=_STALE_PROCESSING_TIMEOUT_S)
+        ).isoformat()
+        reaped = (
+            db.table("agent_requests")
+            .update({"status": "pending", "claimed_at": None})
+            .eq("quorum_id", quorum_id)
+            .eq("status", "processing")
+            .lt("claimed_at", stale_cutoff)
+            .execute()
+        )
+        if reaped and getattr(reaped, "data", None):
+            logger.info(
+                "Reaped %d stale 'processing' A2A request(s) for quorum %s",
+                len(reaped.data),
+                quorum_id,
+            )
+    except Exception:
+        logger.debug(
+            "Reaper pass failed for quorum %s (non-fatal)", quorum_id, exc_info=True
+        )
 
     # --- Phase 1: Process pending A2A requests ---
     pending = (

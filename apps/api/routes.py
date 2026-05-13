@@ -892,9 +892,6 @@ async def architect_ai_start(event_id: str, body: AIStartRequest):
             )
         )
 
-    # Persist persona configs (failures are logged but non-fatal).
-    persist_agent_configs(db, quorum_id, role_assignments)
-
         # Register the role's A2A endpoint so other agents and external A2A
         # peers can discover this role's /a2a/agents/{role_id} URL.  This
         # replaces the v0 process-local _agent_registry dict — once the row
@@ -918,6 +915,9 @@ async def architect_ai_start(event_id: str, body: AIStartRequest):
                 "architect_ai_start: failed to register A2A endpoint for role %s",
                 role_id, exc_info=True,
             )
+
+    # Persist persona configs (failures are logged but non-fatal).
+    persist_agent_configs(db, quorum_id, role_assignments)
 
     # Auto-activate if mode is "auto"
     if body.mode == "auto":

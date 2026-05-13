@@ -1222,3 +1222,141 @@ phases:
           - Station offline queue: mock failure → queue → reconnect → flush
           - Display error boundary: chart throw → recovery slide
           - Empty quorumIds: placeholder rendered
+
+  - id: production_readiness
+    name: Production Readiness — Auth, Deploy, Observability, Ops
+    description: |
+      Items not in the original checklist but identified as required for moving
+      Quorum from "expo demo" to "deployable for real users at Duke and beyond."
+      These are infrastructure + ops + product gaps, not feature work.
+      Added 2026-05-13 after the agent-system overnight work landed.
+
+    items:
+      - id: "13.1"
+        title: Real user authentication
+        priority: high
+        tags: [backend, frontend, auth]
+        acceptance: |
+          Today: Supabase anonymous sign-ins via `/sessions/participant` (anyone who
+          scans a QR gets a participant_id). No logged-in users.
+          Goal: SSO / magic-link / OAuth so faculty + staff can come back to past
+          quorums under their own identity. Likely Supabase Auth (Email OTP +
+          GitHub/Microsoft providers); add `user_id` column to `participants`,
+          backfill anonymous rows as `user_id=NULL`.
+          Out of scope: full RBAC / multi-tenant org model (see 13.2).
+
+      - id: "13.2"
+        title: Multi-tenant / org support
+        priority: medium
+        tags: [backend, db]
+        depends_on: ["13.1"]
+        acceptance: |
+          Single-tenant today: one set of events/quorums per Supabase project.
+          Goal: introduce `organizations` table; events FK an org; users belong
+          to one or more orgs; RLS policies scope reads to user's orgs.
+          Required if Duke Health (DCRI), Duke Engineering, and Duke Med want
+          parallel deployments on one backend.
+
+      - id: "13.3"
+        title: Production deployment manifests
+        priority: medium
+        tags: [infra, deploy]
+        acceptance: |
+          Today: Dockerfile exists for apps/api; frontend has implicit Vercel
+          assumption. Goal: explicit deployment specs — either k8s manifests +
+          Helm chart for self-hosted, or Vercel project config + Fly.io
+          Dockerfile-based for backend. Pick one and document.
+          Includes: secrets management, env var inheritance, health probes,
+          horizontal-scaling story (now that autonomy_loop is DB-backed per 11.5).
+
+      - id: "13.4"
+        title: Observability — Sentry + OpenTelemetry + log aggregation
+        priority: high
+        tags: [infra, monitoring]
+        acceptance: |
+          Today: structured `logger.info/warning/error` calls but no aggregation;
+          tracebacks die in stdout. Goal:
+          - Sentry SDK initialized in both apps/api and apps/web; PII-stripped
+            error reporting with release tags
+          - OpenTelemetry traces on the agent-turn / A2A dispatch / DB query
+            critical paths (orchestrator → dispatch → process_agent_turn)
+          - Log aggregation (Logfire? Better Stack? Axiom?) so the Duke ops
+            team can search across requests
+          Pre-expo nice-to-have: Logfire would land in <1 day since Pydantic AI
+          already has native Logfire integration.
+
+      - id: "13.5"
+        title: CI/CD — GitHub Actions running PR tests
+        priority: high
+        tags: [infra, ci]
+        acceptance: |
+          Today: `statusCheckRollup: []` on every PR — no automated test gating.
+          Tests run only when humans remember.
+          Goal: `.github/workflows/test.yml` that runs on every PR:
+          - pytest packages/llm/tests/ (~5s)
+          - pytest apps/api/tests/ (~30s)
+          - cd apps/web && npx vitest run (~2min)
+          - ruff/eslint
+          - Block merge if any fail; expose results in the PR check rollup.
+          Estimate: half a day to land + tune.
+
+      - id: "13.6"
+        title: LLM cost dashboard
+        priority: medium
+        tags: [frontend, observability]
+        acceptance: |
+          `packages/llm/quorum_llm/budget.py` exists with the bookkeeping;
+          nothing surfaces costs to operators. Goal: small `/admin/costs` page
+          showing per-quorum / per-role / per-tier token spend, daily rollup.
+          Pulls from a new `llm_call_log` table that providers append to
+          (or hooks into Pydantic AI's `usage` callbacks).
+          Useful internally; also useful for a Duke demo to show "this
+          deliberation cost $0.42 to run."
+
+      - id: "13.7"
+        title: Load + chaos testing
+        priority: medium
+        tags: [tests, infra]
+        depends_on: ["13.4"]
+        acceptance: |
+          CAS-claim race is unit-tested (PR #22) but not under real concurrency
+          at scale. Goal: locust/k6 script that simulates:
+          - 4 simultaneous quorums at autonomy_level=1.0
+          - 12 phones connected, all heartbeating
+          - 1 station's network drops mid-turn; recovery checks
+          - LLM provider returns 429 for 30s; degradation behavior verified
+          Sanity-check the orchestrator + autonomy loop hold up at expo-scale
+          (20+ devices on one quorum is the upper bound for the demo).
+
+      - id: "13.8"
+        title: Disaster recovery + backup strategy
+        priority: low
+        tags: [infra, db]
+        acceptance: |
+          Supabase has point-in-time recovery on paid plans; document the
+          retention window. Goal: backup script that exports the live Postgres
+          schema + data weekly, S3-bucketed with rotation. Restore runbook
+          (separate doc). Sanity-test the restore at least once.
+
+      - id: "13.9"
+        title: Onboarding + walkthrough documentation
+        priority: medium
+        tags: [docs]
+        acceptance: |
+          Goal: a 5-minute video walkthrough of the architect → live quorum →
+          artifact flow for new users. Plus a written "first 30 minutes with
+          Quorum" doc. Pair with the planned tech-expo demo content (see
+          Phase 5).
+          Optional: animated GIFs in README showing each major dashboard
+          dashboard rendering live data.
+
+      - id: "13.10"
+        title: Real-data privacy review
+        priority: medium
+        tags: [security, legal]
+        acceptance: |
+          Quorum will likely handle PHI-adjacent or otherwise sensitive
+          deliberation content (especially in clinical contexts at DCRI).
+          Goal: legal/IRB review of the data model — what's stored, who can
+          read it, retention, deletion-on-request — and document the answer.
+          Hard gate before any real Duke Health pilot.

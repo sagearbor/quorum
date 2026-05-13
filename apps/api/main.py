@@ -108,6 +108,31 @@ async def lifespan(app: FastAPI):
         await load_seed_quorum()
     except Exception:
         logger.exception("Seed loader failed — continuing without seed data")
+
+    # Opt-in: reclaim autonomy loops that were running when the previous
+    # process died (heartbeat older than 60s). Off by default — operators
+    # set AUTONOMY_LOOP_RECLAIM_ORPHANS=true in single-worker deployments
+    # where they're confident no other worker still owns the lease.
+    # See migration 20260513000004_autonomy_loops.sql.
+    if os.environ.get("AUTONOMY_LOOP_RECLAIM_ORPHANS", "false").lower() in (
+        "true",
+        "1",
+        "yes",
+    ):
+        try:
+            from autonomy_loop import reclaim_orphaned_autonomy_loops
+
+            reclaimed = await reclaim_orphaned_autonomy_loops()
+            if reclaimed:
+                logger.info(
+                    "Reclaimed %d orphaned autonomy loop(s): %s",
+                    len(reclaimed),
+                    reclaimed,
+                )
+        except Exception:
+            logger.exception(
+                "Autonomy-loop reclaim failed — running quorums may need manual restart"
+            )
     yield
 
 

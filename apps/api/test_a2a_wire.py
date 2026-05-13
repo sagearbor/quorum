@@ -93,7 +93,10 @@ class TestAgentCard:
         # Quorum-specific extras still surface via the x-quorum namespace.
         assert card["x-quorum"]["role_id"] == "role-123"
         assert card["x-quorum"]["quorum_id"] == "q-456"
-        assert card["x-quorum"]["authority_rank"] == 3
+        assert card["x-quorum"]["capacity"] == 1
+        # SECURITY: authority_rank MUST NOT leak via the public card
+        # (audit PR #14 — see fix/agentcard-description-leak).
+        assert "authority_rank" not in card["x-quorum"]
 
     def test_agent_card_with_base_url(self):
         from apps.api.quorum_a2a.agent_card import build_agent_card_dict

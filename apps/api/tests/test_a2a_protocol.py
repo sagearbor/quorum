@@ -212,13 +212,67 @@ class TestAgentCardEndpoint:
         client, _ = a2a_app
         resp = client.get(f"/a2a/agents/{_ROLE_B_ID}/.well-known/agent-card.json")
         card = resp.json()
-        # The role has an agent_configs row with domain_tags + system_prompt.
-        # The card description should come from the system prompt's first line.
-        assert "IRB officer" in card["description"]
-        # Skill tags should reflect domain_tags from agent_config.
+        # Description must be the generic, non-leaky string — it should NOT
+        # contain any slice of the architect-authored system_prompt.
+        # The role name (`irb_officer`) is public (it's in the routing URL),
+        # so it may appear; the system_prompt's wording (e.g. "IRB officer
+        # for this clinical trial") must NOT.
+        assert "IRB officer" not in card["description"]
+        assert "clinical trial" not in card["description"]
+        # Skill tags should reflect domain_tags from agent_config (these are
+        # architect-curated discovery tags, not persona-leaking prose).
         skill_tags = card["skills"][0].get("tags", [])
         assert "irb" in skill_tags
         assert "regulatory" in skill_tags
+
+    def test_agent_card_description_does_not_leak_system_prompt(self, a2a_app):
+        """SECURITY: the public AgentCard must not echo any keyword that is
+        unique to the architect-authored system_prompt. Audit: PR #14."""
+        client, _ = a2a_app
+        resp = client.get(f"/a2a/agents/{_ROLE_B_ID}/.well-known/agent-card.json")
+        card = resp.json()
+        # Keywords that appear in the system_prompt fixture but should never
+        # surface via the unauthenticated card.
+        leaky_keywords = [
+            "clinical trial",
+            "regulatory references",
+            "Review safety questions",
+        ]
+        for keyword in leaky_keywords:
+            assert keyword.lower() not in card["description"].lower(), (
+                f"description leaks system_prompt keyword {keyword!r}: "
+                f"{card['description']!r}"
+            )
+
+    def test_agent_card_x_quorum_does_not_expose_authority_rank(self, a2a_app):
+        """SECURITY: x-quorum extension must NOT include authority_rank.
+        Consumers needing rank must fetch it via the access-gated authority
+        MCP server. Audit: PR #14."""
+        client, _ = a2a_app
+        resp = client.get(f"/a2a/agents/{_ROLE_B_ID}/.well-known/agent-card.json")
+        card = resp.json()
+        assert "x-quorum" in card
+        assert "authority_rank" not in card["x-quorum"]
+        # And it must not appear anywhere in the raw response body either —
+        # the fixture role has authority_rank=5, so guard against any reintro
+        # via the skill description or other fields.
+        body_text = resp.text.lower()
+        assert "authority_rank" not in body_text
+        assert "authority rank" not in body_text
+
+    def test_agent_card_skills_contain_only_generic_capabilities(self, a2a_app):
+        """SECURITY: skills must describe capability surface, not persona
+        behavior. Audit: PR #14."""
+        client, _ = a2a_app
+        resp = client.get(f"/a2a/agents/{_ROLE_B_ID}/.well-known/agent-card.json")
+        card = resp.json()
+        skill = card["skills"][0]
+        # No persona keywords or authority rank text in the skill description.
+        skill_desc = skill.get("description", "").lower()
+        assert "clinical trial" not in skill_desc
+        assert "regulatory references" not in skill_desc
+        assert "authority rank" not in skill_desc
+        assert "overrides" not in skill_desc
 
     def test_legacy_agent_json_alias_serves_identical_content(self, a2a_app):
         client, _ = a2a_app

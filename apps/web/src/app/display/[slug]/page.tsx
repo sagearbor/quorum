@@ -3,6 +3,8 @@
 import { useParams } from "next/navigation";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { DashboardCarousel } from "@/components/carousel/DashboardCarousel";
+import { PresenceDots } from "@/components/PresenceDots";
+import { usePresence } from "@/hooks/usePresence";
 
 interface RoleStatus {
   role_id: string;
@@ -100,6 +102,16 @@ export default function DisplayPage() {
 
   const blockedRoles = roleStatuses.filter((r) => r.status === "blocked");
 
+  // Presence for the first (primary) quorum drives the "people connected"
+  // counter in the header.  When multiple quorums are showing in the carousel
+  // we still only subscribe once — keeping the header lightweight.
+  const primaryQuorumId = quorumIds[0] ?? "";
+  const presence = usePresence(primaryQuorumId);
+  const totalConnected = Array.from(presence.values()).reduce(
+    (sum, info) => sum + info.participantCount,
+    0,
+  );
+
   return (
     <div className="h-screen w-screen bg-black text-white overflow-hidden flex flex-col">
       {/* Header bar */}
@@ -108,6 +120,16 @@ export default function DisplayPage() {
           QUORUM <span className="text-white/50 font-normal">/ {slug}</span>
         </h1>
         <div className="flex items-center gap-4">
+          {totalConnected > 0 && (
+            <span
+              data-testid="display-presence-total"
+              className="text-xs text-emerald-300/80 flex items-center gap-1.5"
+              title={`${totalConnected} participant${totalConnected === 1 ? "" : "s"} currently connected`}
+            >
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              {totalConnected} CONNECTED
+            </span>
+          )}
           <span className="text-xs text-emerald-400/70 flex items-center gap-1.5">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             LIVE
@@ -148,6 +170,11 @@ export default function DisplayPage() {
                 {justUnblocked && (
                   <span className="ml-1.5 text-emerald-400">Unlocked!</span>
                 )}
+                <PresenceDots
+                  roleId={role.role_id}
+                  presence={presence}
+                  className="ml-2 align-middle"
+                />
               </div>
             );
           })}

@@ -345,6 +345,23 @@ async def contribute(quorum_id: str, body: ContributeRequest):
     if quorum.data["status"] in ("resolved", "archived"):
         raise HTTPException(status_code=409, detail="Quorum is no longer accepting contributions")
 
+    # Verify role_id belongs to this quorum — prevents cross-quorum writes
+    # (an attendee at the expo could otherwise pass a foreign role_id and
+    # land contributions into another live quorum's artifact). Uses the
+    # same supabase-py pattern as elsewhere in this file (maybe_single).
+    role_check = (
+        db.table("roles")
+        .select("quorum_id")
+        .eq("id", body.role_id)
+        .maybe_single()
+        .execute()
+    )
+    if not role_check or not role_check.data or role_check.data.get("quorum_id") != quorum_id:
+        raise HTTPException(
+            status_code=422,
+            detail="role_id does not belong to this quorum",
+        )
+
     # Activate quorum on first contribution
     if quorum.data["status"] == "open":
         db.table("quorums").update({"status": "active"}).eq("id", quorum_id).execute()
@@ -442,6 +459,7 @@ async def contribute(quorum_id: str, body: ContributeRequest):
                 user_message=body.content,
                 supabase_client=db,
                 llm_provider=llm_provider,
+                participant_id=body.participant_id,
             )
             if is_paused_reply(turn_reply, turn_tags):
                 # Facilitator paused (LLM unavailable). Do NOT broadcast a
@@ -1006,6 +1024,7 @@ async def ask_facilitator(quorum_id: str, station_id: str, body: AskRequest):
             user_message=body.content,
             supabase_client=db,
             llm_provider=llm_provider,
+            participant_id=body.participant_id,
         )
     except Exception:
         logger.error(

@@ -14,16 +14,19 @@ Auth (mutually exclusive, checked in order):
 
 Uses env vars:
     AZURE_OPENAI_ENDPOINT
-    AZURE_OPENAI_KEY            (optional — omit to use Managed Identity)
-    AZURE_OPENAI_DEPLOYMENT_T2  (gpt-4o-mini)
-    AZURE_OPENAI_DEPLOYMENT_T3  (gpt-4o)
-    AZURE_OPENAI_DEPLOYMENT_T5  (gpt-5-nano, optional — falls back to T2)
-    AZURE_OPENAI_API_VERSION    (default: 2025-03-01-preview)
+    AZURE_OPENAI_KEY                    (optional — omit to use Managed Identity)
+    AZURE_OPENAI_DEPLOYMENT_T2          (gpt-4o-mini)
+    AZURE_OPENAI_DEPLOYMENT_T3          (gpt-4o)
+    AZURE_OPENAI_DEPLOYMENT_T5          (gpt-5-nano, optional — falls back to T2)
+    AZURE_OPENAI_EMBEDDING_DEPLOYMENT   (text-embedding-3-small; required for embed())
+    AZURE_OPENAI_API_VERSION            (default: 2025-03-01-preview)
 
-NOTE: ``embed()`` is INTENTIONALLY preserved unchanged from the legacy
-implementation.  The Azure embedding endpoint targets the T2 deployment which
-is a *chat* deployment, not an embedding deployment — that bug is tracked as
-checklist item 11.4 and fixed in a separate PR.
+Embeddings (item 11.4): ``embed()`` targets ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT``
+— Azure does NOT serve embeddings from chat deployments, so the embedding
+deployment MUST be configured separately (e.g. ``text-embedding-3-small``
+yielding 1536-dim vectors, or ``text-embedding-3-large`` yielding 3072-dim).
+If the env var is unset and no constructor arg is provided, ``embed()`` raises
+a clear ``ValueError`` rather than silently degrading.
 """
 
 from __future__ import annotations
@@ -41,7 +44,9 @@ from quorum_llm.interface import LLMProvider
 from quorum_llm.models import BudgetExhaustedError, LLMTier
 from quorum_llm.providers._pai_common import (
     AgentCache,
+    ChatResult,
     run_chat,
+    run_chat_with_history,
     run_complete,
     run_respond,
     tier_settings,
@@ -81,6 +86,7 @@ class AzureOpenAIProvider(LLMProvider):
         deployment_t2: str | None = None,
         deployment_t3: str | None = None,
         deployment_t5: str | None = None,
+        deployment_embed: str | None = None,
     ):
         self._endpoint = endpoint or os.environ["AZURE_OPENAI_ENDPOINT"]
         self._deployment_t2 = (
@@ -95,6 +101,14 @@ class AzureOpenAIProvider(LLMProvider):
             deployment_t5
             or os.environ.get("AZURE_OPENAI_DEPLOYMENT_T5")
             or self._deployment_t2
+        )
+        # Embedding deployment is optional at construct time so callers that
+        # never invoke embed() can still build the provider.  The error is
+        # deferred to embed() itself where the missing config matters.
+        self._deployment_embed = (
+            deployment_embed
+            or os.environ.get("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+            or None
         )
 
         resolved_key = api_key or os.environ.get("AZURE_OPENAI_KEY")
@@ -209,6 +223,8 @@ class AzureOpenAIProvider(LLMProvider):
         tier: LLMTier,
         temperature: float = 0.4,
         max_tokens: int = 1024,
+        *,
+        message_history=None,
     ) -> str:
         if tier == LLMTier.KEYWORD:
             flat = "\n".join(m["content"] for m in messages)
@@ -217,7 +233,42 @@ class AzureOpenAIProvider(LLMProvider):
         agent = self._agents.get(tier)
         settings = tier_settings(tier, temperature=temperature, max_tokens=max_tokens)
         try:
-            return await run_chat(agent, messages, settings)
+            return await run_chat(
+                agent, messages, settings, message_history=message_history
+            )
+        except ModelHTTPError as exc:
+            _maybe_raise_budget("azure", tier, exc)
+            raise
+        except RateLimitError as exc:
+            raise BudgetExhaustedError(
+                provider="azure", tier=tier, detail=str(exc)
+            ) from exc
+
+    async def chat_with_history(
+        self,
+        messages: list[dict[str, str]],
+        tier: LLMTier,
+        temperature: float = 0.4,
+        max_tokens: int = 1024,
+        *,
+        message_history=None,
+    ) -> ChatResult:
+        """Multi-turn chat that returns (text, new_messages) for persistence.
+
+        Mirrors ``chat()`` but returns the Pydantic AI new-message delta so
+        callers can append it to the ``conversations`` table.  See
+        ``apps/api/conversation_store.py`` for the persistence layer.
+        """
+        if tier == LLMTier.KEYWORD:
+            flat = "\n".join(m["content"] for m in messages)
+            return ChatResult(text=", ".join(extract_keywords(flat)), new_messages=[])
+
+        agent = self._agents.get(tier)
+        settings = tier_settings(tier, temperature=temperature, max_tokens=max_tokens)
+        try:
+            return await run_chat_with_history(
+                agent, messages, settings, message_history=message_history
+            )
         except ModelHTTPError as exc:
             _maybe_raise_budget("azure", tier, exc)
             raise
@@ -270,16 +321,29 @@ class AzureOpenAIProvider(LLMProvider):
         return text, None
 
     async def embed(self, text: str) -> list[float]:
-        """Embedding API — preserved unchanged from the legacy adapter.
+        """Embedding API — routed to a dedicated Azure embedding deployment.
 
-        This still targets the T2 *chat* deployment, which is a known bug
-        (item 11.4 in the developer checklist).  Pydantic AI does not wrap
-        embedding endpoints in its high-level API, so the fix will swap in a
-        dedicated embedding deployment via the openai SDK directly.
+        Azure OpenAI does NOT serve embeddings from chat deployments; the
+        previous implementation targeted the T2 *chat* deployment and would
+        404 against any properly-configured Azure resource (audit finding C4,
+        checklist item 11.4).
+
+        We use the ``AsyncAzureOpenAI`` client directly because Pydantic AI
+        does not wrap embedding endpoints in its high-level Agent API.  The
+        deployment is read from ``AZURE_OPENAI_EMBEDDING_DEPLOYMENT`` (or the
+        constructor ``deployment_embed`` argument).  If unset, we raise
+        ``ValueError`` rather than silently returning a fake vector.
         """
+        if not self._deployment_embed:
+            raise ValueError(
+                "AZURE_OPENAI_EMBEDDING_DEPLOYMENT not configured. "
+                "Set it to your Azure embedding deployment name (e.g. "
+                "text-embedding-3-small) or pass deployment_embed to the "
+                "AzureOpenAIProvider constructor."
+            )
         try:
             response = await self._client.embeddings.create(
-                model=self._deployment_t2,
+                model=self._deployment_embed,
                 input=text,
             )
             return response.data[0].embedding

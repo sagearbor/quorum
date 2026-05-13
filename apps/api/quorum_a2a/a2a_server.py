@@ -402,9 +402,15 @@ async def _handle_send_message(role_id: str, body: dict[str, Any]) -> dict[str, 
             supabase_client=get_supabase(),
             llm_provider=llm_provider,
         )
-    except Exception as exc:  # noqa: BLE001
+    except Exception:  # noqa: BLE001
+        # NEVER include the exception text in the wire response — the A2A
+        # endpoint is unauthenticated and the SendMessageResponse Task
+        # artifact is serialized straight back over the wire. Leaking
+        # ``str(exc)`` here can expose partial API keys, internal URLs, DB
+        # row contents, or table names. Operators still get the full trace
+        # via ``exc_info=True`` in the log line below.
         logger.error("A2A task-send: agent turn failed", exc_info=True)
-        reply = f"Agent error: {exc}"
+        reply = "Agent turn unavailable. Please retry."
 
     # 4. Wrap reply as a SendMessageResponse and serialize for the wire.
     response_proto = _build_completed_response(

@@ -41,6 +41,11 @@ ALTER TABLE contributions
 -- -----------------------------------------------------------------------------
 ALTER TABLE participants ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS participants_select_open ON participants;
+DROP POLICY IF EXISTS participants_insert_service ON participants;
+DROP POLICY IF EXISTS participants_update_service ON participants;
+DROP POLICY IF EXISTS participants_delete_service ON participants;
+
 CREATE POLICY participants_select_open
     ON participants FOR SELECT USING (true);
 CREATE POLICY participants_insert_service

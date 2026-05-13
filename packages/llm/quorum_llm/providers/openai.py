@@ -5,8 +5,9 @@ Requires only ``OPENAI_API_KEY``.
 
 Uses env vars:
     OPENAI_API_KEY
-    OPENAI_MODEL_T2  (default: gpt-4o-mini)
-    OPENAI_MODEL_T3  (default: gpt-4o)
+    OPENAI_MODEL_T2          (default: gpt-4o-mini)
+    OPENAI_MODEL_T3          (default: gpt-4o)
+    OPENAI_EMBEDDING_MODEL   (default: text-embedding-3-small)
 
 Reasoning models (``o1*``, ``o3*``, ``o4*``, ``gpt-5*``) are handled by
 Pydantic AI's per-model profile — the SDK auto-drops ``temperature`` for
@@ -28,7 +29,9 @@ from quorum_llm.interface import LLMProvider
 from quorum_llm.models import BudgetExhaustedError, LLMTier
 from quorum_llm.providers._pai_common import (
     AgentCache,
+    ChatResult,
     run_chat,
+    run_chat_with_history,
     run_complete,
     run_respond,
     tier_settings,
@@ -37,6 +40,7 @@ from quorum_llm.tier1 import extract_keywords
 
 _DEFAULT_MODEL_T2 = "gpt-4o-mini"
 _DEFAULT_MODEL_T3 = "gpt-4o"
+_DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
 
 
 def _is_reasoning_model(model: str) -> bool:
@@ -62,10 +66,15 @@ class OpenAIProvider(LLMProvider):
         api_key: str | None = None,
         model_t2: str | None = None,
         model_t3: str | None = None,
+        embedding_model: str | None = None,
     ):
         self._api_key = api_key or os.environ["OPENAI_API_KEY"]
         self._model_t2 = model_t2 or os.environ.get("OPENAI_MODEL_T2", _DEFAULT_MODEL_T2)
         self._model_t3 = model_t3 or os.environ.get("OPENAI_MODEL_T3", _DEFAULT_MODEL_T3)
+        self._embedding_model = (
+            embedding_model
+            or os.environ.get("OPENAI_EMBEDDING_MODEL", _DEFAULT_EMBEDDING_MODEL)
+        )
         # Preserve the AsyncOpenAI client for embed() and for the Pydantic AI
         # provider — sharing one client means one connection pool.
         self._client = AsyncOpenAI(api_key=self._api_key)
@@ -109,11 +118,39 @@ class OpenAIProvider(LLMProvider):
         tier: LLMTier,
         temperature: float = 0.4,
         max_tokens: int = 1024,
+        *,
+        message_history=None,
     ) -> str:
         agent = self._agents.get(tier)
         settings = tier_settings(tier, temperature=temperature, max_tokens=max_tokens)
         try:
-            return await run_chat(agent, messages, settings)
+            return await run_chat(
+                agent, messages, settings, message_history=message_history
+            )
+        except ModelHTTPError as exc:
+            _maybe_raise_budget(tier, exc)
+            raise
+        except RateLimitError as exc:
+            raise BudgetExhaustedError(
+                provider="openai", tier=tier, detail=str(exc)
+            ) from exc
+
+    async def chat_with_history(
+        self,
+        messages: list[dict[str, str]],
+        tier: LLMTier,
+        temperature: float = 0.4,
+        max_tokens: int = 1024,
+        *,
+        message_history=None,
+    ) -> ChatResult:
+        """Chat returning (text, new_messages) for persistence — see Azure."""
+        agent = self._agents.get(tier)
+        settings = tier_settings(tier, temperature=temperature, max_tokens=max_tokens)
+        try:
+            return await run_chat_with_history(
+                agent, messages, settings, message_history=message_history
+            )
         except ModelHTTPError as exc:
             _maybe_raise_budget(tier, exc)
             raise
@@ -152,15 +189,17 @@ class OpenAIProvider(LLMProvider):
         return text, ("pai-managed" if _is_reasoning_model(model_name) else None)
 
     async def embed(self, text: str) -> list[float]:
-        """Embedding — preserved on the openai SDK.
+        """Embedding — direct openai SDK call (no Pydantic AI wrapper).
 
         Pydantic AI exposes ``OpenAIEmbeddingModel`` but its surface is built
         for the typed ``Embedder`` class and would require refactoring callers.
-        For Phase 9.1 we keep the existing direct-SDK call.
+        We keep the direct-SDK call and read the model name from
+        ``OPENAI_EMBEDDING_MODEL`` (default ``text-embedding-3-small``, 1536
+        dims).  Set ``text-embedding-3-large`` for 3072-dim vectors.
         """
         try:
             response = await self._client.embeddings.create(
-                model="text-embedding-3-small",
+                model=self._embedding_model,
                 input=text,
             )
             return response.data[0].embedding

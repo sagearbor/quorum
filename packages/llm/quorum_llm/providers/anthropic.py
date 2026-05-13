@@ -26,7 +26,9 @@ from quorum_llm.interface import LLMProvider
 from quorum_llm.models import BudgetExhaustedError, LLMTier
 from quorum_llm.providers._pai_common import (
     AgentCache,
+    ChatResult,
     run_chat,
+    run_chat_with_history,
     run_complete,
     run_respond,
     tier_settings,
@@ -94,6 +96,8 @@ class AnthropicProvider(LLMProvider):
         tier: LLMTier,
         temperature: float = 0.4,
         max_tokens: int = 1024,
+        *,
+        message_history=None,
     ) -> str:
         if tier == LLMTier.KEYWORD:
             flat = "\n".join(m["content"] for m in messages)
@@ -102,7 +106,37 @@ class AnthropicProvider(LLMProvider):
         agent = self._agents.get(tier)
         settings = tier_settings(tier, temperature=temperature, max_tokens=max_tokens)
         try:
-            return await run_chat(agent, messages, settings)
+            return await run_chat(
+                agent, messages, settings, message_history=message_history
+            )
+        except ModelHTTPError as exc:
+            _maybe_raise_budget(tier, exc)
+            raise
+        except anthropic.RateLimitError as exc:
+            raise BudgetExhaustedError(
+                provider="anthropic", tier=tier, detail=str(exc)
+            ) from exc
+
+    async def chat_with_history(
+        self,
+        messages: list[dict[str, str]],
+        tier: LLMTier,
+        temperature: float = 0.4,
+        max_tokens: int = 1024,
+        *,
+        message_history=None,
+    ) -> ChatResult:
+        """Chat returning (text, new_messages) for persistence — see Azure."""
+        if tier == LLMTier.KEYWORD:
+            flat = "\n".join(m["content"] for m in messages)
+            return ChatResult(text=", ".join(extract_keywords(flat)), new_messages=[])
+
+        agent = self._agents.get(tier)
+        settings = tier_settings(tier, temperature=temperature, max_tokens=max_tokens)
+        try:
+            return await run_chat_with_history(
+                agent, messages, settings, message_history=message_history
+            )
         except ModelHTTPError as exc:
             _maybe_raise_budget(tier, exc)
             raise
@@ -140,24 +174,25 @@ class AnthropicProvider(LLMProvider):
         return text, None
 
     async def embed(self, text: str) -> list[float]:
-        """Embedding fallback — Anthropic has no embedding API.
+        """Embedding API — NOT SUPPORTED by Anthropic.
 
-        Preserved verbatim from the legacy adapter: deterministic TF-style
-        sparse vector built from extracted keywords.  In production, pair
-        this provider with a dedicated embedding provider (Voyage, OpenAI).
+        Anthropic's API does not expose an embedding endpoint (as of 2026-05),
+        and the previous adapter returned a 256-dim hash-bucket fake vector
+        that quietly broke downstream cosine similarity (audit finding C4,
+        checklist item 11.4).
+
+        We now raise ``NotImplementedError`` so callers receive a hard,
+        actionable error instead of a silently-degraded routing decision.
+        Pair this provider with a dedicated embedding source — typically
+        Azure (``AZURE_OPENAI_EMBEDDING_DEPLOYMENT``) or OpenAI
+        (``OPENAI_API_KEY``) — by constructing the matching provider for
+        embed() calls.
         """
-        from quorum_llm.tier1 import extract_keywords
-
-        keywords = extract_keywords(text, max_keywords=50)
-        dim = 256
-        vec = [0.0] * dim
-        for kw in keywords:
-            idx = hash(kw) % dim
-            vec[idx] = 1.0
-        magnitude = sum(v * v for v in vec) ** 0.5
-        if magnitude > 0:
-            vec = [v / magnitude for v in vec]
-        return vec
+        raise NotImplementedError(
+            "Anthropic provider has no native embedding API. "
+            "Configure AZURE_OPENAI_EMBEDDING_DEPLOYMENT or OPENAI_API_KEY "
+            "and use AzureOpenAIProvider / OpenAIProvider for embeddings."
+        )
 
 
 def _maybe_raise_budget(tier: LLMTier, exc: ModelHTTPError) -> None:

@@ -1,0 +1,281 @@
+{
+  "event": {
+    "id": "00000000-0000-0000-0000-000000000002",
+    "name": "Duke Cancer Center — Multidisciplinary Tumor Board",
+    "slug": "duke-tumor-board-2026",
+    "access_code": "TUMOR2026",
+    "max_active_quorums": 3,
+    "created_by": "seed-architect",
+    "created_at": "2026-05-13T08:00:00Z"
+  },
+  "quorums": [
+    {
+      "id": "00000000-0000-0000-0000-000000002010",
+      "event_id": "00000000-0000-0000-0000-000000000002",
+      "title": "Tumor Board: Stage IIIB NSCLC — Treatment Plan for 58yo with EGFR exon 19 deletion",
+      "description": "Multi-disciplinary review of a 58-year-old female (former smoker, 25 pack-years, quit 8 years ago) presenting with newly diagnosed stage IIIB non-small cell lung cancer (T3 N3 M0), adenocarcinoma histology, EGFR exon 19 deletion confirmed, PD-L1 TPS 35%. PMH significant for moderate COPD (FEV1 58%), well-controlled type 2 diabetes, and prior left-sided radiation for breast cancer (2017, complete remission). Patient is a high school principal, lives with husband, two adult children. ECOG 1. Factors under deliberation: (1) concurrent chemoradiation vs sequential vs neoadjuvant osimertinib followed by consolidation; (2) eligibility for Duke's open phase II trial of osimertinib + durvalumab consolidation (NCT-FAKE-2026-LUNG-08); (3) prior thoracic radiation overlap; (4) patient-stated goal of returning to teaching by fall semester.",
+      "status": "active",
+      "heat_score": 72,
+      "dashboard_types": ["authority_cascade_tree", "decision_waterfall", "quorum_health_chart"],
+      "carousel_mode": "multi-view",
+      "roles": [
+        {
+          "id": "00000000-0000-0000-0000-000000002101",
+          "name": "Medical Oncologist",
+          "capacity": 1,
+          "authority_rank": 4,
+          "prompt_template": [
+            { "field_name": "systemic_therapy_options", "prompt": "What systemic therapy options are appropriate given the EGFR mutation and PD-L1 status?" },
+            { "field_name": "trial_eligibility", "prompt": "Does the patient meet eligibility for the open Duke osimertinib + durvalumab consolidation trial?" },
+            { "field_name": "drug_interactions", "prompt": "Are there interactions with diabetes meds or considerations given prior thoracic radiation?" }
+          ],
+          "fallback_chain": [],
+          "color": "#2563EB"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000002102",
+          "name": "Thoracic Surgeon",
+          "capacity": 1,
+          "authority_rank": 4,
+          "prompt_template": [
+            { "field_name": "resectability", "prompt": "Is the disease anatomically resectable given N3 nodal involvement and prior radiation field?" },
+            { "field_name": "neoadjuvant_window", "prompt": "Would neoadjuvant therapy create a surgical window worth pursuing?" },
+            { "field_name": "pulmonary_reserve", "prompt": "Given FEV1 58% and prior left-sided radiation, what is the surgical risk profile?" }
+          ],
+          "fallback_chain": [],
+          "color": "#DC2626"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000002103",
+          "name": "Radiation Oncologist",
+          "capacity": 1,
+          "authority_rank": 4,
+          "prompt_template": [
+            { "field_name": "prior_dose_overlap", "prompt": "What is the cumulative dose constraint given prior left-breast radiation in 2017?" },
+            { "field_name": "modality_recommendation", "prompt": "IMRT vs proton vs SBRT — what modality minimizes lung and cardiac re-irradiation?" },
+            { "field_name": "concurrent_vs_sequential", "prompt": "Is concurrent chemoradiation tolerable given COPD and prior radiation?" }
+          ],
+          "fallback_chain": [],
+          "color": "#D97706"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000002104",
+          "name": "Pathologist",
+          "capacity": 1,
+          "authority_rank": 3,
+          "prompt_template": [
+            { "field_name": "molecular_profile", "prompt": "Confirm the molecular profile and any additional actionable findings on NGS." },
+            { "field_name": "histologic_subtype", "prompt": "What is the specific histologic subtype and any features affecting prognosis?" },
+            { "field_name": "nodal_staging", "prompt": "Confirm pathologic basis for the N3 designation — biopsy site and adequacy." }
+          ],
+          "fallback_chain": [],
+          "color": "#7C3AED"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000002105",
+          "name": "Pulmonologist",
+          "capacity": 1,
+          "authority_rank": 3,
+          "prompt_template": [
+            { "field_name": "baseline_function", "prompt": "What is the patient's true baseline pulmonary function and reserve?" },
+            { "field_name": "tolerability_assessment", "prompt": "Will the patient tolerate concurrent chemoradiation given COPD?" },
+            { "field_name": "pre_rehab", "prompt": "Is pulmonary pre-rehab indicated before any surgical or radiation intervention?" }
+          ],
+          "fallback_chain": [],
+          "color": "#0891B2"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000002106",
+          "name": "Palliative Care",
+          "capacity": 1,
+          "authority_rank": 3,
+          "prompt_template": [
+            { "field_name": "symptom_burden", "prompt": "What symptoms is the patient experiencing now — pain, dyspnea, anxiety?" },
+            { "field_name": "goals_of_care", "prompt": "What are the patient's stated goals and how do they map to treatment intensity?" },
+            { "field_name": "supportive_plan", "prompt": "What supportive care interventions should run in parallel with active treatment?" }
+          ],
+          "fallback_chain": [],
+          "color": "#059669"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000002107",
+          "name": "Patient Advocate",
+          "capacity": "unlimited",
+          "authority_rank": 2,
+          "prompt_template": [
+            { "field_name": "patient_priorities", "prompt": "What has the patient said matters most to her — survival, function, quality of life, time?" },
+            { "field_name": "family_dynamics", "prompt": "What family or caregiver concerns should the board be aware of?" },
+            { "field_name": "decision_capacity", "prompt": "Has the patient demonstrated capacity to weigh options and is she ready to decide?" }
+          ],
+          "fallback_chain": [],
+          "color": "#EC4899"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000002108",
+          "name": "Clinical Ethicist",
+          "capacity": 1,
+          "authority_rank": 2,
+          "prompt_template": [
+            { "field_name": "trial_consent", "prompt": "Are there equipoise or coercion concerns in offering the open trial at our institution?" },
+            { "field_name": "shared_decision", "prompt": "Is the team presenting options in a way that genuinely supports shared decision-making?" },
+            { "field_name": "disparities_check", "prompt": "Are we offering this patient the same range of options we would offer to any patient with this profile?" }
+          ],
+          "fallback_chain": [],
+          "color": "#A855F7"
+        }
+      ],
+      "contributions": [
+        {
+          "id": "c0000000-0000-0000-0000-000000002001",
+          "role_id": "00000000-0000-0000-0000-000000002104",
+          "user_token": "seed-path-001",
+          "content": "Final path: invasive moderately differentiated adenocarcinoma, lepidic-predominant with acinar component. NGS confirms EGFR exon 19 deletion (c.2235_2249del, classical), no T790M, no co-mutations of concern. TMB low (3 mut/Mb). PD-L1 22C3 TPS 35%. Mediastinal node biopsy positive at station 4R and 7 — supports N3 designation. No driver alterations beyond EGFR. ALK, ROS1, BRAF, KRAS, HER2 all wild-type.",
+          "structured_fields": {
+            "molecular_profile": "EGFR exon 19 deletion classical (highly osimertinib-sensitive). PD-L1 TPS 35%. TMB low. No T790M. No co-mutations. Strong predicted response to TKI; moderate predicted response to single-agent IO.",
+            "histologic_subtype": "Lepidic-predominant adenocarcinoma with acinar component. Moderately differentiated. No high-grade features (no micropapillary, no solid). Favorable histologic prognosis if controllable systemically.",
+            "nodal_staging": "Mediastinal lymph node biopsy at EBUS confirmed metastatic disease at 4R and 7. N3 supported. Sampling adequacy high (>200 lymphocytes per node site, multiple cores)."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T08:05:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000002002",
+          "role_id": "00000000-0000-0000-0000-000000002101",
+          "user_token": "seed-medonc-001",
+          "content": "EGFR exon 19 del classical is a strong driver — osimertinib response rate >80% in this molecular subtype. The recently expanded NCCN guideline supports neoadjuvant osimertinib in unresectable stage III EGFR-positive NSCLC. Patient meets Duke's NCT-FAKE-2026-LUNG-08 eligibility on paper: EGFR exon 19 or 21 mutation, stage IIIA-IIIB, ECOG 0-1, adequate organ function. The trial offers 3 cycles of osimertinib + durvalumab followed by re-staging. PD-L1 35% does not exclude. Recommend strongly considering trial enrollment over standard concurrent chemoradiation given the molecular profile.",
+          "structured_fields": {
+            "systemic_therapy_options": "First-line options: (1) osimertinib + durvalumab consolidation trial; (2) standard concurrent chemoradiation + durvalumab consolidation (PACIFIC regimen, suboptimal in EGFR+); (3) neoadjuvant osimertinib alone followed by re-assessment. EGFR+ patients have historically poor IO response — durvalumab consolidation is controversial in this subtype.",
+            "trial_eligibility": "Eligible: EGFR exon 19 deletion confirmed, stage IIIB confirmed, ECOG 1, organ function within limits (CrCl 78, AST/ALT normal, ANC 4.2, platelets 220). Exclusion concerns: prior thoracic radiation 9 years ago — trial allows if outside current treatment field, which requires RadOnc dose review.",
+            "drug_interactions": "Osimertinib is CYP3A4 substrate — patient's metformin and lisinopril have no major interaction. QTc baseline 425ms acceptable. No significant interactions with prior radiation other than overlapping pneumonitis risk if concurrent durvalumab + thoracic XRT contemplated."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T08:10:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000002003",
+          "role_id": "00000000-0000-0000-0000-000000002102",
+          "user_token": "seed-surg-001",
+          "content": "Anatomically the primary is amenable to lobectomy but N3 contralateral nodal disease makes upfront resection not standard of care — this is unresectable stage IIIB at presentation. However, if neoadjuvant osimertinib produces a major nodal response and downstages to N0-N1, salvage resection becomes a reasonable conversation. Patient's pulmonary reserve (FEV1 58%) is borderline for lobectomy; predicted post-op FEV1 would be ~45% which is at the threshold. Prior left-sided radiation means right-sided surgery has clean tissue planes but we'd want to avoid pneumonectomy. Vote: defer surgical consideration until post-induction restaging.",
+          "structured_fields": {
+            "resectability": "Currently unresectable due to N3 mediastinal disease. Could become resectable with major response to induction TKI. Anatomic primary location (RUL) is favorable.",
+            "neoadjuvant_window": "Strongly support neoadjuvant TKI approach. Re-stage at 8-12 weeks. If N3 disease clears, RUL lobectomy +/- mediastinal LN dissection is feasible. Pneumonectomy off the table due to pulmonary reserve.",
+            "pulmonary_reserve": "Borderline for lobectomy (predicted post-op FEV1 ~45%). Pre-operative rehab essential. Prior left-sided breast radiation has not significantly impacted right-sided pulmonary function — recent PFTs stable from 2019."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T08:15:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000002004",
+          "role_id": "00000000-0000-0000-0000-000000002103",
+          "user_token": "seed-radonc-001",
+          "content": "Prior left chest wall + supraclavicular radiation in 2017 delivered 50 Gy. Current tumor is RUL with mediastinal N3 — overlap with prior fields would be minimal in chest wall but significant in mediastinum and supraclav. Cumulative dose to mediastinum could approach 90-100 Gy with concurrent chemoradiation — high risk of esophagitis, pneumonitis, brachial plexopathy. Proton therapy at Duke would dramatically reduce integral dose to prior fields. If we go neoadjuvant TKI first and the disease downstages, we may need only consolidative SBRT to residual N1-N2 nodes, dramatically simplifying the radiation plan. Strongly endorse the trial path. If the trial isn't chosen, recommend proton-based concurrent chemoradiation, NOT photon IMRT.",
+          "structured_fields": {
+            "prior_dose_overlap": "Prior 50 Gy to left chest wall + supraclavicular. Right hemithorax and right paratracheal region clean. Cumulative dose to overlap regions must stay below 80 Gy EQD2 to avoid late toxicity. Proton therapy at Duke MGI center reduces overlap dose by ~40-60%.",
+            "modality_recommendation": "Strongly prefer proton therapy if any thoracic radiation needed. SBRT to residual nodes post-induction is ideal scenario. IMRT photon is acceptable but inferior given dose overlap.",
+            "concurrent_vs_sequential": "Concurrent chemoradiation in this re-irradiation scenario with COPD is high-risk for grade 3+ pneumonitis (estimated 25-30%). Sequential or induction-then-consolidation approach preferred."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T08:20:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000002005",
+          "role_id": "00000000-0000-0000-0000-000000002105",
+          "user_token": "seed-pulm-001",
+          "content": "Recent PFTs: FEV1 1.58 L (58% predicted), FVC 2.42 L (65% predicted), DLCO 14.2 (62% predicted). Patient is functionally limited at MRC dyspnea 2 — short of breath only on stairs. She is still teaching full-time. Concerning that COPD has been stable on tiotropium alone, but any concurrent chemoradiation will likely worsen this transiently and potentially permanently. Pre-rehab with pulmonary rehab program (8 weeks) before any thoracic intervention is medically indicated. With osimertinib alone, no pulmonary impact expected — TKI is favorable from a pulmonary standpoint. If durvalumab added, watch for immune-related pneumonitis (5-10% incidence, often in combo regimens).",
+          "structured_fields": {
+            "baseline_function": "FEV1 58% predicted, FVC 65%, DLCO 62%. MRC dyspnea 2. Functionally intact for teaching. COPD GOLD stage 2, stable on tiotropium.",
+            "tolerability_assessment": "Concurrent chemoradiation poses significant risk — 25-30% chance of grade 2+ pneumonitis. Sequential TKI-first approach is far safer pulmonarily. Durvalumab adds 5-10% pneumonitis risk independent of radiation.",
+            "pre_rehab": "Strongly recommend 8-week pulmonary rehab program regardless of treatment path. Smoking cessation reinforcement (already 8 years quit but reinforce). Inhaler optimization — consider adding LABA/ICS combo if any decline post-induction."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T08:25:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000002006",
+          "role_id": "00000000-0000-0000-0000-000000002107",
+          "user_token": "seed-advocate-001",
+          "content": "Met with the patient and her husband for 45 minutes yesterday. Her stated priorities, in order: (1) be alive and functional for her daughter's wedding in October 2027, (2) return to teaching in September if at all possible, (3) avoid 'the kind of treatment that ruined my mother's last year' — her mother had aggressive concurrent chemo+radiation for a different cancer in 2009 and spent her last 6 months hospitalized. Patient is clearly anchoring on that experience. She has done significant internet research on osimertinib and brought a printed NCCN summary to her last visit. She's a researcher by personality. Strongly receptive to the trial path. Capacity is unambiguous.",
+          "structured_fields": {
+            "patient_priorities": "Survival to October 2027 (daughter's wedding) is the dominant goal. Functional teaching capacity by September 2026 is high priority. Avoiding intensive concurrent therapy is high priority due to mother's experience. Patient prefers TKI-based approach.",
+            "family_dynamics": "Husband is supportive, present, asks technical questions. Two adult children — daughter (29, getting married Oct 2027) and son (26, in grad school). No financial constraints. Husband works from home and can be primary caregiver as needed.",
+            "decision_capacity": "Full capacity. Has independently researched options, brought NCCN guidelines to visits, asks well-formed clinical questions. Ready to decide once team consolidates recommendation."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T08:30:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000002007",
+          "role_id": "00000000-0000-0000-0000-000000002106",
+          "user_token": "seed-palliative-001",
+          "content": "Current symptoms: mild fatigue (ECOG 1), no pain, mild cough that increased over past 2 months. No dyspnea at rest. Anxiety screening positive (GAD-7 score 11) — entirely situational and aligned with diagnosis. No depression. Goals of care discussion already initiated by patient herself. Recommend embedding palliative care as concurrent supportive service from day 1 of any active treatment, not as 'end of life' — patient is curative-intent. Anxiety management with brief CBT referral and possible short-term SSRI if needed. Symptom-driven check-ins q4 weeks during treatment.",
+          "structured_fields": {
+            "symptom_burden": "Low. ECOG 1, mild fatigue, mild cough. No pain, dyspnea, weight loss. GAD-7 11 (moderate anxiety, situational). No depression on PHQ-9.",
+            "goals_of_care": "Curative intent confirmed. Aligned across team and patient. Quality milestones: daughter's wedding Oct 2027, return to teaching Sept 2026. Patient declines any treatment that would require >2 weeks of inpatient time.",
+            "supportive_plan": "Concurrent palliative care from day 1. CBT referral for anxiety. Survivorship navigator. Q4-week symptom check during treatment. Re-discuss goals at restaging milestone."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T08:35:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000002008",
+          "role_id": "00000000-0000-0000-0000-000000002108",
+          "user_token": "seed-ethics-001",
+          "content": "Three ethical considerations: (1) Equipoise on the trial — the trial randomizes 1:1 between osimertinib+durvalumab and osimertinib alone. There is genuine clinical uncertainty about whether durvalumab adds benefit in EGFR+ disease, so equipoise holds. (2) The patient has done independent research and may have anchored on osimertinib before hearing the full picture — team should explicitly verify she understands the trial randomization (she might NOT get durvalumab) and that this is acceptable to her. (3) Coercion check passed — patient is at a comprehensive cancer center because she chose to be, not because of geographic limitation. No disparities concerns: same trial offered to all EGFR+ stage III patients regardless of insurance, which is Medicare here.",
+          "structured_fields": {
+            "trial_consent": "Equipoise holds for the trial. Patient must explicitly understand the randomization (50% chance of monotherapy arm). Verify in consent discussion that she would accept either arm. No coercion concerns identified.",
+            "shared_decision": "Team should present the decision tree in a single integrated visit, not piecemeal across multiple specialists. Recommend a 'shared decision visit' with med onc + rad onc + advocate + patient + husband. Provide decision aid.",
+            "disparities_check": "No disparities concerns. Patient is offered same options as any EGFR+ stage III patient. Insurance is Medicare with supplemental — no financial coercion toward cheapest option."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T08:40:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000002009",
+          "role_id": "00000000-0000-0000-0000-000000002101",
+          "user_token": "seed-medonc-001",
+          "content": "Consolidated recommendation incorporating board input: enroll in NCT-FAKE-2026-LUNG-08 if patient consents after full informed discussion. Run 8 weeks pulmonary pre-rehab concurrent with trial cycles 1-2. Re-image at week 12 (after 3 cycles induction). If major response and N3 clearance: surgical re-evaluation with thoracic surgery for possible RUL lobectomy + mediastinal LN dissection. If partial response with persistent nodal disease: proton-based consolidative SBRT to residual nodes, no further chemoradiation. If progression: switch to second-line, off-trial. Palliative care embedded throughout. Goals-of-care re-check at week 12.",
+          "structured_fields": {
+            "systemic_therapy_options": "Final plan: osimertinib + durvalumab consolidation trial enrollment (randomized 1:1 to monotherapy or combo). Backstop if trial declined: osimertinib monotherapy off-label as induction with intent to consolidate per response.",
+            "trial_eligibility": "Confirmed eligible after RadOnc verified prior dose overlap acceptable. Trial coordinator engaged. Consent visit scheduled for Thursday with med onc + advocate + clinical ethicist present.",
+            "drug_interactions": "Plan reviewed for COPD interaction risk — minimal with osimertinib. Will monitor pneumonitis carefully if randomized to durvalumab arm. CBT and SSRI plan for anxiety endorsed."
+          },
+          "tier_processed": 2,
+          "created_at": "2026-05-13T08:50:00Z"
+        }
+      ],
+      "artifact": {
+        "id": "00000000-0000-0000-0000-000000002201",
+        "version": 1,
+        "content_hash": "sha256:seed-tumor-board-v1",
+        "sections": [
+          {
+            "title": "Diagnosis & Staging",
+            "content": "Stage IIIB NSCLC (T3 N3 M0), adenocarcinoma lepidic-predominant. EGFR exon 19 deletion (classical), PD-L1 TPS 35%, TMB low, no co-mutations. N3 confirmed by EBUS at 4R and 7. No distant disease.",
+            "source_roles": ["Pathologist", "Medical Oncologist"],
+            "status": "confirmed"
+          },
+          {
+            "title": "Consensus Treatment Plan",
+            "content": "1. Enroll in Duke NCT-FAKE-2026-LUNG-08 (osimertinib +/- durvalumab consolidation) following consent visit\n2. Pulmonary pre-rehab 8 weeks, concurrent with cycles 1-2\n3. Re-image at week 12 (post-3 cycles induction)\n4. If major response with N3 clearance: surgical re-evaluation for RUL lobectomy + mediastinal LN dissection\n5. If partial response with persistent nodal disease: proton SBRT to residual nodes; no concurrent chemoradiation\n6. Palliative care embedded from day 1 for symptom management and anxiety\n7. Goals-of-care recheck at week 12",
+            "source_roles": ["Medical Oncologist", "Thoracic Surgeon", "Radiation Oncologist", "Pulmonologist"],
+            "status": "approved"
+          },
+          {
+            "title": "Ethics & Shared Decision",
+            "content": "Patient has full capacity, has independently researched options. Trial randomization (1:1 mono vs combo) must be explicitly understood. Coercion check passed. No disparities concerns. Shared decision visit scheduled with med onc + advocate + clinical ethicist present.",
+            "source_roles": ["Clinical Ethicist", "Patient Advocate"],
+            "status": "approved"
+          },
+          {
+            "title": "Supportive Care",
+            "content": "Palliative care concurrent (not end-of-life). CBT referral for situational anxiety (GAD-7 11). Survivorship navigator assigned. Q4-week symptom checks during induction. Pre-rehab 8 weeks. Inhaler optimization at week 8 if any decline.",
+            "source_roles": ["Palliative Care", "Pulmonologist", "Patient Advocate"],
+            "status": "approved"
+          }
+        ],
+        "status": "approved",
+        "created_at": "2026-05-13T09:00:00Z"
+      }
+    }
+  ]
+}

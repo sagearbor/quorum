@@ -117,6 +117,7 @@ export default function QuorumPage() {
   const params = useParams<{ slug: string; id: string }>();
   const searchParams = useSearchParams();
   const station = searchParams.get("station");
+  const participantFromQuery = searchParams.get("participant");
 
   const quorumId = params.id;
   const slug = params.slug;
@@ -124,6 +125,113 @@ export default function QuorumPage() {
   // Derive a stable stationId: use the ?station= param or fall back to a
   // synthetic identifier so the conversation hook always has a valid ID.
   const stationId = station ? `station-${station}` : `station-default`;
+
+  // 10.4 — participant attribution.  On first load, if we have no participant
+  // in sessionStorage (laptop occupant arriving fresh), mint one via
+  // /sessions/participant (device_kind=laptop).  Then heartbeat every 30s.
+  const [participantId, setParticipantId] = useState<string | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const apiBase =
+      process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+    async function ensureParticipant() {
+      // 1. If the /pair flow passed ?participant=<id>, store + use it.
+      if (participantFromQuery) {
+        if (!cancelled) setParticipantId(participantFromQuery);
+        try {
+          window.sessionStorage.setItem(
+            "quorum.participant",
+            JSON.stringify({
+              participant_id: participantFromQuery,
+              quorum_id: quorumId,
+              station_label: stationId,
+              device_kind: "phone",
+            }),
+          );
+        } catch {
+          /* sessionStorage may be unavailable; non-fatal */
+        }
+        return;
+      }
+
+      // 2. Otherwise look in sessionStorage.
+      try {
+        const raw = window.sessionStorage.getItem("quorum.participant");
+        if (raw) {
+          const stored = JSON.parse(raw) as { participant_id?: string };
+          if (stored.participant_id) {
+            if (!cancelled) setParticipantId(stored.participant_id);
+            return;
+          }
+        }
+      } catch {
+        /* fall through to mint */
+      }
+
+      // 3. Mint a laptop participant for the station occupant.
+      try {
+        const res = await fetch(`${apiBase}/sessions/participant`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            quorum_id: quorumId,
+            station_label: stationId,
+            device_kind: "laptop",
+          }),
+        });
+        if (res.ok) {
+          const data = (await res.json()) as {
+            participant_id: string;
+            display_name: string;
+          };
+          if (!cancelled) setParticipantId(data.participant_id);
+          try {
+            window.sessionStorage.setItem(
+              "quorum.participant",
+              JSON.stringify({
+                participant_id: data.participant_id,
+                display_name: data.display_name,
+                quorum_id: quorumId,
+                station_label: stationId,
+                device_kind: "laptop",
+              }),
+            );
+          } catch {
+            /* non-fatal */
+          }
+        }
+      } catch {
+        /* network failure — degrade silently, contributions fall back to user_token */
+      }
+    }
+
+    ensureParticipant();
+    return () => {
+      cancelled = true;
+    };
+  }, [quorumId, stationId, participantFromQuery]);
+
+  // Heartbeat every 30s while the participant_id is known.
+  useEffect(() => {
+    if (!participantId) return;
+    const apiBase =
+      process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+    const ping = () => {
+      fetch(`${apiBase}/sessions/heartbeat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ participant_id: participantId }),
+      }).catch(() => {
+        /* heartbeat is best-effort */
+      });
+    };
+    // Fire once immediately, then on interval.
+    ping();
+    const handle = window.setInterval(ping, 30_000);
+    return () => window.clearInterval(handle);
+  }, [participantId]);
 
   const [quorumTitle, setQuorumTitle] = useState<string>("");
   const [quorumDescription, setQuorumDescription] = useState<string>("");
@@ -292,12 +400,19 @@ export default function QuorumPage() {
 
     const content = Object.values(fieldValues).filter(Boolean).join("\n\n");
 
+    // 10.4 — attribute the contribution to the participant (laptop occupant
+    // or phone visitor).  We pass participant_id explicitly AND also use it
+    // as user_token for backward compatibility with any backend code paths
+    // that still read user_token directly.  Falls back to "anon-local" only
+    // when the participant mint failed (offline / network error).
+    const attribution = participantId ?? "anon-local";
     const payload: ContributeRequest = {
       role_id: currentRole.id,
-      user_token: "anon-local",
+      user_token: attribution,
       content,
       structured_fields: { ...fieldValues },
       station_id: stationId,
+      participant_id: participantId ?? undefined,
     };
 
     try {
@@ -319,7 +434,7 @@ export default function QuorumPage() {
           id: data.contribution_id,
           quorum_id: quorumId,
           role_id: currentRole.id,
-          user_token: "anon-local",
+          user_token: attribution,
           content,
           structured_fields: { ...fieldValues },
           tier_processed: data.tier_processed ?? 1,

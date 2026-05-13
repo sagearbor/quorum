@@ -29,10 +29,12 @@ class A2ABackend(SupabaseBackend):
     async def submit_contribution(
         self, quorum_id: str, role_id: str, user_token: str,
         content: str, structured_fields: dict[str, str],
+        participant_id: str | None = None,
     ) -> dict[str, Any]:
         # Persist via Supabase first
         row = await super().submit_contribution(
             quorum_id, role_id, user_token, content, structured_fields,
+            participant_id=participant_id,
         )
 
         # Then notify via A2A

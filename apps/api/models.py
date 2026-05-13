@@ -152,6 +152,28 @@ class ContributeRequest(BaseModel):
     # Optional: station_id ties the contribution to a specific physical station.
     # When provided, the agent engine fires a facilitator turn for that station.
     station_id: str | None = None
+    # Optional: participant_id attributes the contribution to a specific human
+    # (minted on QR scan or station-page first-load).  Falls back to user_token
+    # for backward compatibility when omitted.
+    participant_id: str | None = None
+
+
+# POST /sessions/participant — mint a participant on QR scan or station load
+class CreateParticipantRequest(BaseModel):
+    quorum_id: str
+    role_id: str | None = None
+    station_label: str | None = None
+    device_kind: str  # "laptop" | "phone"
+
+
+class CreateParticipantResponse(BaseModel):
+    participant_id: str
+    display_name: str
+
+
+# POST /sessions/heartbeat — refresh last_heartbeat_at
+class HeartbeatRequest(BaseModel):
+    participant_id: str
 
 
 class ContributeResponse(BaseModel):

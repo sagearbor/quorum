@@ -140,24 +140,25 @@ class AnthropicProvider(LLMProvider):
         return text, None
 
     async def embed(self, text: str) -> list[float]:
-        """Embedding fallback — Anthropic has no embedding API.
+        """Embedding API — NOT SUPPORTED by Anthropic.
 
-        Preserved verbatim from the legacy adapter: deterministic TF-style
-        sparse vector built from extracted keywords.  In production, pair
-        this provider with a dedicated embedding provider (Voyage, OpenAI).
+        Anthropic's API does not expose an embedding endpoint (as of 2026-05),
+        and the previous adapter returned a 256-dim hash-bucket fake vector
+        that quietly broke downstream cosine similarity (audit finding C4,
+        checklist item 11.4).
+
+        We now raise ``NotImplementedError`` so callers receive a hard,
+        actionable error instead of a silently-degraded routing decision.
+        Pair this provider with a dedicated embedding source — typically
+        Azure (``AZURE_OPENAI_EMBEDDING_DEPLOYMENT``) or OpenAI
+        (``OPENAI_API_KEY``) — by constructing the matching provider for
+        embed() calls.
         """
-        from quorum_llm.tier1 import extract_keywords
-
-        keywords = extract_keywords(text, max_keywords=50)
-        dim = 256
-        vec = [0.0] * dim
-        for kw in keywords:
-            idx = hash(kw) % dim
-            vec[idx] = 1.0
-        magnitude = sum(v * v for v in vec) ** 0.5
-        if magnitude > 0:
-            vec = [v / magnitude for v in vec]
-        return vec
+        raise NotImplementedError(
+            "Anthropic provider has no native embedding API. "
+            "Configure AZURE_OPENAI_EMBEDDING_DEPLOYMENT or OPENAI_API_KEY "
+            "and use AzureOpenAIProvider / OpenAIProvider for embeddings."
+        )
 
 
 def _maybe_raise_budget(tier: LLMTier, exc: ModelHTTPError) -> None:

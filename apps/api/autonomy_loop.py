@@ -43,6 +43,8 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
+from _obs import span as _obs_span
+
 logger = logging.getLogger(__name__)
 
 # How long a row may sit in 'processing' before the reaper treats it as
@@ -400,13 +402,22 @@ async def _run_quorum_loop(quorum_id: str, autonomy_level: float) -> None:
             _heartbeat_loop_state(db, quorum_id, round_num)
 
             try:
-                await _run_autonomy_round(
-                    quorum_id,
-                    autonomy_level,
-                    round_num,
-                    db,
-                    llm_provider,
-                )
+                # Wrap each round in a Logfire span so Sophie can trace
+                # autonomy-loop progress end-to-end (orchestrator picks,
+                # A2A dispatches, paused turns) in one timeline.
+                with _obs_span(
+                    "autonomy_round",
+                    quorum_id=quorum_id,
+                    round_num=round_num,
+                    autonomy_level=autonomy_level,
+                ):
+                    await _run_autonomy_round(
+                        quorum_id,
+                        autonomy_level,
+                        round_num,
+                        db,
+                        llm_provider,
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception:

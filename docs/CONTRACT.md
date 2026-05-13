@@ -183,6 +183,41 @@ POST /sessions/heartbeat:
   status: 204
   errors: { 404: "Participant not found" }
 
+# --- Architect voice flow (gpt-realtime + Whisper STT fallback) ---
+
+POST /architect/realtime/session:
+  description: |
+    Mint an ephemeral OpenAI Realtime API client_secret. The browser uses
+    the returned ek_… token as Bearer when it POSTs its WebRTC SDP offer
+    directly to https://api.openai.com/v1/realtime/calls. The main
+    OPENAI_API_KEY never leaves the server.
+  body:                              # all optional; defaults from env
+    model: string | null             # default: env OPENAI_REALTIME_MODEL or "gpt-realtime"
+    voice: string | null             # default: env OPENAI_REALTIME_VOICE or "alloy"
+    instructions: string | null      # default: ARCHITECT_INSTRUCTIONS (voice_routes.py)
+    tools: list[object] | null       # default: ARCHITECT_TOOLS
+  returns:
+    client_secret: string            # the ephemeral ek_… token
+    expires_at: int | null           # epoch seconds when the token expires
+    model: string
+    voice: string
+  errors:
+    401: "OPENAI_API_KEY is not configured on the backend"
+    502: "OpenAI Realtime API returned an error or could not be reached"
+
+POST /architect/transcribe:
+  description: |
+    Whisper STT fallback. Browser records via MediaRecorder, POSTs the
+    blob as multipart/form-data. Server relays to
+    https://api.openai.com/v1/audio/transcriptions and returns the text.
+  body: multipart/form-data { file: <audio/webm | audio/mp4 | …, ≤25 MB> }
+  returns: { text: string, model: string }
+  errors:
+    400: "Empty audio upload"
+    401: "OPENAI_API_KEY is not configured on the backend"
+    413: "Audio file too large (>25 MB)"
+    502: "OpenAI Whisper API returned an error or could not be reached"
+
 # --- A2A protocol (Linux Foundation a2a-sdk 1.0.x) ---
 
 GET /a2a/:
@@ -485,10 +520,23 @@ AZURE_OPENAI_EMBEDDING_DEPLOYMENT=      # embedding deployment (text-embedding-3
 AZURE_OPENAI_API_VERSION=               # default: 2025-03-01-preview (required for Responses API on gpt-5)
 AZURE_OPENAI_REASONING_DEPLOYMENTS=     # optional comma list of deployment names that should use Responses API
 
-OPENAI_API_KEY=                         # required for plain OpenAIProvider
+OPENAI_API_KEY=                         # required for plain OpenAIProvider AND
+                                        # the Architect voice flow (gpt-realtime + Whisper).
+                                        # Never expose to the browser — POST /architect/realtime/session
+                                        # mints an ephemeral ek_… token instead.
 OPENAI_MODEL_T2=                        # default: gpt-4o-mini
 OPENAI_MODEL_T3=                        # default: gpt-4o
 OPENAI_EMBEDDING_MODEL=                 # default: text-embedding-3-small (1536 dims)
+OPENAI_REALTIME_MODEL=                  # default: gpt-realtime (GA as of 2026-Q1).
+                                        # Override to gpt-realtime-mini for cost or
+                                        # gpt-4o-realtime-preview if you pin to the preview alias.
+OPENAI_REALTIME_VOICE=                  # default: alloy. Other options (2026):
+                                        # alloy, ash, ballad, cedar, coral, echo,
+                                        # marin, sage, shimmer, verse.
+OPENAI_TRANSCRIBE_MODEL=                # default: whisper-1. Whisper fallback STT model.
+                                        # Alt: gpt-4o-mini-transcribe (faster, requires tier-1+).
+OPENAI_API_BASE=                        # default: https://api.openai.com. Override for
+                                        # testing against a captured-request fixture.
 
 ANTHROPIC_API_KEY=                      # AnthropicProvider — embed() raises NotImplementedError
 ANTHROPIC_MODEL_T2=                     # default: claude-haiku-4-5-20251001

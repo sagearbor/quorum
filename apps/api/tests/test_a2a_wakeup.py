@@ -52,7 +52,14 @@ def _make_fake_supabase(overrides: dict[str, Any] | None = None) -> MagicMock:
             is_single[0] = True
             return chain
 
+        def _maybe_single():
+            # Same as .single() but routes.py uses .maybe_single() via
+            # _fetch_single() to convert "no row" into HTTPException(404).
+            is_single[0] = True
+            return chain
+
         chain.single = _single
+        chain.maybe_single = _maybe_single
         for method in (
             "select", "eq", "neq", "lt", "gt", "gte", "lte",
             "order", "limit", "insert", "update", "delete",

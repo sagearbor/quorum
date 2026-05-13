@@ -870,6 +870,42 @@ async def _run_autonomy_round(
             "Proactive-turn broadcast failed for role %s", role["id"], exc_info=True
         )
 
+    # --- Phase 2.5: Authority arbitration sweep ---
+    # After the speaker turn fires (and any new proposals it may have raised
+    # via the blackboard), sweep open conflicts and resolve them by role
+    # authority_rank.  Deterministic — no LLM call — and idempotent: an empty
+    # blackboard or all-tied conflicts is a no-op except for log lines.
+    # Checklist item 11.7.
+    try:
+        from agents.arbitrator import arbitrate_conflicts
+
+        arbitration = await arbitrate_conflicts(db, quorum_id)
+        if (
+            arbitration["decisions_made"]
+            or arbitration["dissents_recorded"]
+            or arbitration["ties_unresolved"]
+        ):
+            try:
+                await manager.broadcast(
+                    quorum_id,
+                    {
+                        "type": "arbitration",
+                        "decisions": arbitration["decisions_made"],
+                        "dissents": arbitration["dissents_recorded"],
+                        "ties_unresolved": arbitration["ties_unresolved"],
+                    },
+                )
+            except Exception:
+                logger.debug(
+                    "autonomy: arbitration broadcast failed", exc_info=True
+                )
+    except Exception:
+        logger.warning(
+            "Authority arbitration failed for quorum %s (non-fatal)",
+            quorum_id,
+            exc_info=True,
+        )
+
     # --- Phase 3: Auto-contribute at high autonomy ---
     # AUTONOMY_AUTO_CONTRIBUTE_MODE controls the behaviour:
     #   "off"        — never auto-submit. Humans drive contributions. (Default for

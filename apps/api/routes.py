@@ -26,7 +26,12 @@ from coordination.factory import get_coordination_backend
 from database import get_supabase
 from health import calculate_health_score
 from llm import llm_provider
-from architect_agent import generate_roles, send_guidance
+from architect_agent import (
+    RoleSuggestion,
+    generate_roles,
+    persist_agent_configs,
+    send_guidance,
+)
 from models import (
     A2ARequestCreate,
     A2ARequestResponse,
@@ -790,7 +795,11 @@ async def architect_ai_start(event_id: str, body: AIStartRequest):
     }
     db.table("quorums").insert(quorum_row).execute()
 
-    # Insert roles from AI suggestions
+    # Insert roles from AI suggestions AND author one agent_configs row per
+    # role.  Without the agent_configs write, every role falls back to the
+    # generic prompt in agents/__init__.py and all agents sound identical
+    # (bug fixed by checklist item 10.1).
+    role_assignments: list[tuple[str, RoleSuggestion]] = []
     for role_def in body.roles:
         role_id = str(uuid.uuid4())
         role_row = {
@@ -807,6 +816,27 @@ async def architect_ai_start(event_id: str, body: AIStartRequest):
             "fallback_chain": [],
         }
         db.table("roles").insert(role_row).execute()
+        # RoleSuggestionResponse → RoleSuggestion (same shape; explicit
+        # construction keeps the dataclass boundary clear for tests).
+        role_assignments.append(
+            (
+                role_id,
+                RoleSuggestion(
+                    name=role_def.name,
+                    description=role_def.description,
+                    authority_rank=role_def.authority_rank,
+                    capacity=role_def.capacity,
+                    suggested_prompt_focus=role_def.suggested_prompt_focus,
+                    system_prompt=role_def.system_prompt,
+                    domain_tags=role_def.domain_tags,
+                    temperature=role_def.temperature,
+                    model=role_def.model,
+                ),
+            )
+        )
+
+    # Persist persona configs (failures are logged but non-fatal).
+    persist_agent_configs(db, quorum_id, role_assignments)
 
     # Auto-activate if mode is "auto"
     if body.mode == "auto":

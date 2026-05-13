@@ -1,0 +1,95 @@
+name: Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  llm-tests:
+    name: LLM package tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            packages/llm/pyproject.toml
+
+      - name: Install LLM package (with dev extras)
+        run: python -m pip install -e "packages/llm[dev]"
+
+      - name: Run LLM tests
+        run: python -m pytest packages/llm/tests/ -v --tb=short
+
+  backend-tests:
+    name: Backend (apps/api) tests
+    runs-on: ubuntu-latest
+    # TEMPORARY: 2 pre-existing failures in test_a2a_wakeup.py on `main`
+    # (load_agent() got an unexpected keyword argument 'role_id', and a
+    # 201 vs 404 mismatch). PR #23 (fix/test-failures-batch-1) resolves
+    # these. Remove `continue-on-error` once #23 lands — then this job
+    # becomes a hard gate.
+    continue-on-error: true
+    env:
+      QUORUM_TEST_MODE: "true"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            apps/api/requirements.txt
+            packages/llm/pyproject.toml
+
+      - name: Install LLM package (runtime only)
+        run: python -m pip install -e packages/llm
+
+      - name: Install API requirements
+        run: python -m pip install -r apps/api/requirements.txt
+
+      - name: Run backend tests
+        working-directory: apps/api
+        run: python -m pytest tests/ -v --tb=short
+
+  frontend-tests:
+    name: Frontend (apps/web) tests
+    runs-on: ubuntu-latest
+    # TEMPORARY: 5 pre-existing failures on `main` across:
+    #   - src/app/architect/__tests__/aiArchitect.test.tsx (3 tests)
+    #   - src/app/architect/__tests__/wizard.test.tsx (1 test)
+    #   - src/app/event/[slug]/EventPage.test.tsx (1 test)
+    # Track-down + fix is out of scope for this CI-gating PR. Remove
+    # `continue-on-error` once those land and this job becomes a hard gate.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run frontend tests
+        run: pnpm --filter web test

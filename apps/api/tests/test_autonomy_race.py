@@ -488,3 +488,276 @@ class TestReaper:
         assert row["status"] == "processing"
         assert row["claimed_at"] == fresh_ts
         assert fake_process.await_count == 0
+
+
+# ---------------------------------------------------------------------------
+# 12.4 — Additional CAS-claim race coverage
+# ---------------------------------------------------------------------------
+
+
+class TestCASRaceMultiWorker:
+    """Coverage for 3+ concurrent workers and crash-recovery scenarios."""
+
+    @pytest.mark.asyncio
+    async def test_three_concurrent_workers_one_dispatch(
+        self, fake_db_with_one_pending
+    ):
+        """Three concurrent `_run_autonomy_round` calls -> exactly ONE LLM dispatch.
+
+        Extends `test_concurrent_asyncio_gather_dispatches_once` to N=3 to
+        make sure the CAS guard scales (not just a coincidence of N=2).
+        """
+        from apps.api import autonomy_loop
+
+        async def _slow_llm(*args, **kwargs):
+            await asyncio.sleep(0.05)
+            return "Acknowledged."
+
+        fake_process = AsyncMock(side_effect=_slow_llm)
+
+        with (
+            patch.object(autonomy_loop, "_run_quorum_loop"),
+            patch("apps.api.agent_engine.process_a2a_request", new=fake_process),
+            patch("apps.api.agent_engine.process_agent_turn", new=AsyncMock()),
+            patch("apps.api.ws_manager.manager.broadcast", new=AsyncMock()),
+        ):
+            await asyncio.gather(
+                autonomy_loop._run_autonomy_round(
+                    _QUORUM_ID, 1.0, 1, fake_db_with_one_pending, MagicMock()
+                ),
+                autonomy_loop._run_autonomy_round(
+                    _QUORUM_ID, 1.0, 2, fake_db_with_one_pending, MagicMock()
+                ),
+                autonomy_loop._run_autonomy_round(
+                    _QUORUM_ID, 1.0, 3, fake_db_with_one_pending, MagicMock()
+                ),
+            )
+
+        assert (
+            fake_process.await_count == 1
+        ), f"expected exactly 1 LLM dispatch with 3 workers, got {fake_process.await_count}"
+
+        row = fake_db_with_one_pending.row_by_id("agent_requests", _REQ_ID)
+        assert row["status"] == "processing"
+
+    @pytest.mark.asyncio
+    async def test_worker_crash_then_reclaim_after_60s(self):
+        """Worker A claims, dies mid-LLM (stale claimed_at). Worker B reclaims.
+
+        Simulates the full crash-recovery flow:
+          1. Worker A successfully claims the row -> status=processing,
+             claimed_at = now - 120s (fake crash mid-LLM).
+          2. Worker B runs a fresh autonomy round.
+          3. Reaper flips the stale row back to pending.
+          4. Worker B's claim CAS wins and dispatches the LLM.
+
+        Net result: row eventually reaches a clean state, LLM called once on
+        the recovery path (not twice — A never finished its call).
+        """
+        from datetime import datetime, timedelta, timezone
+
+        from apps.api import autonomy_loop
+
+        # Worker A's stale claim — 120s old, past the 60s reaper threshold.
+        stale_ts = (
+            datetime.now(timezone.utc) - timedelta(seconds=120)
+        ).isoformat()
+
+        db = _FakeDB({
+            "agent_requests": [
+                {
+                    "id": "crashed-req",
+                    "quorum_id": _QUORUM_ID,
+                    "from_role_id": "role-a",
+                    "to_role_id": "role-b",
+                    "request_type": "input_request",
+                    "content": "Crashed mid-LLM",
+                    "tags": [],
+                    "status": "processing",  # Worker A's leftover state
+                    "response": None,
+                    "response_tags": [],
+                    "version": 1,
+                    "priority": 1,
+                    "created_at": "2026-05-12T00:00:00Z",
+                    "resolved_at": None,
+                    "claimed_at": stale_ts,  # stale lease from dead worker A
+                }
+            ],
+            "roles": [
+                {"id": "role-a", "name": "safety_monitor", "authority_rank": 7},
+                {"id": "role-b", "name": "irb_officer", "authority_rank": 5},
+            ],
+            "quorums": [{"id": _QUORUM_ID, "status": "active"}],
+            "station_messages": [],
+            "agent_insights": [],
+        })
+
+        fake_process = AsyncMock(return_value="ok")
+        with (
+            patch("apps.api.agent_engine.process_a2a_request", new=fake_process),
+            patch("apps.api.agent_engine.process_agent_turn", new=AsyncMock()),
+            patch("apps.api.ws_manager.manager.broadcast", new=AsyncMock()),
+        ):
+            # Worker B runs a round.
+            await autonomy_loop._run_autonomy_round(
+                _QUORUM_ID, 1.0, 1, db, MagicMock()
+            )
+
+        # The reaper flipped the row back to pending, then the CAS-claim
+        # re-claimed it under worker B's lease, and process_a2a_request fired.
+        assert fake_process.await_count == 1
+        row = db.row_by_id("agent_requests", "crashed-req")
+        assert row is not None
+        # Final state: re-claimed with a fresh claimed_at.
+        assert row["claimed_at"] != stale_ts
+        assert row["status"] == "processing"  # Re-claimed by worker B
+
+    @pytest.mark.asyncio
+    async def test_llm_paused_sentinel_reverts_to_pending(
+        self, fake_db_with_one_pending
+    ):
+        """LLM unavailable -> process_a2a_request returns PAUSED_SENTINEL ->
+        autonomy_loop flips the row back to ``pending`` so the next tick can retry.
+
+        This is the bug 10.6 fix on the A2A path — the autonomy loop must NOT
+        leave a claimed row stuck after an LLM failure.
+        """
+        from apps.api import agent_engine, autonomy_loop
+
+        # Stub process_a2a_request to return the PAUSED_SENTINEL string.
+        paused = AsyncMock(return_value=agent_engine.PAUSED_SENTINEL)
+
+        with (
+            patch("apps.api.agent_engine.process_a2a_request", new=paused),
+            patch("apps.api.agent_engine.process_agent_turn", new=AsyncMock()),
+            patch("apps.api.ws_manager.manager.broadcast", new=AsyncMock()),
+        ):
+            await autonomy_loop._run_autonomy_round(
+                _QUORUM_ID, 1.0, 1, fake_db_with_one_pending, MagicMock()
+            )
+
+        row = fake_db_with_one_pending.row_by_id("agent_requests", _REQ_ID)
+        assert row is not None
+        # Must be back to pending (not stuck in processing) and claimed_at cleared.
+        assert row["status"] == "pending"
+        assert row["claimed_at"] is None
+        # The LLM was attempted exactly once on this round.
+        assert paused.await_count == 1
+
+
+class TestReaperEdgeCases:
+    """Additional reaper coverage: multiple stale rows + DB errors."""
+
+    @pytest.mark.asyncio
+    async def test_reaper_flips_multiple_stale_rows_in_one_round(self):
+        """Five stale 'processing' rows -> all five reverted in a single round."""
+        from datetime import datetime, timedelta, timezone
+
+        from apps.api import autonomy_loop
+
+        stale_ts = (
+            datetime.now(timezone.utc) - timedelta(seconds=120)
+        ).isoformat()
+
+        stale_rows = []
+        for i in range(5):
+            stale_rows.append(
+                {
+                    "id": f"stale-{i}",
+                    "quorum_id": _QUORUM_ID,
+                    "from_role_id": "role-a",
+                    "to_role_id": "role-b",
+                    "request_type": "input_request",
+                    "content": f"stale row {i}",
+                    "tags": [],
+                    "status": "processing",
+                    "response": None,
+                    "response_tags": [],
+                    "version": 1,
+                    "priority": 1,
+                    "created_at": "2026-05-12T00:00:00Z",
+                    "resolved_at": None,
+                    "claimed_at": stale_ts,
+                }
+            )
+
+        db = _FakeDB({
+            "agent_requests": stale_rows,
+            "roles": [
+                {"id": "role-a", "name": "safety_monitor", "authority_rank": 7},
+                {"id": "role-b", "name": "irb_officer", "authority_rank": 5},
+            ],
+            "quorums": [{"id": _QUORUM_ID, "status": "active"}],
+            "station_messages": [],
+            "agent_insights": [],
+        })
+
+        # Patch process_a2a_request to track how many got re-dispatched.
+        fake_process = AsyncMock(return_value="ok")
+        with (
+            patch("apps.api.agent_engine.process_a2a_request", new=fake_process),
+            patch("apps.api.agent_engine.process_agent_turn", new=AsyncMock()),
+            patch("apps.api.ws_manager.manager.broadcast", new=AsyncMock()),
+        ):
+            await autonomy_loop._run_autonomy_round(
+                _QUORUM_ID, 1.0, 1, db, MagicMock()
+            )
+
+        # Every previously-stale row should have moved off the stale timestamp.
+        rows = db._tables["agent_requests"].rows
+        for row in rows:
+            assert (
+                row["claimed_at"] != stale_ts
+            ), f"row {row['id']} still has stale claimed_at"
+
+        # Phase-1 of the round pulls up to 5 pending rows AND dispatches them.
+        # All five should have been re-claimed and dispatched after reaping.
+        assert fake_process.await_count == 5
+
+    @pytest.mark.asyncio
+    async def test_reaper_db_error_does_not_break_loop(self, fake_db_with_one_pending):
+        """Transient reaper DB error must not raise into the main loop.
+
+        We simulate this by patching the reaper UPDATE chain to raise. The
+        round should still complete cleanly and the pending row should still
+        be picked up by Phase 1's normal CAS claim.
+        """
+        from apps.api import autonomy_loop
+
+        # Wrap the table() method so the reaper's specific call signature
+        # raises, but normal table operations still succeed.
+        original_table = fake_db_with_one_pending.table
+
+        call_count = {"n": 0}
+
+        def flaky_table(name):
+            chain = original_table(name)
+            if name == "agent_requests" and call_count["n"] == 0:
+                call_count["n"] += 1
+                # The first call is the reaper UPDATE. Make execute() raise.
+                original_execute = chain.execute
+
+                def boom():
+                    raise RuntimeError("simulated transient DB error in reaper")
+
+                chain.execute = boom
+                return chain
+            return chain
+
+        fake_db_with_one_pending.table = flaky_table
+
+        fake_process = AsyncMock(return_value="ok")
+        with (
+            patch("apps.api.agent_engine.process_a2a_request", new=fake_process),
+            patch("apps.api.agent_engine.process_agent_turn", new=AsyncMock()),
+            patch("apps.api.ws_manager.manager.broadcast", new=AsyncMock()),
+        ):
+            # Must NOT raise.
+            await autonomy_loop._run_autonomy_round(
+                _QUORUM_ID, 1.0, 1, fake_db_with_one_pending, MagicMock()
+            )
+
+        # The Phase 1 CAS-claim should still have fired against the pending row.
+        # (The reaper failure is swallowed; the pending row is still pending and
+        # gets claimed normally on this same round.)
+        assert fake_process.await_count == 1

@@ -40,6 +40,8 @@ _JSON_COLUMNS: dict[str, set[str]] = {
     "agent_requests": {"tags", "response_tags"},
     "oscillation_events": {"involved_roles", "values_sequence"},
     "quorum_state_snapshots": {"snapshot"},
+    # 11.6 blackboard — five jsonb lists per quorum.
+    "quorum_state": {"open_questions", "proposals", "decisions", "conflicts", "dissents"},
 }
 
 # Columns whose default value is a generated UUID (primary keys).

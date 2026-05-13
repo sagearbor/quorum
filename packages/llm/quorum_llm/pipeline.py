@@ -27,6 +27,12 @@ from quorum_llm.tier1 import (
     extract_keywords,
     find_overlapping_fields,
 )
+from quorum_llm.typed_outputs import (
+    ArtifactContentOutput,
+    ConflictDetectionOutput,
+    to_artifact_content,
+    to_conflict,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +93,13 @@ async def detect_conflicts(
 
     First uses Tier 1 to find overlapping fields, then sends overlapping
     contributions to the LLM for conflict analysis.
+
+    Item 9.3 swap: the LLM call now uses a typed ``ConflictDetectionOutput``
+    via ``provider.run_typed`` so the response is JSON-Schema-validated and
+    auto-retried.  We still loop per overlapping field — that keeps the
+    cost-per-call shape unchanged so the budget tracker behaves identically.
+    Providers without a real ``run_typed`` override (legacy test doubles)
+    fall back to the original ``provider.complete`` + manual JSON parse path.
     """
     if len(contributions) < 2:
         return []
@@ -105,9 +118,9 @@ async def detect_conflicts(
 
     role_map = {r.id: r for r in roles}
     conflicts: list[Conflict] = []
+    use_typed = _provider_supports_run_typed(provider)
 
     for field_name, contributor_indices in overlaps.items():
-        # Build conflict detection prompt
         lines = [
             f"Analyze the following contributions for field '{field_name}' "
             "and determine if there are conflicts.\n"
@@ -123,30 +136,72 @@ async def detect_conflicts(
             lines.append(f"- [{role_label}] (contribution {c.id}): {value}")
             involved_ids.append(c.id)
 
-        lines.append(
-            '\nRespond with JSON: {"has_conflict": bool, "description": str, '
-            '"severity": "low"|"medium"|"high"}'
-        )
-
         prompt = "\n".join(lines)
         try:
-            result = await provider.complete(prompt, LLMTier.CONFLICT)
-            parsed = _parse_conflict_json(result)
-            if parsed and parsed.get("has_conflict"):
-                conflicts.append(
-                    Conflict(
-                        contribution_ids=involved_ids,
-                        field_name=field_name,
-                        description=parsed.get("description", ""),
-                        severity=parsed.get("severity", "medium"),
-                    )
+            if use_typed:
+                output = await provider.run_typed(
+                    prompt,
+                    LLMTier.CONFLICT,
+                    output_type=ConflictDetectionOutput,
+                    instructions=(
+                        "You are detecting conflicts between contributions. "
+                        "If the contributions disagree on the field, return "
+                        "one or more ConflictOutput records.  If they align, "
+                        "return an empty conflicts list."
+                    ),
                 )
+                for conf_out in output.conflicts:
+                    conflicts.append(
+                        to_conflict(
+                            conf_out,
+                            fallback_field=field_name,
+                            fallback_ids=involved_ids,
+                        )
+                    )
+            else:
+                legacy_prompt = (
+                    prompt
+                    + '\n\nRespond with JSON: {"has_conflict": bool, '
+                    '"description": str, "severity": "low"|"medium"|"high"}'
+                )
+                result = await provider.complete(legacy_prompt, LLMTier.CONFLICT)
+                parsed = _parse_conflict_json(result)
+                if parsed and parsed.get("has_conflict"):
+                    conflicts.append(
+                        Conflict(
+                            contribution_ids=involved_ids,
+                            field_name=field_name,
+                            description=parsed.get("description", ""),
+                            severity=parsed.get("severity", "medium"),
+                        )
+                    )
         except BudgetExhaustedError:
             raise
         except Exception:
-            logger.warning("Failed to parse conflict detection result for field '%s'", field_name)
+            logger.warning(
+                "Failed to parse conflict detection result for field '%s'",
+                field_name,
+            )
 
     return conflicts
+
+
+def _provider_supports_run_typed(provider: LLMProvider) -> bool:
+    """Return True iff the provider overrides ``run_typed`` (item 9.3).
+
+    The typed path is opt-in: only providers that have supplied a real
+    override (or providers running under a stubbed LLMProvider where the
+    ABC default is absent) take the typed code path.  Legacy MagicMock-only
+    fixtures fall through to the ``complete()`` + JSON-parse path so they
+    don't have to be retrofitted.
+    """
+    method = getattr(type(provider), "run_typed", None)
+    if method is None:
+        return False
+    abc_method = getattr(LLMProvider, "run_typed", None)
+    if abc_method is not None and method is abc_method:
+        return False
+    return True
 
 
 async def generate_artifact(
@@ -203,23 +258,63 @@ async def generate_artifact(
             "\nResolve conflicts by deferring to higher-authority roles."
         )
 
-    lines.append(
-        "\nProduce the artifact as a JSON array of sections: "
-        '[{"title": str, "content": str}]. '
-        "Each section should be a logical component of the final document."
-    )
-
     prompt = "\n".join(lines)
-    result = await provider.complete(prompt, LLMTier.SYNTHESIS)
+    all_ids = [c.id for c in unique_contributions]
 
-    sections = _parse_sections(result, unique_contributions)
-    content_hash = _hash(json.dumps([{"title": s.title, "content": s.content} for s in sections]))
+    if _provider_supports_run_typed(provider):
+        # Typed path (item 9.3): Pydantic AI validates against
+        # ArtifactContentOutput and retries on validation failure.
+        try:
+            output = await provider.run_typed(
+                prompt
+                + "\n\nProduce the artifact as a structured set of sections, "
+                "each with a clear title and prose content.",
+                LLMTier.SYNTHESIS,
+                output_type=ArtifactContentOutput,
+                instructions=(
+                    "You are synthesising a formal artifact from a multi-"
+                    "stakeholder quorum's deliberation.  Higher-authority "
+                    "roles take precedence on conflicts."
+                ),
+            )
+            artifact = to_artifact_content(output, all_ids)
+            sections = artifact.sections
+        except (BudgetExhaustedError,):
+            raise
+        except Exception:  # noqa: BLE001 — fall back to free-text + parse
+            logger.warning(
+                "Typed artifact synthesis failed; falling back to free-text path.",
+                exc_info=True,
+            )
+            sections = await _generate_artifact_legacy(prompt, unique_contributions, provider)
+    else:
+        sections = await _generate_artifact_legacy(prompt, unique_contributions, provider)
+
+    content_hash = _hash(
+        json.dumps([{"title": s.title, "content": s.content} for s in sections])
+    )
 
     return ArtifactContent(
         sections=sections,
         content_hash=content_hash,
         conflicts_resolved=conflicts,
     )
+
+
+async def _generate_artifact_legacy(
+    prompt: str,
+    unique_contributions: list[Contribution],
+    provider: LLMProvider,
+) -> list[ArtifactSection]:
+    """Free-text Tier 3 path, kept for test-double compatibility (item 9.3)."""
+    legacy_prompt = (
+        prompt
+        + "\n\nProduce the artifact as a JSON array of sections: "
+        '[{"title": str, "content": str}]. '
+        "Each section should be a logical component of the final document."
+    )
+    result = await provider.complete(legacy_prompt, LLMTier.SYNTHESIS)
+    return _parse_sections(result, unique_contributions)
 
 
 def _parse_conflict_json(text: str) -> dict | None:

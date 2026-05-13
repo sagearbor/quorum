@@ -865,6 +865,106 @@ export function subscribeToFacilitator(
 }
 
 // ---------------------------------------------------------------------------
+// Arbitration / blackboard (11.7 — authority arbitration with dissents)
+// ---------------------------------------------------------------------------
+
+/**
+ * One ``arbitration`` WS frame emitted by the autonomy loop after the
+ * deterministic authority-arbitrator sweeps ``quorum_state.conflicts[]`` and
+ * writes decisions + dissents.
+ *
+ * The frame is small on purpose — just the counters. Consumers that need
+ * the full decisions/dissents arrays should re-fetch ``quorum_state`` (the
+ * ``GET /quorums/{id}/blackboard`` route) or subscribe to the Supabase
+ * realtime channel for that row.
+ */
+export interface ArbitrationFrame {
+  /** Number of new decisions written this round (by authority_rank override). */
+  decisions: number;
+  /** Number of new dissent records written this round. */
+  dissents: number;
+  /** Number of conflicts left open due to tied authority_rank at the top. */
+  ties_unresolved: number;
+}
+
+/**
+ * Subscribe to orchestrator-emitted ``arbitration`` frames over the existing
+ * per-quorum WebSocket channel.
+ *
+ * Returns an unsubscribe function. In demo mode this is a no-op (the demo
+ * engine does not run a WebSocket server, and 11.7 arbitration is a
+ * backend-only feature).
+ *
+ * Implementation mirrors ``subscribeToFacilitator`` — frames are emitted by
+ * the FastAPI WS manager (autonomy loop Phase 2.5), NOT persisted to a
+ * Supabase table; therefore Realtime is not the right transport here.
+ *
+ * Consumer pattern:
+ * ```tsx
+ * const [recent, setRecent] = useState<ArbitrationFrame | null>(null);
+ * useEffect(() => subscribeToBlackboard(quorumId, setRecent), [quorumId]);
+ * return recent && recent.dissents > 0 ? <DissentPill {...recent} /> : null;
+ * ```
+ *
+ * TODO(11.7-followup): wire this into the quorum view page
+ * (``apps/web/src/app/event/[slug]/quorum/[id]/page.tsx``) and the display
+ * page to render a dissent pill / column. The full dissent list (role name
+ * + reason) requires an additional ``GET /quorums/{id}/blackboard`` fetch
+ * since the WS frame only carries counters. Backend is the load-bearing
+ * change for this PR; the UI hookup is intentionally minimal here.
+ */
+export function subscribeToBlackboard(
+  quorumId: string,
+  handler: (frame: ArbitrationFrame) => void,
+): () => void {
+  if (isDemoMode()) {
+    return () => {};
+  }
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+
+  let ws: WebSocket | null = null;
+  let closed = false;
+
+  try {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(
+      `${protocol}//${window.location.host}/quorums/${quorumId}/live`,
+    );
+
+    ws.onmessage = (event) => {
+      if (closed) return;
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg && msg.type === "arbitration") {
+          handler({
+            decisions: Number(msg.decisions) || 0,
+            dissents: Number(msg.dissents) || 0,
+            ties_unresolved: Number(msg.ties_unresolved) || 0,
+          });
+        }
+      } catch {
+        // Ignore non-JSON or malformed frames
+      }
+    };
+  } catch {
+    // WebSocket failed to construct — fall back to no-op
+  }
+
+  return () => {
+    closed = true;
+    if (ws) {
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Participants (10.10 — presence dots)
 // ---------------------------------------------------------------------------
 

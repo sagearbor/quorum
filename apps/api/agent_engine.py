@@ -428,13 +428,30 @@ async def process_a2a_request(
     response_tags = extract_tags_from_text(response_text, existing_vocabulary=a2a_vocab)
     if a2a_quorum_id:
         update_vocabulary(a2a_quorum_id, response_tags)
+
+    # CAS on `version`: belt-and-suspenders alongside the autonomy-loop claim.
+    # If two workers somehow both progressed past the pending->processing flip
+    # (e.g. legacy callers that bypass the loop), only the one that matches the
+    # version we loaded will succeed; the other no-ops. We tolerate a missing
+    # `version` field for callers that mock the DB without it.
+    req_version = req.get("version")
+    update_payload: dict = {
+        "status": "acknowledged",
+        "response": response_text,
+        "response_tags": response_tags,
+        "resolved_at": _now_iso(),
+    }
+    if isinstance(req_version, int):
+        update_payload["version"] = req_version + 1
     try:
-        db.table("agent_requests").update({
-            "status": "acknowledged",
-            "response": response_text,
-            "response_tags": response_tags,
-            "resolved_at": _now_iso(),
-        }).eq("id", request_id).execute()
+        update_chain = (
+            db.table("agent_requests")
+            .update(update_payload)
+            .eq("id", request_id)
+        )
+        if isinstance(req_version, int):
+            update_chain = update_chain.eq("version", req_version)
+        update_chain.execute()
     except Exception:
         logger.warning("process_a2a_request: failed to update request status", exc_info=True)
 

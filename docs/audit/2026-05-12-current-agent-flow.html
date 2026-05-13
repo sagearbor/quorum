@@ -1,0 +1,536 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Quorum — Current Agent Flow (Pre-Expo Audit, 2026-05-12)</title>
+<style>
+  :root {
+    --bg:        #0c0e13;
+    --panel:     #151821;
+    --panel-2:   #1c2030;
+    --border:    #2a3045;
+    --text:      #e6e9f2;
+    --muted:     #8b93a8;
+    --accent:    #6ea8ff;
+    --ok:        #4ade80;
+    --warn:      #fb923c;
+    --bad:       #f87171;
+    --info:      #c084fc;
+    --line:      #3a4159;
+    --mono:      ui-monospace, "JetBrains Mono", "Fira Code", Menlo, monospace;
+    --sans:      "Inter", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin:0; padding:0; background: var(--bg); color: var(--text); font-family: var(--sans); }
+  body { padding: 32px 24px 80px; max-width: 1400px; margin: 0 auto; line-height: 1.55; }
+
+  h1 { font-size: 28px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  h2 { font-size: 18px; margin: 32px 0 12px; letter-spacing: -0.01em; color: var(--text); border-bottom: 1px solid var(--border); padding-bottom: 6px; }
+  h3 { font-size: 14px; margin: 18px 0 8px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
+  p  { margin: 8px 0; color: var(--text); }
+  code, .mono { font-family: var(--mono); font-size: 12.5px; }
+  code { background: var(--panel-2); padding: 1px 6px; border-radius: 4px; color: #d6dbeb; border: 1px solid var(--border); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  .meta { color: var(--muted); font-size: 12.5px; font-family: var(--mono); }
+  .meta b { color: var(--text); font-weight: 600; }
+
+  /* Legend */
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 14px 0 4px; font-size: 13px; }
+  .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; font-family: var(--mono); font-size: 11px; border: 1px solid var(--border); background: var(--panel); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+  .dot.ok   { background: var(--ok); }
+  .dot.warn { background: var(--warn); }
+  .dot.bad  { background: var(--bad); }
+  .dot.info { background: var(--info); }
+
+  /* Diagram grid: 5 columns of layers, plus the agent-defs warning. */
+  .diagram {
+    border: 1px solid var(--border);
+    background: linear-gradient(180deg, var(--panel) 0%, #11141d 100%);
+    border-radius: 12px;
+    padding: 22px;
+    margin: 18px 0 8px;
+    overflow-x: auto;
+  }
+  .cols {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 18px;
+    min-width: 1000px;
+  }
+  .col h4 {
+    margin: 0 0 12px;
+    font-size: 11px;
+    color: var(--muted);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    font-family: var(--mono);
+    padding-bottom: 6px;
+    border-bottom: 1px dashed var(--border);
+  }
+  .node {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    position: relative;
+    font-size: 13px;
+  }
+  .node .name { font-family: var(--mono); font-size: 12px; color: #c8cee0; }
+  .node .sub  { font-size: 11px; color: var(--muted); margin-top: 4px; line-height: 1.4; }
+  .node .file { font-family: var(--mono); font-size: 10.5px; color: var(--accent); display: block; margin-top: 4px; }
+  .node.bad  { border-color: rgba(248,113,113,0.55); background: linear-gradient(180deg, rgba(248,113,113,0.10), var(--panel-2)); }
+  .node.warn { border-color: rgba(251,146,60,0.55); background: linear-gradient(180deg, rgba(251,146,60,0.10), var(--panel-2)); }
+  .node.ok   { border-color: rgba(74,222,128,0.45); }
+  .node.info { border-color: rgba(192,132,252,0.5); }
+
+  .node .tag {
+    position: absolute; top: -8px; right: 10px;
+    font-family: var(--mono); font-size: 10px;
+    padding: 2px 6px; border-radius: 4px;
+    background: var(--panel); border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .node.bad  .tag { color: var(--bad);  border-color: rgba(248,113,113,0.55); background: rgba(248,113,113,0.08); }
+  .node.warn .tag { color: var(--warn); border-color: rgba(251,146,60,0.55); background: rgba(251,146,60,0.08); }
+  .node.ok   .tag { color: var(--ok);   border-color: rgba(74,222,128,0.45); background: rgba(74,222,128,0.08); }
+  .node.info .tag { color: var(--info); border-color: rgba(192,132,252,0.5); background: rgba(192,132,252,0.08); }
+
+  /* Flow arrows under the columns */
+  .arrows {
+    border-top: 1px dashed var(--border);
+    margin-top: 18px;
+    padding-top: 18px;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 12px;
+    line-height: 1.8;
+  }
+  .arrows b { color: var(--text); font-weight: 600; }
+  .arrows .step { display: flex; gap: 10px; align-items: baseline; }
+  .arrows .step .num {
+    font-family: var(--mono); color: var(--accent);
+    flex: 0 0 28px; text-align: right; padding-right: 6px;
+  }
+
+  /* Failure table */
+  table.failures { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 4px; }
+  table.failures th, table.failures td {
+    text-align: left; vertical-align: top;
+    padding: 10px 12px; border-bottom: 1px solid var(--border);
+  }
+  table.failures th { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 600; background: var(--panel); }
+  table.failures td.sev .pill { font-size: 10.5px; }
+  table.failures td.file code { font-size: 11.5px; }
+  table.failures td.tracked code { color: var(--accent); }
+  table.failures tr:hover td { background: rgba(255,255,255,0.02); }
+
+  /* Callout for "three things you flagged" */
+  .you-flagged {
+    background: linear-gradient(180deg, rgba(248,113,113,0.10), rgba(248,113,113,0.02));
+    border: 1px solid rgba(248,113,113,0.4);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin: 14px 0;
+  }
+  .you-flagged h3 { color: var(--bad); margin-top: 0; }
+  .you-flagged ol { margin: 6px 0 0; padding-left: 20px; }
+  .you-flagged li { margin-bottom: 8px; }
+
+  .works {
+    background: linear-gradient(180deg, rgba(74,222,128,0.08), rgba(74,222,128,0.01));
+    border: 1px solid rgba(74,222,128,0.35);
+    border-radius: 10px;
+    padding: 16px 20px;
+    margin: 14px 0;
+  }
+  .works h3 { color: var(--ok); margin-top: 0; }
+  .works ul { margin: 6px 0 0; padding-left: 20px; }
+  .works li { margin-bottom: 6px; }
+
+  footer { margin-top: 48px; border-top: 1px solid var(--border); padding-top: 16px; color: var(--muted); font-size: 12px; font-family: var(--mono); }
+  footer a { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<h1>Quorum — Current Agent Flow</h1>
+<p class="meta">
+  Audit date <b>2026-05-12</b> &nbsp;·&nbsp;
+  branch <b>feature/pydantic-ai-migration-plan</b> &nbsp;·&nbsp;
+  base <b>main @ fd48098</b> &nbsp;·&nbsp;
+  sources: three parallel sub-agent reviews (industry standards / pessimistic code review / UX-QR design)
+</p>
+
+<div class="legend">
+  <span class="pill"><span class="dot ok"></span> WORKING</span>
+  <span class="pill"><span class="dot warn"></span> PARTIAL / RACE / DRIFT</span>
+  <span class="pill"><span class="dot bad"></span> STUB / EMPTY / NO-OP</span>
+  <span class="pill"><span class="dot info"></span> THEATRICAL (looks real, isn't)</span>
+</div>
+
+<div class="you-flagged">
+  <h3>The three you flagged as “clear failures”</h3>
+  <ol>
+    <li><b><code>apps/api/agents/definitions/</code> is empty.</b> Every agent runs on a generic auto-generated system prompt. The IRB Officer and Patient Advocate emit nearly identical replies, differing only by name substitution. → tracked in checklist <code>10.1</code>.</li>
+    <li><b>A2A HTTP wire is a stub.</b> <code>a2a/a2a_client.py:29-44</code> logs a line and returns <code>{"status":"sent"}</code> without making an HTTP call. Every “A2A dispatched” log message is a lie. → tracked in <code>10.3</code>.</li>
+    <li><b>No QR-code flow exists.</b> The QR codes you see in the architect page encode the SAME <code>/event/&lt;slug&gt;/quorum/&lt;id&gt;?station=N</code> URL — phones just open the laptop dashboard. There is no <code>/pair</code>, no <code>/agent/&lt;role_id&gt;</code>, no JWT, no participant identity. <code>user_token: "anon-local"</code> is hardcoded for every contribution. → tracked in <code>10.4</code> + <code>10.5</code>.</li>
+  </ol>
+</div>
+
+<h2>System diagram (current state)</h2>
+
+<div class="diagram">
+  <div class="cols">
+
+    <div class="col">
+      <h4>1 · User devices</h4>
+
+      <div class="node ok">
+        <div class="name">Laptop browser (station)</div>
+        <div class="sub">Opens <code>/event/&lt;slug&gt;/quorum/&lt;id&gt;?station=N</code>. Renders dashboard + ConversationThread.</div>
+        <span class="tag">working</span>
+      </div>
+
+      <div class="node bad">
+        <div class="name">Phone (QR scan)</div>
+        <div class="sub">Opens the <i>same</i> station URL as the laptop. No mobile-specific route. Two phones scanning the same QR write under <code>station_id="station-N"</code> and the agent thread interleaves.</div>
+        <span class="file">page.tsx:254, page.tsx:290</span>
+        <span class="tag">stub / failure</span>
+      </div>
+
+      <div class="node info">
+        <div class="name">Projector (display route)</div>
+        <div class="sub">Read-only carousel; auto-rotates dashboards. Shows whatever the avatar speaks — including LLM error strings (see col 3).</div>
+        <span class="tag">works · risky</span>
+      </div>
+    </div>
+
+    <div class="col">
+      <h4>2 · Frontend (Next.js)</h4>
+
+      <div class="node ok">
+        <div class="name">dataProvider.ts</div>
+        <div class="sub">Subscribes to Supabase Realtime: contributions, health, artifact, station_messages, agent_documents, A2A requests. Demo-mode branch works too.</div>
+        <span class="tag">working</span>
+      </div>
+
+      <div class="node bad">
+        <div class="name">QR code generator</div>
+        <div class="sub">Encodes the station URL itself. No rotating ticket, no JWT, no single-use enforcement, no phone-targeted route.</div>
+        <span class="file">apps/web/src/app/event/[slug]/page.tsx:254</span>
+        <span class="tag">misleading</span>
+      </div>
+
+      <div class="node info">
+        <div class="name">AvatarPanel + IdleScene</div>
+        <div class="sub">3D GLB avatar with MediaPipe gaze + stereo-mic head turn. TTS speaks whatever <code>synthesisText</code> is passed in. No facilitator persona; no global view.</div>
+        <span class="file">AvatarPanel.tsx:62-64 (TODO)</span>
+        <span class="tag">theatrical</span>
+      </div>
+
+      <div class="node warn">
+        <div class="name">Camera picker (just landed)</div>
+        <div class="sub">PR #13 today — fixes the closed-lid flicker. Works.</div>
+        <span class="tag">just shipped</span>
+      </div>
+    </div>
+
+    <div class="col">
+      <h4>3 · API (FastAPI)</h4>
+
+      <div class="node ok">
+        <div class="name">routes.py — contribute / ask_facilitator</div>
+        <div class="sub">Accepts contributions, dispatches to agent_engine.process_agent_turn. Auth is <code>user_token: "anon-local"</code> hardcoded everywhere.</div>
+        <span class="file">routes.py:842-915</span>
+        <span class="tag">works (insecure)</span>
+      </div>
+
+      <div class="node warn">
+        <div class="name">agent_engine.process_agent_turn</div>
+        <div class="sub">10-step orchestration: load role → history → quorum ctx → cross-station insights (Jaccard tag affinity) → docs → A2A requests → build prompt → LLM → persist → publish insight. Drifts vs <code>conversation.py</code> (parallel implementation).</div>
+        <span class="file">agent_engine.py:141-380</span>
+        <span class="tag">works · drift</span>
+      </div>
+
+      <div class="node bad">
+        <div class="name">agent_engine._call_llm fallback</div>
+        <div class="sub">On LLM exception, returns the string “I encountered an issue processing your message.” That string is treated as a normal assistant reply → avatar speaks it on the projector.</div>
+        <span class="file">agent_engine.py:216</span>
+        <span class="tag">stage hazard</span>
+      </div>
+
+      <div class="node warn">
+        <div class="name">autonomy_loop._run_autonomy_round</div>
+        <div class="sub">Polls agent_requests every 3–30s. Race: at autonomy 1.0 the interval is 1.5s, well below LLM latency. No CAS on <code>status="pending"→"processing"</code>. Duplicate processing GUARANTEED.</div>
+        <div class="sub">Speaker election: <code>random.choice(active_roles)</code>. Not deliberation.</div>
+        <span class="file">autonomy_loop.py:138-292</span>
+        <span class="tag">race · design hole</span>
+      </div>
+
+      <div class="node bad">
+        <div class="name">a2a/a2a_client.send_message</div>
+        <div class="sub">Logs one line, returns <code>{"status":"sent"}</code>. No HTTP. <code>_agent_registry</code> is a process-local dict (lost on restart, broken under workers).</div>
+        <span class="file">a2a/a2a_client.py:29-44, :12</span>
+        <span class="tag">no-op stub</span>
+      </div>
+
+      <div class="node bad">
+        <div class="name">_active_loops dict</div>
+        <div class="sub">Module-level singleton. Multi-worker uvicorn duplicates or loses loops. Process restart drops every running autonomy loop silently.</div>
+        <span class="file">autonomy_loop.py:24</span>
+        <span class="tag">process-local</span>
+      </div>
+    </div>
+
+    <div class="col">
+      <h4>4 · LLM (packages/llm)</h4>
+
+      <div class="node ok">
+        <div class="name">LLMProvider ABC + factory</div>
+        <div class="sub">5 adapters: azure, openai, anthropic, local (Ollama), mock. Tier 1 / 2 / 3 routing. Mock active under <code>QUORUM_TEST_MODE</code>.</div>
+        <span class="tag">working</span>
+      </div>
+
+      <div class="node warn">
+        <div class="name">_call_llm routing</div>
+        <div class="sub">Hand-rolled <code>respond()</code> vs <code>chat()</code> vs <code>complete()</code> cascade with hardcoded GPT-5 model-string detection. Pydantic AI / LiteLLM solve this.</div>
+        <span class="file">agent_engine.py:80-200</span>
+        <span class="tag">reinvented</span>
+      </div>
+
+      <div class="node bad">
+        <div class="name">Azure embed() points at chat deployment</div>
+        <div class="sub">Calls embeddings against <code>_deployment_t2</code> (GPT-4o-mini chat). Azure does NOT serve embeddings from chat deployments. 404/400 at runtime. Vector indexes permanently empty.</div>
+        <span class="file">providers/azure.py:273-285</span>
+        <span class="tag">broken</span>
+      </div>
+
+      <div class="node bad">
+        <div class="name">Anthropic embed() returns fake vector</div>
+        <div class="sub">256-dim keyword-hash sparse vector. Schema expects vector(1536). Dimension mismatch → crash on cosine query.</div>
+        <span class="file">providers/anthropic.py:67-84</span>
+        <span class="tag">wrong dim</span>
+      </div>
+    </div>
+
+    <div class="col">
+      <h4>5 · Data (Supabase)</h4>
+
+      <div class="node ok">
+        <div class="name">station_messages</div>
+        <div class="sub">Per (quorum, role, station) conversation history. Loaded last-10 by agent_engine. Persists assistant replies + user inputs.</div>
+        <span class="tag">working</span>
+      </div>
+
+      <div class="node ok">
+        <div class="name">agent_documents + document_changes</div>
+        <div class="sub">Versioned shared docs agents read/write. Audit trail. Used in prompt context block.</div>
+        <span class="tag">working</span>
+      </div>
+
+      <div class="node ok">
+        <div class="name">agent_insights + agent_requests</div>
+        <div class="sub">Cross-station insights (tag-routed). A2A request queue (durable — this is what actually makes A2A “work” today, in lieu of the HTTP stub).</div>
+        <span class="tag">working</span>
+      </div>
+
+      <div class="node bad">
+        <div class="name">agents/definitions/ directory</div>
+        <div class="sub">EMPTY. Every role falls back to a generic auto-generated system prompt. The whole “distinct agent personas” premise is currently fiction.</div>
+        <span class="file">apps/api/agents/definitions/</span>
+        <span class="tag">empty</span>
+      </div>
+
+      <div class="node bad">
+        <div class="name">synthesis_snapshots</div>
+        <div class="sub">Referenced by <code>coordination/supabase_backend.py:64</code> but no <code>CREATE TABLE</code> in any migration. Crashes against real Supabase on any synthesis path.</div>
+        <span class="tag">missing migration</span>
+      </div>
+
+      <div class="node bad">
+        <div class="name">RLS policies</div>
+        <div class="sub"><code>FOR ALL USING (true)</code> on all 7 agent tables. Any attendee reading the Supabase URL from devtools can write arbitrary rows during the live demo.</div>
+        <span class="file">migrations/20260314000002_agent_system.sql:294-300</span>
+        <span class="tag">wide open</span>
+      </div>
+
+      <div class="node warn">
+        <div class="name">embedding columns</div>
+        <div class="sub">pgvector(1536) columns exist on station_messages + agent_insights with ivfflat indexes. Never populated (see col 4 bugs). Tag relevance falls back to Jaccard.</div>
+        <span class="tag">unused</span>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="arrows">
+    <h3 style="margin-top: 0; color: var(--muted);">Primary data flow (human contribution at a station)</h3>
+    <div class="step"><span class="num">1.</span><span><b>Laptop</b> at <code>?station=N</code> posts to <code>POST /quorums/&lt;id&gt;/contributions</code> with hardcoded <code>user_token:"anon-local"</code>.</span></div>
+    <div class="step"><span class="num">2.</span><span><b>routes.py</b> invokes <code>agent_engine.process_agent_turn(quorum_id, role_id, station_id, user_message)</code>.</span></div>
+    <div class="step"><span class="num">3.</span><span><b>agent_engine</b> loads role + (empty) agent definition + last-10 station_messages + cross-station insights (Jaccard) + relevant docs + pending A2A requests.</span></div>
+    <div class="step"><span class="num">4.</span><span>Builds messages array: SYSTEM (stable, Azure-cached) → CONTEXT block → history → latest user msg → <code>_call_llm</code>.</span></div>
+    <div class="step"><span class="num">5.</span><span><b>LLM</b> reply persisted to <code>station_messages</code>; tags extracted; substantive replies published to <code>agent_insights</code> (other stations pick this up next turn via Supabase Realtime).</span></div>
+    <div class="step"><span class="num">6.</span><span><b>autonomy_loop</b> (if autonomy_level&gt;0) polls <code>agent_requests</code>; picks a random active role; runs <code>process_a2a_request</code>. Race window: 1.5–3s.</span></div>
+    <div class="step"><span class="num">7.</span><span><b>WebSocket</b> broadcast via <code>ws_manager</code> → frontend dashboard updates. Supabase Realtime ALSO fans out new rows.</span></div>
+    <div class="step"><span class="num">8.</span><span><b>Avatar</b> speaks <code>synthesisText</code> via browser SpeechSynthesis. <i>Including error fallbacks.</i></span></div>
+  </div>
+</div>
+
+<h2>Failures, stubs, and drift — with file references</h2>
+
+<table class="failures">
+  <thead>
+  <tr>
+    <th style="width: 110px;">Severity</th>
+    <th>What it is</th>
+    <th style="width: 280px;">Where</th>
+    <th style="width: 110px;">Tracked</th>
+  </tr>
+  </thead>
+  <tbody>
+
+  <tr>
+    <td class="sev"><span class="pill"><span class="dot bad"></span> CRITICAL</span></td>
+    <td><b>agent definitions empty.</b> Every agent is generic. The “distinct personas” story doesn't exist yet — it's an empty directory the code politely falls through.</td>
+    <td class="file"><code>apps/api/agents/definitions/</code><br><code>apps/api/agents/__init__.py:39</code></td>
+    <td class="tracked"><code>10.1</code></td>
+  </tr>
+
+  <tr>
+    <td class="sev"><span class="pill"><span class="dot bad"></span> CRITICAL</span></td>
+    <td><b>A2A HTTP send is a no-op stub.</b> Logs and returns success without making the call. Every architect-guidance and inter-agent dispatch silently falls through to the Supabase queue (where it works) — but the “A2A network” claim is untrue.</td>
+    <td class="file"><code>apps/api/a2a/a2a_client.py:29-44</code></td>
+    <td class="tracked"><code>10.3</code></td>
+  </tr>
+
+  <tr>
+    <td class="sev"><span class="pill"><span class="dot bad"></span> CRITICAL</span></td>
+    <td><b>No QR-code flow.</b> QR encodes the station URL itself. Phones open the laptop dashboard. Two attendees scanning the same QR collide on <code>station_id</code>. No pairing, no participant identity, no <code>/agent/&lt;role_id&gt;</code> route.</td>
+    <td class="file"><code>apps/web/src/app/event/[slug]/page.tsx:254</code><br><code>quorum/[id]/page.tsx:290</code></td>
+    <td class="tracked"><code>10.4 + 10.5</code></td>
+  </tr>
+
+  <tr>
+    <td class="sev"><span class="pill"><span class="dot warn"></span> HIGH</span></td>
+    <td><b>Autonomy loop double-processing race.</b> No CAS on the pending→processing transition. At autonomy 1.0 the loop fires every ~1.5s; same A2A request gets processed twice → duplicate LLM calls, duplicate insights, duplicate WS broadcasts.</td>
+    <td class="file"><code>autonomy_loop.py:138-151</code><br><code>agent_engine.py:372-380</code></td>
+    <td class="tracked"><code>10.2</code></td>
+  </tr>
+
+  <tr>
+    <td class="sev"><span class="pill"><span class="dot warn"></span> HIGH</span></td>
+    <td><b>LLM error string spoken by avatar.</b> Fallback returns a chat-string error; treated as a normal assistant reply; avatar speaks it on the 60-inch projector. Audience reads it as “the AI is broken.”</td>
+    <td class="file"><code>agent_engine.py:216</code></td>
+    <td class="tracked"><code>10.6</code></td>
+  </tr>
+
+  <tr>
+    <td class="sev"><span class="pill"><span class="dot warn"></span> HIGH</span></td>
+    <td><b>Random speaker election.</b> Autonomy loop picks the next speaker via <code>random.choice</code>. There's no plan, no agenda, no role-relevance scoring. The product premise (authority arbitration) is not enforced anywhere.</td>
+    <td class="file"><code>autonomy_loop.py:192</code></td>
+    <td class="tracked"><code>11.3</code> (post-expo)</td>
+  </tr>
+
+  <tr>
+    <td class="sev"><span class="pill"><span class="dot bad"></span> CRITICAL</span></td>
+    <td><b>synthesis_snapshots table missing.</b> Code inserts to it; no <code>CREATE TABLE</code> in migrations. Local SQLite stubs the table; real Supabase will crash on the synthesis path.</td>
+    <td class="file"><code>coordination/supabase_backend.py:64</code></td>
+    <td class="tracked"><code>10.7</code></td>
+  </tr>
+
+  <tr>
+    <td class="sev"><span class="pill"><span class="dot bad"></span> CRITICAL</span></td>
+    <td><b>RLS wide open.</b> All seven agent tables have <code>FOR ALL USING (true)</code>. Anonymous attendees can write arbitrary rows during the demo if they discover the Supabase URL from devtools.</td>
+    <td class="file"><code>migrations/20260314000002_agent_system.sql:294-300</code></td>
+    <td class="tracked"><code>10.8</code></td>
+  </tr>
+
+  <tr>
+    <td class="sev"><span class="pill"><span class="dot warn"></span> HIGH</span></td>
+    <td><b>Auto-contribute fragment salad.</b> At autonomy ≥ 0.7, agents auto-submit contributions by string-joining their last 3 messages. The Tier 3 artifact then synthesizes incoherent inputs → bad demo artifact.</td>
+    <td class="file"><code>autonomy_loop.py:326-345</code></td>
+    <td class="tracked"><code>10.9</code></td>
+  </tr>
+
+  <tr>
+    <td class="sev"><span class="pill"><span class="dot bad"></span> HIGH</span></td>
+    <td><b>Azure embed() targets chat deployment.</b> Will 404 on real calls. Vector indexes permanently empty. Tag relevance never upgrades to semantic.</td>
+    <td class="file"><code>providers/azure.py:273-285</code></td>
+    <td class="tracked"><code>11.4</code></td>
+  </tr>
+
+  <tr>
+    <td class="sev"><span class="pill"><span class="dot bad"></span> HIGH</span></td>
+    <td><b>Anthropic embed() returns fake 256-dim vector.</b> Schema expects 1536. Dimension mismatch → crash on cosine query.</td>
+    <td class="file"><code>providers/anthropic.py:67-84</code></td>
+    <td class="tracked"><code>11.4</code></td>
+  </tr>
+
+  <tr>
+    <td class="sev"><span class="pill"><span class="dot warn"></span> MEDIUM</span></td>
+    <td><b>Parallel prompt-building.</b> <code>agent_engine._build_prompt</code> is what runs in production. <code>conversation.build_agent_prompt</code> is tested but never called. They've drifted (history-summarization only in the unused one).</td>
+    <td class="file"><code>agent_engine.py:572-645</code><br><code>quorum_llm/conversation.py:122-193</code></td>
+    <td class="tracked"><code>11.8</code></td>
+  </tr>
+
+  <tr>
+    <td class="sev"><span class="pill"><span class="dot warn"></span> MEDIUM</span></td>
+    <td><b>Module-level singletons everywhere.</b> <code>_active_loops</code>, <code>_agent_registry</code>, <code>_backend</code> are process-local dicts. Multi-worker uvicorn or any restart breaks them silently.</td>
+    <td class="file"><code>autonomy_loop.py:24</code> · <code>a2a_client.py:12</code> · <code>coordination/factory.py:16</code></td>
+    <td class="tracked"><code>11.5</code></td>
+  </tr>
+
+  <tr>
+    <td class="sev"><span class="pill"><span class="dot warn"></span> MEDIUM</span></td>
+    <td><b>agent_configs.temperature/max_tokens ignored.</b> Stored in DB and on AgentDefinition, never passed through to <code>_call_llm</code>. The architect-tuning UX is decorative.</td>
+    <td class="file"><code>agent_engine.py:80-200</code></td>
+    <td class="tracked"><code>11.9</code></td>
+  </tr>
+
+  </tbody>
+</table>
+
+<div class="works">
+  <h3>What does work</h3>
+  <ul>
+    <li>Three-tier LLM pipeline (deterministic keyword → conflict detection → final synthesis) with mock provider gated by <code>QUORUM_TEST_MODE</code>.</li>
+    <li>Per-station conversation history (<code>station_messages</code>) with prompt-cache-friendly system message layout.</li>
+    <li>Cross-station insight routing — actually does propagate insights across roles by tag overlap (just sub-optimally; should be embeddings).</li>
+    <li>Versioned <code>agent_documents</code> with audit trail.</li>
+    <li>Frontend realtime: Supabase channels for contributions, health, artifact, station_messages, documents, A2A requests.</li>
+    <li>Avatar gaze + emotion tracking (and now camera-picker — PR #13 fixes lid-closed flicker).</li>
+    <li>Architect agent and autonomy loop scaffolding — the BONES are right, the implementations are what's stubbed.</li>
+  </ul>
+</div>
+
+<h2>Where the fix plan lives</h2>
+<p>
+  The full overnight-and-post-expo plan is in
+  <code><a href="../../developer_checklist.yaml">developer_checklist.yaml</a></code>, phases:
+</p>
+<ul>
+  <li><b><code>demo_critical_overnight</code></b> · 10 items, ~10–13h focused work. Every item references the file:line in this page.</li>
+  <li><b><code>pydantic_migration</code></b> · 4 items, post-expo. Pydantic AI swap.</li>
+  <li><b><code>agent_standards_migration</code></b> · 9 items, post-expo. A2A 1.0 + MCP + Magentic-One orchestrator + blackboard + authority arbitration.</li>
+  <li><b><code>code_hygiene_postexpo</code></b> · 7 items, mop-up.</li>
+</ul>
+<p>
+  The standards report's closing line is the strategy:
+  <em>“Bet on the protocols, treat the framework as replaceable.”</em>
+  A2A 1.0 and MCP are now Linux-Foundation-governed (donated by Google and Anthropic respectively); they're the durable bet. Pydantic AI / MAF / whatever-comes-next is the swap layer on top.
+</p>
+
+<footer>
+  Generated 2026-05-12 ·
+  Branch <a href="https://github.com/sagearbor/quorum/tree/feature/pydantic-ai-migration-plan">feature/pydantic-ai-migration-plan</a> ·
+  PR <a href="https://github.com/sagearbor/quorum/pull/13">#13 (avatar camera picker)</a> ·
+  Source reports archived in conversation transcript.
+</footer>
+
+</body>
+</html>

@@ -152,6 +152,28 @@ class ContributeRequest(BaseModel):
     # Optional: station_id ties the contribution to a specific physical station.
     # When provided, the agent engine fires a facilitator turn for that station.
     station_id: str | None = None
+    # Optional: participant_id attributes the contribution to a specific human
+    # (minted on QR scan or station-page first-load).  Falls back to user_token
+    # for backward compatibility when omitted.
+    participant_id: str | None = None
+
+
+# POST /sessions/participant — mint a participant on QR scan or station load
+class CreateParticipantRequest(BaseModel):
+    quorum_id: str
+    role_id: str | None = None
+    station_label: str | None = None
+    device_kind: str  # "laptop" | "phone"
+
+
+class CreateParticipantResponse(BaseModel):
+    participant_id: str
+    display_name: str
+
+
+# POST /sessions/heartbeat — refresh last_heartbeat_at
+class HeartbeatRequest(BaseModel):
+    participant_id: str
 
 
 class ContributeResponse(BaseModel):
@@ -163,6 +185,12 @@ class ContributeResponse(BaseModel):
     facilitator_message_id: str | None = None
     facilitator_tags: list[str] | None = None
     a2a_requests_triggered: int = 0
+    # When True the facilitator skipped this turn because the LLM was
+    # unavailable. The frontend MUST NOT speak any reply and MUST NOT render
+    # an assistant message — the conversation should look as if the agent
+    # simply didn't reply. ``facilitator_*`` fields are all None in this case.
+    facilitator_paused: bool = False
+    facilitator_paused_reason: str | None = None
 
 
 # GET /quorums/{quorum_id}/state
@@ -213,6 +241,13 @@ class RoleSuggestionResponse(BaseModel):
     authority_rank: int
     capacity: str | int = "unlimited"
     suggested_prompt_focus: str
+    # Persona fields — populated inline by architect_agent.generate_roles in
+    # a single LLM call so that every role can get an agent_configs row
+    # without a separate N+1 round-trip.
+    system_prompt: str = ""
+    domain_tags: list[str] = []
+    temperature: float = 0.4
+    model: str = "gpt-4o-mini"
 
 
 class GenerateRolesResponse(BaseModel):
@@ -292,9 +327,14 @@ class AskRequest(BaseModel):
 
 
 class AskResponse(BaseModel):
-    reply: str
-    message_id: str
+    # reply / message_id / tags are None on paused turns. When ``paused`` is
+    # True the frontend MUST NOT speak the reply or render an assistant
+    # message — the facilitator is silent until the next non-paused reply.
+    reply: str | None = None
+    message_id: str | None = None
     tags: list[str] = Field(default_factory=list)
+    paused: bool = False
+    reason: str | None = None
 
 
 # GET /quorums/{id}/documents

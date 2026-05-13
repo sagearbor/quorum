@@ -14,6 +14,7 @@ import { useQuorumLive } from "@/hooks/useQuorumLive";
 import { IdleScene, type IdleSceneHandle } from "./IdleScene";
 import { resolveArchetype } from "./archetypes/resolveArchetype";
 import { ARCHETYPES, resolveGlbUrl } from "./archetypes/archetypes";
+import { subscribeToFacilitator } from "@/lib/dataProvider";
 import { VisionTracker } from "./VisionTracker";
 
 const CAMERA_STORAGE_KEY = "quorum.avatar.cameraDeviceId";
@@ -32,6 +33,14 @@ interface AvatarPanelProps {
   staticSynthesisText?: string;
   /** Role name used to resolve archetype and GLB model */
   roleName?: string;
+  /**
+   * When true the backend has signalled that the facilitator is paused
+   * (LLM unavailable). The avatar stays silent and a "reconnecting" pill
+   * appears at the top of the panel.
+   */
+  paused?: boolean;
+  /** Optional reason supplied by the backend (e.g. "llm_unavailable"). */
+  pausedReason?: string | null;
 }
 
 export function AvatarPanel({
@@ -42,6 +51,8 @@ export function AvatarPanel({
   staticHealthScore,
   staticSynthesisText,
   roleName,
+  paused = false,
+  pausedReason = null,
 }: AvatarPanelProps) {
   const idleSceneRef = useRef<IdleSceneHandle>(null);
 
@@ -94,9 +105,31 @@ export function AvatarPanel({
     return resolveGlbUrl(archetype);
   }, [effectiveRoleName]);
 
-  // Synthesis text: only speak LLM-generated output, never parrot user contributions.
-  // TODO: wire to Tier 3 artifact synthesis or a dedicated facilitator response channel
-  const latestSynthesis = staticSynthesisText ?? undefined;
+  // Synthesis text: the avatar speaks the orchestrator's per-round narration
+  // (checklist 11.3). The narration comes in as a WebSocket frame
+  // (``type: "facilitator_narration"``) emitted at the START of each autonomy
+  // round, BEFORE the role-agent dispatch fires. The avatar narrates the
+  // turn while the role-agent thinks. ``staticSynthesisText`` (test-only)
+  // overrides the live narration so unit tests don't need a WS server.
+  //
+  // ``paused`` is honored by the controller — the narration state still
+  // updates on paused turns (so the next non-paused turn picks up the latest
+  // narration), but the TTS short-circuits on paused. See 10.6.
+  const [orchestratorNarration, setOrchestratorNarration] = useState<string | undefined>(
+    undefined
+  );
+
+  useEffect(() => {
+    if (!quorumId) return;
+    const unsubscribe = subscribeToFacilitator(quorumId, (frame) => {
+      if (frame.narration) {
+        setOrchestratorNarration(frame.narration);
+      }
+    });
+    return unsubscribe;
+  }, [quorumId]);
+
+  const latestSynthesis = staticSynthesisText ?? orchestratorNarration ?? undefined;
 
   // useAvatarController manages gaze (VisionTracker + StereoAnalyzer), emotion
   // (EmotionDetector + health score), and optional TTS when a provider is configured.
@@ -106,6 +139,8 @@ export function AvatarPanel({
     enableMic,
     enableEmotion: enableEmotionTracking,
     synthesisText: latestSynthesis,
+    paused,
+    pausedReason,
     cameraDeviceId,
   });
 
@@ -128,6 +163,24 @@ export function AvatarPanel({
       className="w-full h-full flex flex-col items-center justify-center relative bg-black/20 rounded-xl"
       data-testid="avatar-panel"
     >
+      {/* Paused pill — visible when the backend has signalled that the
+          facilitator is paused (LLM unavailable). Auto-dismisses when the
+          next non-paused reply arrives. Styled to match the existing emotion
+          badges so the panel stays visually calm during the dropout. */}
+      {avatarState.paused && (
+        <div
+          className="absolute top-2 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5
+                     text-xs px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300
+                     border border-amber-400/30"
+          data-testid="avatar-paused-pill"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+          <span>Facilitator paused — reconnecting</span>
+        </div>
+      )}
+
       {/* Camera picker — only when webcam tracking is enabled */}
       {enableEmotionTracking && cameras.length > 0 && (
         <div

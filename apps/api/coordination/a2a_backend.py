@@ -23,16 +23,18 @@ class A2ABackend(SupabaseBackend):
     def __init__(self) -> None:
         super().__init__()
         # Lazy import to avoid circular deps
-        from ..a2a.a2a_client import A2AClient
+        from ..quorum_a2a.a2a_client import A2AClient
         self._a2a_client = A2AClient()
 
     async def submit_contribution(
         self, quorum_id: str, role_id: str, user_token: str,
         content: str, structured_fields: dict[str, str],
+        participant_id: str | None = None,
     ) -> dict[str, Any]:
         # Persist via Supabase first
         row = await super().submit_contribution(
             quorum_id, role_id, user_token, content, structured_fields,
+            participant_id=participant_id,
         )
 
         # Then notify via A2A

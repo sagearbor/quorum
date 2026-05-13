@@ -251,7 +251,12 @@ export default function EventPage() {
                     <h4 className="text-sm font-semibold text-gray-900 dark:text-white mb-2">{quorum.title}</h4>
                     <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                       {Array.from({ length: stationCount }, (_, i) => {
-                        const url = `${baseUrl}/event/${slug}/quorum/${quorum.id}?station=${i + 1}`;
+                        // QRs point at /pair so each scan mints a fresh
+                        // participant_id (10.4) instead of inheriting the
+                        // hardcoded "anon-local" user_token.  /pair then
+                        // redirects to the station page (or to /agent in 10.5).
+                        const stationLabel = `station-${i + 1}`;
+                        const url = `${baseUrl}/pair?qr=${quorum.id}&st=${stationLabel}`;
                         return (
                           <a
                             key={i}

@@ -26,7 +26,12 @@ from coordination.factory import get_coordination_backend
 from database import get_supabase
 from health import calculate_health_score
 from llm import llm_provider
-from architect_agent import generate_roles, send_guidance
+from architect_agent import (
+    RoleSuggestion,
+    generate_roles,
+    persist_agent_configs,
+    send_guidance,
+)
 from models import (
     A2ARequestCreate,
     A2ARequestResponse,
@@ -38,8 +43,11 @@ from models import (
     ContributeResponse,
     CreateEventRequest,
     CreateEventResponse,
+    CreateParticipantRequest,
+    CreateParticipantResponse,
     CreateQuorumRequest,
     CreateQuorumResponse,
+    HeartbeatRequest,
     DocumentCreateRequest,
     DocumentResponse,
     DocumentUpdateRequest,
@@ -54,7 +62,11 @@ from models import (
     ResolveResponse,
     StationMessageResponse,
 )
-from agent_engine import process_a2a_request, process_agent_turn
+from agent_engine import (
+    is_paused_reply,
+    process_a2a_request,
+    process_agent_turn,
+)
 from document_engine import create_document, detect_oscillation, update_document
 from ws_manager import manager
 
@@ -261,6 +273,26 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
         }
         db.table("roles").insert(role_row).execute()
 
+        # Register the role's A2A endpoint in agent_endpoints so other agents
+        # (and external A2A peers) can discover and POST tasks to this role.
+        # Never fatal — failures are logged inside register_endpoint.
+        try:
+            from quorum_a2a.a2a_server import register_endpoint
+
+            register_endpoint(
+                role_ids[idx],
+                capabilities={
+                    "name": role_def.name,
+                    "authority_rank": role_def.authority_rank,
+                },
+                db=db,
+            )
+        except Exception:
+            logger.warning(
+                "create_quorum: failed to register A2A endpoint for role %s",
+                role_ids[idx], exc_info=True,
+            )
+
     share_url = f"/event/{event.data['slug']}/quorum/{quorum_id}"
 
     # Auto-seed agent documents only in test mode (non-fatal)
@@ -329,6 +361,7 @@ async def contribute(quorum_id: str, body: ContributeRequest):
         user_token=body.user_token,
         content=body.content,
         structured_fields=body.structured_fields,
+        participant_id=body.participant_id,
     )
     contribution_id = contrib_row["id"]
 
@@ -397,31 +430,58 @@ async def contribute(quorum_id: str, body: ContributeRequest):
     facilitator_reply: str | None = None
     facilitator_message_id: str | None = None
     facilitator_tags: list[str] | None = None
+    facilitator_paused = False
+    facilitator_paused_reason: str | None = None
 
     if body.station_id:
         try:
-            facilitator_reply, facilitator_message_id, facilitator_tags = (
-                await process_agent_turn(
-                    quorum_id=quorum_id,
-                    role_id=body.role_id,
-                    station_id=body.station_id,
-                    user_message=body.content,
-                    supabase_client=db,
-                    llm_provider=llm_provider,
-                )
+            turn_reply, turn_msg_id, turn_tags = await process_agent_turn(
+                quorum_id=quorum_id,
+                role_id=body.role_id,
+                station_id=body.station_id,
+                user_message=body.content,
+                supabase_client=db,
+                llm_provider=llm_provider,
             )
-            # Broadcast facilitator reply over WebSocket so the frontend can
-            # update the conversation thread in real time.
-            await manager.broadcast(quorum_id, {
-                "type": "facilitator_reply",
-                "data": {
-                    "station_id": body.station_id,
-                    "role_id": body.role_id,
-                    "content": facilitator_reply,
-                    "tags": facilitator_tags or [],
-                    "message_id": facilitator_message_id,
-                },
-            })
+            if is_paused_reply(turn_reply, turn_tags):
+                # Facilitator paused (LLM unavailable). Do NOT broadcast a
+                # reply — the avatar must stay silent — but signal the paused
+                # state to listeners so the UI can show the pill.
+                facilitator_paused = True
+                facilitator_paused_reason = "llm_unavailable"
+                logger.warning(
+                    "contribute: facilitator paused",
+                    extra={
+                        "quorum_id": quorum_id,
+                        "role_id": body.role_id,
+                        "station_id": body.station_id,
+                        "reason": "llm_unavailable",
+                    },
+                )
+                await manager.broadcast(quorum_id, {
+                    "type": "facilitator_paused",
+                    "data": {
+                        "station_id": body.station_id,
+                        "role_id": body.role_id,
+                        "reason": "llm_unavailable",
+                    },
+                })
+            else:
+                facilitator_reply = turn_reply
+                facilitator_message_id = turn_msg_id
+                facilitator_tags = turn_tags
+                # Broadcast facilitator reply over WebSocket so the frontend
+                # can update the conversation thread in real time.
+                await manager.broadcast(quorum_id, {
+                    "type": "facilitator_reply",
+                    "data": {
+                        "station_id": body.station_id,
+                        "role_id": body.role_id,
+                        "content": facilitator_reply,
+                        "tags": facilitator_tags or [],
+                        "message_id": facilitator_message_id,
+                    },
+                })
         except Exception:
             logger.warning(
                 "contribute: agent turn failed for quorum=%s role=%s station=%s",
@@ -436,6 +496,8 @@ async def contribute(quorum_id: str, body: ContributeRequest):
         facilitator_reply=facilitator_reply,
         facilitator_message_id=facilitator_message_id,
         facilitator_tags=facilitator_tags,
+        facilitator_paused=facilitator_paused,
+        facilitator_paused_reason=facilitator_paused_reason,
     )
 
 
@@ -790,7 +852,11 @@ async def architect_ai_start(event_id: str, body: AIStartRequest):
     }
     db.table("quorums").insert(quorum_row).execute()
 
-    # Insert roles from AI suggestions
+    # Insert roles from AI suggestions AND author one agent_configs row per
+    # role.  Without the agent_configs write, every role falls back to the
+    # generic prompt in agents/__init__.py and all agents sound identical
+    # (bug fixed by checklist item 10.1).
+    role_assignments: list[tuple[str, RoleSuggestion]] = []
     for role_def in body.roles:
         role_id = str(uuid.uuid4())
         role_row = {
@@ -807,6 +873,51 @@ async def architect_ai_start(event_id: str, body: AIStartRequest):
             "fallback_chain": [],
         }
         db.table("roles").insert(role_row).execute()
+        # RoleSuggestionResponse → RoleSuggestion (same shape; explicit
+        # construction keeps the dataclass boundary clear for tests).
+        role_assignments.append(
+            (
+                role_id,
+                RoleSuggestion(
+                    name=role_def.name,
+                    description=role_def.description,
+                    authority_rank=role_def.authority_rank,
+                    capacity=role_def.capacity,
+                    suggested_prompt_focus=role_def.suggested_prompt_focus,
+                    system_prompt=role_def.system_prompt,
+                    domain_tags=role_def.domain_tags,
+                    temperature=role_def.temperature,
+                    model=role_def.model,
+                ),
+            )
+        )
+
+        # Register the role's A2A endpoint so other agents and external A2A
+        # peers can discover this role's /a2a/agents/{role_id} URL.  This
+        # replaces the v0 process-local _agent_registry dict — once the row
+        # is in agent_endpoints, any worker can route to this agent.
+        try:
+            from quorum_a2a.a2a_server import register_endpoint
+
+            register_endpoint(
+                role_id,
+                capabilities={
+                    "name": role_def.name,
+                    "authority_rank": role_def.authority_rank,
+                    "suggested_prompt_focus": getattr(
+                        role_def, "suggested_prompt_focus", None
+                    ),
+                },
+                db=db,
+            )
+        except Exception:
+            logger.warning(
+                "architect_ai_start: failed to register A2A endpoint for role %s",
+                role_id, exc_info=True,
+            )
+
+    # Persist persona configs (failures are logged but non-fatal).
+    persist_agent_configs(db, quorum_id, role_assignments)
 
     # Auto-activate if mode is "auto"
     if body.mode == "auto":
@@ -902,6 +1013,36 @@ async def ask_facilitator(quorum_id: str, station_id: str, body: AskRequest):
             quorum_id, station_id, exc_info=True,
         )
         raise HTTPException(status_code=500, detail="Agent turn failed")
+
+    # Paused sentinel: the LLM call failed inside process_agent_turn. Do NOT
+    # broadcast a reply (it would be spoken on the projector) and do NOT
+    # write an assistant message — return a structured paused response so the
+    # frontend can render a quiet "reconnecting" pill.
+    if is_paused_reply(reply, tags):
+        logger.warning(
+            "ask_facilitator: facilitator paused",
+            extra={
+                "quorum_id": quorum_id,
+                "station_id": station_id,
+                "role_id": body.role_id,
+                "reason": "llm_unavailable",
+            },
+        )
+        await manager.broadcast(quorum_id, {
+            "type": "facilitator_paused",
+            "data": {
+                "station_id": station_id,
+                "role_id": body.role_id,
+                "reason": "llm_unavailable",
+            },
+        })
+        return AskResponse(
+            reply=None,
+            message_id=None,
+            tags=[],
+            paused=True,
+            reason="llm_unavailable",
+        )
 
     # Broadcast so other listeners see the exchange
     await manager.broadcast(quorum_id, {
@@ -1323,6 +1464,96 @@ async def update_autonomy(quorum_id: str, body: dict):
         await stop_autonomy_loop(quorum_id)
 
     return {"quorum_id": quorum_id, "autonomy_level": autonomy_level}
+
+
+# ---------------------------------------------------------------------------
+# POST /sessions/participant — mint a participant on QR scan / laptop load
+# ---------------------------------------------------------------------------
+@router.post(
+    "/sessions/participant",
+    response_model=CreateParticipantResponse,
+    status_code=201,
+)
+async def create_participant(body: CreateParticipantRequest):
+    """Mint a participant row for a QR scan or station first-load.
+
+    No JWT, no token exchange — just a UUID.  The caller stores the returned
+    ``participant_id`` in sessionStorage and includes it on every subsequent
+    contribute/heartbeat call so the system knows WHICH human said what.
+
+    ``display_name`` is auto-assigned by counting existing rows for the same
+    (quorum_id, station_label) and incrementing: "Visitor 1", "Visitor 2", ...
+    """
+    if body.device_kind not in ("laptop", "phone"):
+        raise HTTPException(
+            status_code=422,
+            detail="device_kind must be 'laptop' or 'phone'",
+        )
+
+    db = get_supabase()
+
+    # Verify quorum exists — 404 if not.
+    _fetch_single(db, "quorums", "id", body.quorum_id, select="id", label="Quorum")
+
+    # Verify role exists when provided.
+    if body.role_id is not None:
+        _fetch_single(db, "roles", "id", body.role_id, select="id", label="Role")
+
+    # Count existing visitors at this station to assign the next display_name.
+    existing_query = (
+        db.table("participants")
+        .select("id")
+        .eq("quorum_id", body.quorum_id)
+    )
+    if body.station_label is not None:
+        existing_query = existing_query.eq("station_label", body.station_label)
+    existing = existing_query.execute()
+    visitor_number = len(existing.data or []) + 1
+    display_name = f"Visitor {visitor_number}"
+
+    participant_id = str(uuid.uuid4())
+    row = {
+        "id": participant_id,
+        "quorum_id": body.quorum_id,
+        "role_id": body.role_id,
+        "station_label": body.station_label,
+        "display_name": display_name,
+        "device_kind": body.device_kind,
+    }
+    db.table("participants").insert(row).execute()
+
+    return CreateParticipantResponse(
+        participant_id=participant_id,
+        display_name=display_name,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /sessions/heartbeat — refresh last_heartbeat_at for presence
+# ---------------------------------------------------------------------------
+@router.post("/sessions/heartbeat", status_code=204)
+async def heartbeat(body: HeartbeatRequest):
+    """Refresh the participant's last_heartbeat_at timestamp.
+
+    Used by the station page to advertise presence (every 30s).  Returns
+    204 No Content on success, 404 when the participant_id is unknown.
+    """
+    db = get_supabase()
+
+    # Verify participant exists — 404 if not.
+    _fetch_single(
+        db, "participants", "id", body.participant_id,
+        select="id", label="Participant",
+    )
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    db.table("participants").update(
+        {"last_heartbeat_at": now}
+    ).eq("id", body.participant_id).execute()
+
+    # FastAPI infers 204 from the route decorator; returning None is correct.
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, fireEvent, waitFor } from "@testing-library/react";
+import { render, screen, act, fireEvent, waitFor } from "@testing-library/react";
 import { AvatarPanel } from "../AvatarPanel";
 
 vi.mock("../VisionTracker", () => ({
@@ -30,16 +30,87 @@ vi.mock("@/hooks/useQuorumLive", () => ({
   }),
 }));
 
-// Mock useAvatarController
+// Mock subscribeToFacilitator — capture the handler so tests can drive
+// orchestrator narrations directly without spinning up a WebSocket server.
+let lastFacilitatorHandler:
+  | ((frame: { narration: string; next_role_id: string; next_role_name?: string | null; reason?: string | null }) => void)
+  | null = null;
+const mockUnsubscribe = vi.fn();
+vi.mock("@/lib/dataProvider", () => ({
+  subscribeToFacilitator: (
+    _quorumId: string,
+    handler: (frame: {
+      narration: string;
+      next_role_id: string;
+      next_role_name?: string | null;
+      reason?: string | null;
+    }) => void
+  ) => {
+    lastFacilitatorHandler = handler;
+    return mockUnsubscribe;
+  },
+}));
+
+// Track what the avatar controller is invoked with so tests can assert that
+// the paused prop is forwarded and that TTS does not fire on paused turns.
+const mockSpeak = vi.fn();
+const mockBrowserSpeak = vi.fn();
+let mockControllerState: {
+  direction: string;
+  yaw: number;
+  pitch: number;
+  emotion: string;
+  detectedEmotion: string;
+  speaking: boolean;
+  ready: boolean;
+  paused: boolean;
+  pausedReason: string | null;
+} = {
+  direction: "center",
+  yaw: 0,
+  pitch: 0,
+  emotion: "neutral",
+  detectedEmotion: "neutral",
+  speaking: false,
+  ready: true,
+  paused: false,
+  pausedReason: null,
+};
+
+// Mock useAvatarController — it receives the paused prop from AvatarPanel
+// and returns the mocked state. We capture any speak calls indirectly via
+// the mocks on @/lib/speechSynthesis and AvatarProvider below.
 vi.mock("../useAvatarController", () => ({
-  useAvatarController: () => ({
-    direction: "center",
-    yaw: 0,
-    pitch: 0,
-    emotion: "neutral",
-    detectedEmotion: "neutral",
-    speaking: false,
-    ready: true,
+  useAvatarController: (options: { paused?: boolean; pausedReason?: string | null; synthesisText?: string }) => {
+    // Simulate the controller's contract: if paused, do not speak.
+    if (!options.paused && options.synthesisText) {
+      mockBrowserSpeak(options.synthesisText);
+    }
+    return {
+      ...mockControllerState,
+      paused: options.paused ?? mockControllerState.paused,
+      pausedReason: options.pausedReason ?? mockControllerState.pausedReason,
+    };
+  },
+}));
+
+// Mock both TTS paths so we can assert neither is called when paused.
+vi.mock("@/lib/speechSynthesis", () => ({
+  speakText: (text: string) => {
+    mockBrowserSpeak(text);
+    return Promise.resolve();
+  },
+}));
+
+vi.mock("../AvatarProvider", () => ({
+  createAvatarProvider: () => ({
+    init: () => Promise.resolve(),
+    speak: (text: string) => {
+      mockSpeak(text);
+      return Promise.resolve();
+    },
+    setHeadPose: () => {},
+    destroy: () => {},
   }),
 }));
 
@@ -57,6 +128,24 @@ vi.mock("../archetypes/archetypes", () => ({
   ARCHETYPES: { neutral: { id: "neutral", glbSources: [{ provider: "placeholder", path: "/avatars/neutral.glb" }] } },
   resolveGlbUrl: () => "/avatars/neutral.glb",
 }));
+
+beforeEach(() => {
+  mockSpeak.mockClear();
+  mockBrowserSpeak.mockClear();
+  mockUnsubscribe.mockClear();
+  lastFacilitatorHandler = null;
+  mockControllerState = {
+    direction: "center",
+    yaw: 0,
+    pitch: 0,
+    emotion: "neutral",
+    detectedEmotion: "neutral",
+    speaking: false,
+    ready: true,
+    paused: false,
+    pausedReason: null,
+  };
+});
 
 describe("AvatarPanel", () => {
   it("renders the panel container", () => {
@@ -102,6 +191,151 @@ describe("AvatarPanel with direction indicator", () => {
     expect(indicator).toHaveTextContent("L");
     expect(indicator).toHaveTextContent("C");
     expect(indicator).toHaveTextContent("R");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 10.6 — Facilitator paused state
+//
+// The bug: when the LLM call fails the backend returned a chat-string error
+// fallback ("I encountered an issue…") which the avatar then SPOKE on the
+// 60-inch projector at the Duke Tech Expo. The audience read it as "the AI is
+// broken." The fix: backend returns a structured paused sentinel and the
+// frontend renders a calm "reconnecting" pill without speaking.
+// ---------------------------------------------------------------------------
+
+describe("AvatarPanel when paused", () => {
+  it("renders the 'Facilitator paused — reconnecting' pill", () => {
+    render(
+      <AvatarPanel
+        quorumId="test-quorum"
+        paused
+        pausedReason="llm_unavailable"
+      />
+    );
+    const pill = screen.getByTestId("avatar-paused-pill");
+    expect(pill).toBeTruthy();
+    expect(pill).toHaveTextContent("Facilitator paused — reconnecting");
+  });
+
+  it("does not render the pill on normal (non-paused) turns", () => {
+    render(<AvatarPanel quorumId="test-quorum" />);
+    expect(screen.queryByTestId("avatar-paused-pill")).toBeNull();
+  });
+
+  it("does NOT trigger TTS when paused (no provider.speak, no browserSpeakText)", () => {
+    render(
+      <AvatarPanel
+        quorumId="test-quorum"
+        paused
+        pausedReason="llm_unavailable"
+        staticSynthesisText="I encountered an issue processing your message."
+      />
+    );
+    // CRITICAL: the avatar must stay silent on paused turns. The string
+    // passed as staticSynthesisText is the kind of garbage that used to
+    // leak to TTS — if either mock was called, the projector would speak.
+    expect(mockSpeak).not.toHaveBeenCalled();
+    expect(mockBrowserSpeak).not.toHaveBeenCalled();
+  });
+
+  it("uses 'status' role on the pill for accessibility", () => {
+    render(<AvatarPanel quorumId="test-quorum" paused />);
+    const pill = screen.getByTestId("avatar-paused-pill");
+    expect(pill.getAttribute("role")).toBe("status");
+  });
+
+  it("pill auto-dismisses on rerender with paused=false", () => {
+    const { rerender } = render(
+      <AvatarPanel quorumId="test-quorum" paused pausedReason="llm_unavailable" />
+    );
+    expect(screen.getByTestId("avatar-paused-pill")).toBeTruthy();
+
+    rerender(<AvatarPanel quorumId="test-quorum" paused={false} />);
+    expect(screen.queryByTestId("avatar-paused-pill")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 11.3 — Orchestrator narration
+//
+// AvatarPanel subscribes to facilitator_narration WS frames and forwards the
+// narration text into useAvatarController as synthesisText. This is the
+// "avatar finally gets a voice" piece the spec asks for.
+// ---------------------------------------------------------------------------
+
+describe("AvatarPanel orchestrator narration", () => {
+  it("subscribes to facilitator narration on mount and unsubscribes on unmount", () => {
+    const { unmount } = render(<AvatarPanel quorumId="q-1" />);
+    expect(lastFacilitatorHandler).not.toBeNull();
+    expect(mockUnsubscribe).not.toHaveBeenCalled();
+
+    unmount();
+    expect(mockUnsubscribe).toHaveBeenCalled();
+  });
+
+  it("passes the latest orchestrator narration to the controller as synthesisText", () => {
+    render(<AvatarPanel quorumId="q-2" />);
+    expect(lastFacilitatorHandler).not.toBeNull();
+
+    act(() => {
+      lastFacilitatorHandler!({
+        narration: "Asking the biostatistician to validate the sample size.",
+        next_role_id: "role-bio",
+        next_role_name: "Biostatistician",
+        reason: "open question about power",
+      });
+    });
+
+    // The mock controller forwards synthesisText through mockBrowserSpeak.
+    expect(mockBrowserSpeak).toHaveBeenCalledWith(
+      "Asking the biostatistician to validate the sample size."
+    );
+  });
+
+  it("does NOT speak the orchestrator narration when paused", () => {
+    render(
+      <AvatarPanel
+        quorumId="q-3"
+        paused
+        pausedReason="llm_unavailable"
+      />
+    );
+    expect(lastFacilitatorHandler).not.toBeNull();
+
+    act(() => {
+      lastFacilitatorHandler!({
+        narration: "Asking the ethicist to weigh in on consent.",
+        next_role_id: "role-eth",
+      });
+    });
+
+    // CRITICAL: paused must short-circuit TTS even if a fresh narration arrives.
+    expect(mockSpeak).not.toHaveBeenCalled();
+    expect(mockBrowserSpeak).not.toHaveBeenCalled();
+  });
+
+  it("staticSynthesisText overrides live orchestrator narration (test-only)", () => {
+    render(
+      <AvatarPanel
+        quorumId="q-4"
+        staticSynthesisText="STATIC override for tests"
+      />
+    );
+
+    // Even when a live narration arrives, the static prop wins so unit tests
+    // are deterministic.
+    act(() => {
+      lastFacilitatorHandler!({
+        narration: "Live narration that should NOT win.",
+        next_role_id: "role-x",
+      });
+    });
+
+    expect(mockBrowserSpeak).toHaveBeenCalledWith("STATIC override for tests");
+    expect(mockBrowserSpeak).not.toHaveBeenCalledWith(
+      "Live narration that should NOT win."
+    );
   });
 });
 

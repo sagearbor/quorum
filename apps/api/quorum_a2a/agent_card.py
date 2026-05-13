@@ -1,0 +1,153 @@
+"""A2A AgentCard generation for Quorum roles — spec-compliant via a2a-sdk.
+
+Each role in a quorum is exposed as an A2A 1.0 agent. The AgentCard built here
+uses the canonical `a2a.types.a2a_pb2.AgentCard` proto class shipped with
+`a2a-sdk` 1.0.x, so the serialized JSON matches the Linux Foundation A2A 1.0
+spec (the schema differs significantly from earlier 0.3 cards — `url` is now
+inside `supported_interfaces`, capabilities use `push_notifications` not
+`pushNotifications`, etc.).
+
+Skills are derived from the role's `agent_configs` row when one exists
+(post-10.1) and fall back to a generic "contribute" skill when not.
+
+This module is intentionally thin: it returns the typed `AgentCard` so the
+FastAPI route can serialize it via `agent_card_to_dict` from the SDK helpers,
+which guarantees the field name casing the spec expects.
+"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any
+
+from a2a.server.request_handlers.response_helpers import agent_card_to_dict
+from a2a.types.a2a_pb2 import (
+    AgentCapabilities,
+    AgentCard,
+    AgentInterface,
+    AgentSkill,
+)
+
+logger = logging.getLogger(__name__)
+
+# The A2A 1.0 protocol_binding constant for HTTP+JSON transport.
+# This matches the wire used by the SDK's REST routes.
+PROTOCOL_BINDING_HTTP_JSON = "HTTP_JSON"
+PROTOCOL_VERSION = "1.0"
+
+# Skill ID exposed on every role.  Other agents can target this skill via the
+# AgentSkill id field.  Sub-skills could be added per role in the future
+# (e.g., "vote", "review_protocol") — we keep one canonical skill for now to
+# minimise spec surface area while staying compliant.
+_CONTRIBUTE_SKILL_ID = "contribute"
+
+
+def build_agent_card(
+    role: dict[str, Any],
+    base_url: str = "http://localhost:8000",
+    *,
+    agent_config: dict[str, Any] | None = None,
+) -> AgentCard:
+    """Build a spec-compliant A2A 1.0 AgentCard for a role.
+
+    Args:
+        role: Roles row (id, name, authority_rank, capacity, quorum_id).
+        base_url: Base URL of this quorum API.  The card's url interface points
+            to ``{base_url}/a2a/agents/{role_id}`` — the per-role A2A endpoint.
+        agent_config: Optional ``agent_configs`` row supplying
+            ``system_prompt`` and ``domain_tags`` used to enrich the card's
+            description + skill tags.  Cards still validate when this is None.
+
+    Returns:
+        The typed ``AgentCard`` proto object.  Use ``card_to_dict`` to serialize.
+    """
+    role_id = str(role.get("id") or "unknown")
+    role_name = str(role.get("name") or "agent")
+    authority_rank = int(role.get("authority_rank") or 0)
+    capacity = role.get("capacity") or "unlimited"
+    quorum_id = role.get("quorum_id")
+
+    # Domain tags drive the skill's `tags` field — they're how other agents
+    # discover what this role specializes in.
+    domain_tags: list[str] = []
+    description = (
+        f"Quorum role: {role_name} (authority rank {authority_rank}, capacity {capacity})"
+    )
+    if agent_config:
+        config_tags = agent_config.get("domain_tags") or []
+        if isinstance(config_tags, list):
+            domain_tags = [str(t) for t in config_tags if t]
+        sys_prompt = agent_config.get("system_prompt")
+        if sys_prompt:
+            # First sentence of the persona becomes the human-readable
+            # description — useful for discovery UIs.  Cap at 280 chars.
+            first_line = str(sys_prompt).strip().split("\n", 1)[0]
+            if first_line:
+                description = first_line[:280]
+
+    # Build the AgentCard proto.  Note: in v1.0 the top-level URL lives inside
+    # `supported_interfaces` (one per transport binding), not at the root.
+    card = AgentCard(
+        name=f"quorum-role-{role_name}",
+        description=description,
+        version="1.0.0",
+        # The URL the A2A REST dispatcher is mounted at.  See a2a_server.py.
+        supported_interfaces=[
+            AgentInterface(
+                url=f"{base_url}/a2a/agents/{role_id}",
+                protocol_binding=PROTOCOL_BINDING_HTTP_JSON,
+                protocol_version=PROTOCOL_VERSION,
+            ),
+        ],
+        capabilities=AgentCapabilities(
+            streaming=False,
+            push_notifications=False,
+        ),
+        default_input_modes=["text/plain"],
+        default_output_modes=["text/plain"],
+        skills=[
+            AgentSkill(
+                id=_CONTRIBUTE_SKILL_ID,
+                name="Submit Contribution",
+                description=(
+                    f"Submit a contribution as the {role_name} role within a quorum. "
+                    f"Authority rank {authority_rank} overrides lower-ranked agents on conflicts."
+                ),
+                tags=domain_tags or [role_name.lower().replace(" ", "_")],
+                input_modes=["text/plain"],
+                output_modes=["text/plain"],
+            ),
+        ],
+    )
+    return card
+
+
+def build_agent_card_dict(
+    role: dict[str, Any],
+    base_url: str = "http://localhost:8000",
+    *,
+    agent_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Convenience wrapper returning the dict form of the card.
+
+    This matches what gets served at ``.well-known/agent-card.json``.  We use
+    the SDK's own ``agent_card_to_dict`` helper so the JSON field names and
+    enum encodings match what the SDK's client expects on the consuming side
+    (avoiding casing drift bugs that plagued the bespoke v0 implementation).
+
+    The dict also includes a ``quorum_metadata`` key under ``additionalProperties``
+    so the Quorum architect UI can inspect role-specific extras without
+    parsing the URL.  This is permitted by the spec — protobuf round-trips
+    unknown fields cleanly.
+    """
+    card = build_agent_card(role, base_url, agent_config=agent_config)
+    card_dict = agent_card_to_dict(card)
+    # Attach quorum-specific metadata under a non-conflicting key.  The A2A
+    # spec doesn't reserve top-level extension keys, so we namespace ours.
+    card_dict["x-quorum"] = {
+        "role_id": str(role.get("id") or ""),
+        "quorum_id": str(role.get("quorum_id") or "") if role.get("quorum_id") else None,
+        "authority_rank": int(role.get("authority_rank") or 0),
+        "capacity": role.get("capacity") or "unlimited",
+    }
+    return card_dict

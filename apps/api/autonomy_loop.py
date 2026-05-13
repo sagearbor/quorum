@@ -14,11 +14,51 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 logger = logging.getLogger(__name__)
+
+# How long a row may sit in 'processing' before the reaper treats it as
+# abandoned and flips it back to 'pending'. Tuned to be larger than the
+# slowest expected LLM round-trip (~10s) plus jitter, but small enough that
+# a crashed worker's claims don't permanently block a request.
+_STALE_PROCESSING_TIMEOUT_S = 60
+
+
+def _now_iso() -> str:
+    """ISO-8601 UTC timestamp matching the DB default format."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _extract_a2a_reply(a2a_response: dict) -> str | None:
+    """Pull the reply text out of an A2A SendMessageResponse dict.
+
+    The /message:send handler wraps the agent's reply in a Task whose
+    ``history`` contains a single ROLE_AGENT message with a text part, plus
+    an artifact with the same text. We look in both places (history first)
+    so we tolerate minor server-side schema variations.
+
+    Returns None when no text can be extracted — caller should fall back
+    to the direct ``process_agent_turn`` path.
+    """
+    if not isinstance(a2a_response, dict):
+        return None
+    task = a2a_response.get("task") or {}
+    history = task.get("history") or []
+    for msg in history:
+        for part in (msg or {}).get("parts", []) or []:
+            text = part.get("text") if isinstance(part, dict) else None
+            if text:
+                return text
+    for art in task.get("artifacts") or []:
+        for part in (art or {}).get("parts", []) or []:
+            text = part.get("text") if isinstance(part, dict) else None
+            if text:
+                return text
+    return None
 
 # Loop is managed by these module-level vars
 _active_loops: dict[str, asyncio.Task] = {}  # quorum_id -> task
@@ -132,8 +172,41 @@ async def _run_autonomy_round(
     2. Pick an agent to take a proactive turn (probability scales with autonomy)
     3. At high autonomy (>0.7), consider submitting contributions
     """
-    from agent_engine import process_a2a_request, process_agent_turn
+    from agent_engine import (
+        is_paused_reply,
+        process_a2a_request,
+        process_agent_turn,
+    )
     from ws_manager import manager
+
+    # --- Phase 0: Reap stale 'processing' claims ---
+    # If a worker crashed mid-LLM call (uvicorn restart, OOM, etc.), its row
+    # stays stuck in 'processing' forever and the CAS-claim guard below will
+    # never let any subsequent tick re-dispatch it. Flip any row older than
+    # _STALE_PROCESSING_TIMEOUT_S back to 'pending' so the next iteration can
+    # pick it up. Best-effort; never raises into the main loop.
+    try:
+        stale_cutoff = (
+            datetime.now(timezone.utc) - timedelta(seconds=_STALE_PROCESSING_TIMEOUT_S)
+        ).isoformat()
+        reaped = (
+            db.table("agent_requests")
+            .update({"status": "pending", "claimed_at": None})
+            .eq("quorum_id", quorum_id)
+            .eq("status", "processing")
+            .lt("claimed_at", stale_cutoff)
+            .execute()
+        )
+        if reaped and getattr(reaped, "data", None):
+            logger.info(
+                "Reaped %d stale 'processing' A2A request(s) for quorum %s",
+                len(reaped.data),
+                quorum_id,
+            )
+    except Exception:
+        logger.debug(
+            "Reaper pass failed for quorum %s (non-fatal)", quorum_id, exc_info=True
+        )
 
     # --- Phase 1: Process pending A2A requests ---
     pending = (
@@ -147,6 +220,35 @@ async def _run_autonomy_round(
     )
 
     for req in pending.data or []:
+        # CAS-claim: atomically flip status pending -> processing. The
+        # .eq("status", "pending") clause is the compare-and-swap guard: if
+        # another tick (or another worker) already claimed this row, the
+        # update affects 0 rows and we skip without calling the LLM. This is
+        # the core fix for the duplicate-dispatch race at autonomy_level=1.0
+        # where base_interval can drop to ~1.5s with jitter.
+        try:
+            claim = (
+                db.table("agent_requests")
+                .update({"status": "processing", "claimed_at": _now_iso()})
+                .eq("id", req["id"])
+                .eq("status", "pending")
+                .execute()
+            )
+        except Exception:
+            logger.warning(
+                "CAS-claim of A2A request %s raised; skipping",
+                req["id"],
+                exc_info=True,
+            )
+            continue
+
+        if not getattr(claim, "data", None):
+            # Another worker won the race — leave it alone.
+            logger.debug(
+                "A2A request %s already claimed by another tick", req["id"]
+            )
+            continue
+
         try:
             await process_a2a_request(req["id"], db, llm_provider)
             logger.info(
@@ -188,9 +290,70 @@ async def _run_autonomy_round(
     if not active_roles:
         return
 
-    # Pick a random role to take a proactive turn
-    role = random.choice(active_roles)
+    # --- Speaker election: Magentic-One style orchestrator ---
+    # Replaces the legacy ``random.choice(active_roles)`` with a typed-output
+    # facilitator that picks the next role based on relevance + anti-monopoly
+    # and produces a one-sentence narration the avatar speaks while the
+    # role-agent does its work. See ``agents/orchestrator.py`` and
+    # docs/audit/2026-05-12-overnight-plan.html item 11.3.
+    from agents.orchestrator import (
+        antimonopoly_random_pick,
+        next_turn as orchestrator_next_turn,
+    )
+
+    plan = await orchestrator_next_turn(quorum_id, db, llm_provider)
+
+    # Find the most recent assistant speaker for the random fallback.
+    last_speaker_id: str | None = None
+    try:
+        recent = (
+            db.table("station_messages")
+            .select("role_id, role, created_at")
+            .eq("quorum_id", quorum_id)
+            .eq("role", "assistant")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = recent.data or []
+        if rows:
+            last_speaker_id = rows[0].get("role_id")
+    except Exception:
+        logger.debug("autonomy: last-speaker lookup failed", exc_info=True)
+
+    if plan is None:
+        # Orchestrator unavailable (LLM error, parse fail, validation reject).
+        # Fall back to anti-monopoly random pick so the demo keeps moving.
+        role = antimonopoly_random_pick(active_roles, last_speaker_id)
+        narration = None
+        orchestrator_reason: str | None = None
+    else:
+        role = next(
+            (r for r in active_roles if r["id"] == plan.next_speaker_role_id),
+            active_roles[0],
+        )
+        narration = plan.narration
+        orchestrator_reason = plan.reason
+
     station_id = f"auto-{role['id'][:8]}"
+
+    # Broadcast the facilitator narration FIRST — the avatar speaks the
+    # one-sentence rationale while the role-agent thinks. This is the
+    # synthesisText AvatarPanel was missing (the TODO at lines 62-64).
+    if narration:
+        try:
+            await manager.broadcast(
+                quorum_id,
+                {
+                    "type": "facilitator_narration",
+                    "narration": narration,
+                    "next_role_id": role["id"],
+                    "next_role_name": role.get("name"),
+                    "reason": orchestrator_reason,
+                },
+            )
+        except Exception:
+            logger.debug("autonomy: facilitator_narration broadcast failed", exc_info=True)
 
     # Generate a proactive prompt based on the round and context
     quorum_data = (
@@ -247,57 +410,130 @@ async def _run_autonomy_round(
             "If you need input from another role, request it explicitly."
         )
 
+    # --- Dispatch the role-agent turn ---
+    # Preferred path: A2A SDK so it goes through /message:send and we get end-
+    # to-end confirmation that the LF A2A 1.0 wire format actually works on
+    # our own infrastructure. Fallback to direct process_agent_turn when A2A
+    # returns None (no endpoint registered, transport error, HTTP 5xx after
+    # retries) — that keeps the demo responsive without a running uvicorn /
+    # agent_endpoints table.
+    reply: str | None = None
+    msg_id: str | None = None
+    tags: list[str] = []
+    dispatch_path = "direct"
     try:
-        reply, msg_id, tags = await process_agent_turn(
-            quorum_id=quorum_id,
-            role_id=role["id"],
-            station_id=station_id,
-            user_message=proactive_prompt,
-            supabase_client=db,
-            llm_provider=llm_provider,
-        )
-        logger.info(
-            "Proactive turn: role=%s round=%d tags=%s",
-            role["name"],
-            round_num,
-            tags[:3],
-        )
+        from quorum_a2a.a2a_client import A2AClient
 
-        # Broadcast activity
-        await manager.broadcast(
-            quorum_id,
+        a2a_client = A2AClient()
+        a2a_result = await a2a_client.send_message(
+            role["id"],
             {
-                "type": "autonomous_activity",
-                "role_id": role["id"],
-                "role_name": role["name"],
-                "round": round_num,
-                "tags": tags[:5],
+                # Caller-shape: we send the proactive prompt as the text body.
+                # The /message:send handler unpacks it into agent_engine and
+                # we capture the reply from the SendMessageResponse artifact.
+                "message": proactive_prompt,
+                "type": "orchestrator_turn",
+                "quorum_id": quorum_id,
+                "reason": orchestrator_reason or "random fallback",
             },
         )
+        if a2a_result is not None:
+            # Pull the reply text out of the SendMessageResponse. The server
+            # wraps the agent reply in a Task.history Message + an Artifact.
+            reply = _extract_a2a_reply(a2a_result)
+            dispatch_path = "a2a"
+    except Exception:
+        logger.debug("autonomy: A2A dispatch raised", exc_info=True)
+
+    if reply is None:
+        # Direct fallback — preserves all existing behaviour (persistence,
+        # tag extraction, paused-sentinel handling) at the cost of bypassing
+        # the A2A wire format.
+        try:
+            reply, msg_id, tags = await process_agent_turn(
+                quorum_id=quorum_id,
+                role_id=role["id"],
+                station_id=station_id,
+                user_message=proactive_prompt,
+                supabase_client=db,
+                llm_provider=llm_provider,
+            )
+        except Exception:
+            logger.warning(
+                "Proactive turn failed for role %s", role["id"], exc_info=True
+            )
+            return
+
+    try:
+        if is_paused_reply(reply, tags):
+            # Facilitator paused — skip broadcasting activity for this round.
+            # The agent will retry on the next autonomy tick.
+            logger.warning(
+                "autonomy_loop: proactive turn paused for role=%s round=%d",
+                role["name"], round_num,
+            )
+        else:
+            logger.info(
+                "Proactive turn: role=%s round=%d tags=%s dispatch=%s",
+                role["name"],
+                round_num,
+                tags[:3],
+                dispatch_path,
+            )
+
+            # Broadcast activity
+            await manager.broadcast(
+                quorum_id,
+                {
+                    "type": "autonomous_activity",
+                    "role_id": role["id"],
+                    "role_name": role["name"],
+                    "round": round_num,
+                    "tags": tags[:5],
+                    "dispatch": dispatch_path,
+                },
+            )
     except Exception:
         logger.warning(
-            "Proactive turn failed for role %s", role["id"], exc_info=True
+            "Proactive-turn broadcast failed for role %s", role["id"], exc_info=True
         )
 
     # --- Phase 3: Auto-contribute at high autonomy ---
+    # AUTONOMY_AUTO_CONTRIBUTE_MODE controls the behaviour:
+    #   "off"        — never auto-submit. Humans drive contributions. (Default for
+    #                  Duke Tech Expo 2026 — prevents fragment-salad artifacts on the
+    #                  projector. See checklist item 10.9.)
+    #   "concat"     — legacy behaviour: string-join the agent's last 3 assistant
+    #                  messages as a contribution. Produces incoherent input for the
+    #                  Tier 3 artifact synthesis.
+    #   "synthesize" — pass the concatenated messages through an LLM call asking it
+    #                  to combine them into one cohesive contribution stating the
+    #                  role's position. Higher quality but adds an LLM call per turn.
+    mode = os.environ.get("AUTONOMY_AUTO_CONTRIBUTE_MODE", "off").lower()
+    if mode == "off":
+        return
     if autonomy_level >= 0.7 and round_num >= 3:
-        # At high autonomy after a few rounds, agents can submit contributions
-        # to move toward resolution
         try:
-            _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num)
+            _maybe_auto_contribute(
+                db, quorum_id, role, autonomy_level, round_num, mode=mode
+            )
         except Exception:
             logger.warning(
                 "Auto-contribute failed for role %s", role["id"], exc_info=True
             )
 
 
-def _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num):
+def _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num, mode="concat"):
     """At high autonomy, agents can submit contributions toward resolution.
 
     Only contributes if:
     - autonomy_level >= 0.7
     - This role hasn't contributed yet
     - We've had enough rounds to have context
+
+    Mode:
+    - "concat":     legacy join-the-messages behaviour
+    - "synthesize": LLM-synthesised single-position contribution
     """
     # Check if this role already has a contribution
     existing = (
@@ -326,10 +562,36 @@ def _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num):
     if not messages.data:
         return
 
-    # Synthesize a contribution from the agent's messages
-    combined = " ".join(m["content"] for m in reversed(messages.data))
-    if len(combined) < 50:
+    raw = " ".join(m["content"] for m in reversed(messages.data))
+    if len(raw) < 50:
         return
+
+    if mode == "synthesize":
+        from llm import llm_provider
+        from quorum_llm.models import LLMTier
+
+        prompt = (
+            f"Combine the following reflections from the '{role['name']}' role "
+            f"into one cohesive contribution stating their position. Max 300 words. "
+            f"Do not include meta-commentary, role labels, or section headers — "
+            f"write it as if the role is speaking directly.\n\n"
+            f"Reflections:\n{raw}"
+        )
+        try:
+            combined = asyncio.get_event_loop().run_until_complete(
+                llm_provider.complete(prompt, LLMTier.AGENT_CHAT)
+            )
+        except RuntimeError:
+            combined = raw[:2000]
+        except Exception:
+            logger.warning(
+                "Auto-contribute synthesize failed for role %s; falling back to concat",
+                role["id"],
+                exc_info=True,
+            )
+            combined = raw[:2000]
+    else:
+        combined = raw[:2000]
 
     contribution_id = str(uuid.uuid4())
     db.table("contributions").insert(
@@ -345,5 +607,8 @@ def _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num):
     ).execute()
 
     logger.info(
-        "Auto-contributed for role %s in quorum %s", role["name"], quorum_id
+        "Auto-contributed for role %s in quorum %s (mode=%s)",
+        role["name"],
+        quorum_id,
+        mode,
     )

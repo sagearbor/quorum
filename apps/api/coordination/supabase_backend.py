@@ -15,10 +15,11 @@ class SupabaseBackend(CoordinationBackend):
     async def submit_contribution(
         self, quorum_id: str, role_id: str, user_token: str,
         content: str, structured_fields: dict[str, str],
+        participant_id: str | None = None,
     ) -> dict[str, Any]:
         db = get_supabase()
         contribution_id = str(uuid.uuid4())
-        row = {
+        row: dict[str, Any] = {
             "id": contribution_id,
             "quorum_id": quorum_id,
             "role_id": role_id,
@@ -27,6 +28,8 @@ class SupabaseBackend(CoordinationBackend):
             "structured_fields": structured_fields,
             "tier_processed": 1,
         }
+        if participant_id is not None:
+            row["participant_id"] = participant_id
         db.table("contributions").insert(row).execute()
         return row
 

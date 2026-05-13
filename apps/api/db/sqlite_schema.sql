@@ -48,11 +48,29 @@ CREATE TABLE IF NOT EXISTS roles (
 CREATE INDEX IF NOT EXISTS idx_roles_quorum_id     ON roles(quorum_id);
 CREATE INDEX IF NOT EXISTS idx_roles_quorum_status ON roles(quorum_id, status);
 
+-- Participants — one row per QR scan (laptop or phone).
+-- Allows contributions and station_messages to be attributed to the human
+-- who actually said them, instead of the hardcoded "anon-local" token.
+CREATE TABLE IF NOT EXISTS participants (
+    id                 TEXT PRIMARY KEY,
+    quorum_id          TEXT NOT NULL REFERENCES quorums(id) ON DELETE CASCADE,
+    role_id            TEXT REFERENCES roles(id) ON DELETE SET NULL,
+    station_label      TEXT,
+    display_name       TEXT NOT NULL,
+    device_kind        TEXT NOT NULL CHECK (device_kind IN ('laptop','phone')),
+    last_heartbeat_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_participants_quorum    ON participants(quorum_id);
+CREATE INDEX IF NOT EXISTS idx_participants_heartbeat ON participants(last_heartbeat_at);
+
 CREATE TABLE IF NOT EXISTS contributions (
     id                TEXT PRIMARY KEY,
     quorum_id         TEXT NOT NULL REFERENCES quorums(id) ON DELETE CASCADE,
     role_id           TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
     user_token        TEXT NOT NULL,
+    participant_id    TEXT REFERENCES participants(id) ON DELETE SET NULL,
     content           TEXT NOT NULL,
     structured_fields TEXT,
     tier_processed    INTEGER,
@@ -109,15 +127,16 @@ CREATE INDEX IF NOT EXISTS idx_agent_configs_quorum ON agent_configs(quorum_id);
 CREATE INDEX IF NOT EXISTS idx_agent_configs_slug   ON agent_configs(agent_slug);
 
 CREATE TABLE IF NOT EXISTS station_messages (
-    id          TEXT PRIMARY KEY,
-    quorum_id   TEXT NOT NULL REFERENCES quorums(id) ON DELETE CASCADE,
-    role_id     TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-    station_id  TEXT NOT NULL,
-    role        TEXT NOT NULL,
-    content     TEXT NOT NULL,
-    tags        TEXT NOT NULL DEFAULT '[]',
-    metadata    TEXT,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    id              TEXT PRIMARY KEY,
+    quorum_id       TEXT NOT NULL REFERENCES quorums(id) ON DELETE CASCADE,
+    role_id         TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    station_id      TEXT NOT NULL,
+    participant_id  TEXT REFERENCES participants(id) ON DELETE SET NULL,
+    role            TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    tags            TEXT NOT NULL DEFAULT '[]',
+    metadata        TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_station_messages_quorum_role ON station_messages(quorum_id, role_id);
@@ -193,13 +212,19 @@ CREATE TABLE IF NOT EXISTS agent_requests (
     version        INTEGER NOT NULL DEFAULT 1,
     priority       INTEGER NOT NULL DEFAULT 0,
     created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    resolved_at    TEXT
+    resolved_at    TEXT,
+    -- claimed_at: set by the autonomy loop when a row transitions to
+    -- 'processing'. Used by the stale-claim reaper (see autonomy_loop.py).
+    claimed_at     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_requests_quorum    ON agent_requests(quorum_id);
 CREATE INDEX IF NOT EXISTS idx_agent_requests_to_role   ON agent_requests(to_role_id, status);
 CREATE INDEX IF NOT EXISTS idx_agent_requests_from_role ON agent_requests(from_role_id);
 CREATE INDEX IF NOT EXISTS idx_agent_requests_document  ON agent_requests(document_id);
+-- Reaper lookup: in-flight requests sorted by claim age
+CREATE INDEX IF NOT EXISTS idx_agent_requests_claimed_at ON agent_requests(claimed_at)
+    WHERE status = 'processing';
 
 CREATE TABLE IF NOT EXISTS oscillation_events (
     id              TEXT PRIMARY KEY,
@@ -239,3 +264,19 @@ CREATE TABLE IF NOT EXISTS synthesis_snapshots (
     quorum_id   TEXT NOT NULL REFERENCES quorums(id) ON DELETE CASCADE,
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+
+-- =============================================================================
+-- A2A AGENT ENDPOINTS (per-role registry)
+-- =============================================================================
+-- One row per role.  Mirrors supabase/migrations/20260512000004_agent_endpoints.sql.
+-- capabilities is JSON-as-TEXT in SQLite (parsed/serialized at the Python boundary).
+CREATE TABLE IF NOT EXISTS agent_endpoints (
+    role_id        TEXT PRIMARY KEY REFERENCES roles(id) ON DELETE CASCADE,
+    url            TEXT NOT NULL,
+    capabilities   TEXT NOT NULL DEFAULT '{}',
+    registered_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    last_seen_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_endpoints_last_seen
+    ON agent_endpoints(last_seen_at DESC);

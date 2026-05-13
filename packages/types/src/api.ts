@@ -54,6 +54,12 @@ export interface ContributeRequest {
   structured_fields: Record<string, string>;
   /** Station identifier. When present, triggers AI facilitator response. */
   station_id?: string;
+  /**
+   * Participant identifier minted by POST /sessions/participant on QR scan
+   * or station first-load. Attributes the contribution to a specific human
+   * (10.4 — replaces the hardcoded user_token = "anon-local").
+   */
+  participant_id?: string;
 }
 
 export interface ContributeResponse {

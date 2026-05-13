@@ -327,3 +327,22 @@ CREATE TABLE IF NOT EXISTS quorum_state (
     version         INTEGER NOT NULL DEFAULT 1,
     updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+-- AUTONOMY LOOP STATE (per-quorum worker lease)
+-- =============================================================================
+-- One row per quorum with autonomy_level > 0. Mirrors
+-- supabase/migrations/20260513000004_autonomy_loops.sql.  See that file for
+-- the rationale on moving the loop registry out of a module-level dict.
+CREATE TABLE IF NOT EXISTS autonomy_loop_state (
+    quorum_id       TEXT PRIMARY KEY REFERENCES quorums(id) ON DELETE CASCADE,
+    autonomy_level  REAL NOT NULL,
+    status          TEXT NOT NULL CHECK (status IN ('running', 'stopped', 'orphaned')),
+    worker_id       TEXT,
+    heartbeat_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    next_tick_at    TEXT,
+    round_num       INTEGER NOT NULL DEFAULT 0,
+    started_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_autonomy_loop_state_running_heartbeat
+    ON autonomy_loop_state(heartbeat_at) WHERE status = 'running';

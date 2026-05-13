@@ -515,6 +515,25 @@ OLLAMA_MODEL=                   # local model tag
 QUORUM_A2A_BASE_URL=            # overrides the host advertised in AgentCard urls
                                 # falls back to the incoming request origin if unset
 
+# --- Coordination backend (apps/api/coordination/factory.py) ---
+COORDINATION_BACKEND=supabase   # default: 'supabase'
+                                # Selects how contributions are routed.  Both
+                                # values are real implementations; both
+                                # persist to Supabase — the only difference
+                                # is whether A2A dispatch fires.
+                                #
+                                #  'supabase' — SupabaseBackend.
+                                #      Writes to the contributions/insights
+                                #      tables. This is the production default.
+                                #  'a2a'      — A2ABackend.
+                                #      Subclass of SupabaseBackend: persists
+                                #      to Supabase first, then ALSO fires an
+                                #      agent-to-agent message via A2AClient.
+                                #      A2A dispatch failure is logged but
+                                #      non-fatal (the Supabase row remains).
+                                #
+                                # Any other value falls back to 'supabase'.
+
 # --- Autonomy loop ---
 AUTONOMY_AUTO_CONTRIBUTE_MODE=  # 'off' (default) | 'concat' | 'synthesize'
                                 # Controls whether the autonomy loop fabricates contributions

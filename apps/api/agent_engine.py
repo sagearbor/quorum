@@ -19,7 +19,6 @@ Design notes:
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -28,6 +27,15 @@ from quorum_llm.affinity import (
     compute_tag_affinity,
     extract_tags_from_text,
     find_relevant_agents,
+)
+from quorum_llm.conversation import (
+    AgentDocumentContext,
+    AgentInsightContext,
+    AgentRequestContext,
+    QuorumContext,
+    RoleContext,
+    build_agent_prompt,
+    build_system_message,
 )
 from tag_vocabulary import get_vocabulary, update_vocabulary
 
@@ -282,6 +290,8 @@ async def process_agent_turn(
         documents=documents,
         pending_requests=pending_requests,
         user_message=user_message,
+        role_id=role_id,
+        quorum_id=quorum_id,
     )
 
     # --- 7.5. Load persisted Pydantic AI message history (item 9.2) ---
@@ -771,36 +781,166 @@ def _load_pending_requests(db, quorum_id: str, role_id: str) -> list[dict]:
         return []
 
 
+# ---------------------------------------------------------------------------
+# Adapter helpers (DB rows -> conversation.py dataclasses)
+# ---------------------------------------------------------------------------
+#
+# Item 11.8 consolidation: the actual prompt-shape decisions (system message
+# wording, context-block ordering, token budget, tag delimiter, etc.) live in
+# ``packages/llm/quorum_llm/conversation.py``.  ``agent_engine`` is now a thin
+# adapter that maps Supabase row shapes into the canonical dataclasses and
+# calls ``build_agent_prompt``.
+#
+# Drift between the legacy ``agent_engine._build_prompt`` and the canonical
+# builder, aligned in this consolidation (LLM-visible behavior changes —
+# additive, no regressions expected):
+#
+#   1. System prompt now includes the ``create_doc`` JSON-block directive and
+#      the structured ``[request: Role, "Q"]`` syntax (previously only the
+#      ```edit block and free-form request prose were taught).
+#   2. System prompt now phrases authority as "N out of M" using the quorum's
+#      ``max_authority_rank`` (was "N." with no scale).  Defaults to 5 when
+#      the quorum row doesn't carry the field.
+#   3. Pending-request rendering now includes sender name, priority, and tags
+#      (was: ``({type}) {content[:200]}`` — terse).
+#   4. Insight rendering now includes the source role name and timestamp
+#      (was: ``[{type}] {content[:200]}``).
+#   5. Documents are now rendered with json-indented content up to 800 chars
+#      (was: flat json.dumps, 500 chars).  Last-editor name is shown when known.
+#   6. Context block ordering is now requests → documents → insights →
+#      contributions (was: documents → insights → requests).
+#   7. A token budget of 8000 tokens is now enforced across the context block;
+#      individual sections truncate gracefully when over budget.
+#
+# Drift preserved as an opt-in flag to avoid changing the LLM-visible message
+# *structure* (the alternation pattern, not the wording):
+#
+#   * ``include_context_ack=True`` retains the synthetic
+#     ``"Understood. I've reviewed the current documents and insights."``
+#     assistant message that the legacy builder inserted between the context
+#     USER message and history.  Some downstream chat-completion providers
+#     are sensitive to two USER messages in a row, so we keep the historical
+#     interleave.  See the canonical builder docstring for the flag.
+
+
+def _quorum_context_from_row(quorum_id: str, row: dict | None) -> QuorumContext:
+    """Map a ``quorums`` row to a ``QuorumContext`` dataclass."""
+    row = row or {}
+    return QuorumContext(
+        quorum_id=quorum_id,
+        title=row.get("title") or "this quorum",
+        description=row.get("description") or "",
+        # max_authority_rank is not on the legacy quorum row schema — fall back
+        # to the conversation.py default (5).  Routes that need a non-default
+        # value can update ``quorums.max_authority_rank`` in a follow-up.
+        max_authority_rank=row.get("max_authority_rank") or 5,
+    )
+
+
+def _role_context(
+    role_id: str,
+    role_name: str,
+    authority_rank: int,
+    agent_def,
+) -> RoleContext:
+    """Build the canonical ``RoleContext`` from agent_engine inputs."""
+    domain_tags: list[str] = (
+        list(agent_def.domain_tags) if agent_def and agent_def.domain_tags else []
+    )
+    return RoleContext(
+        role_id=role_id,
+        role_name=role_name,
+        authority_rank=authority_rank,
+        domain_tags=domain_tags,
+    )
+
+
+def _insight_contexts_from_rows(rows: list[dict]) -> list[AgentInsightContext]:
+    """Map ``agent_insights`` rows to the canonical context dataclass.
+
+    The legacy renderer did not surface ``source_role_name`` (only the row's
+    ``source_role_id`` was carried).  We pass the raw id here so the canonical
+    renderer at least labels the source — resolving id → name would require
+    an extra DB hit per insight which is overkill for prompt assembly.
+    """
+    out: list[AgentInsightContext] = []
+    for row in rows or []:
+        out.append(
+            AgentInsightContext(
+                insight_id=str(row.get("id", "")),
+                source_role_name=str(row.get("source_role_id", "another role")),
+                insight_type=row.get("insight_type") or "summary",
+                content=str(row.get("content", "")),
+                tags=list(row.get("tags") or []),
+                created_at=str(row.get("created_at") or ""),
+            )
+        )
+    return out
+
+
+def _document_contexts_from_rows(rows: list[dict]) -> list[AgentDocumentContext]:
+    """Map ``agent_documents`` rows to the canonical context dataclass."""
+    out: list[AgentDocumentContext] = []
+    for row in rows or []:
+        out.append(
+            AgentDocumentContext(
+                document_id=str(row.get("id", "")),
+                title=str(row.get("title", "")),
+                doc_type=str(row.get("doc_type", "")),
+                version=int(row.get("version") or 1),
+                content=row.get("content") or {},
+                tags=list(row.get("tags") or []),
+                last_editor_name="",  # not tracked on the legacy schema
+            )
+        )
+    return out
+
+
+def _request_contexts_from_rows(rows: list[dict]) -> list[AgentRequestContext]:
+    """Map ``agent_requests`` rows to the canonical context dataclass."""
+    out: list[AgentRequestContext] = []
+    for row in rows or []:
+        out.append(
+            AgentRequestContext(
+                request_id=str(row.get("id", "")),
+                from_role_name=str(row.get("from_role_id", "another agent")),
+                request_type=row.get("request_type") or "input_request",
+                content=str(row.get("content", "")),
+                tags=list(row.get("tags") or []),
+                priority=int(row.get("priority") or 0),
+            )
+        )
+    return out
+
+
 def _build_system_prompt(
     role_name: str,
     authority_rank: int,
     agent_def,
     quorum_context: dict | None,
 ) -> str:
-    """Build the stable system prompt (benefits from Azure prefix caching)."""
-    quorum_title = (quorum_context or {}).get("title", "this quorum")
-    quorum_desc = (quorum_context or {}).get("description", "")
+    """Thin adapter: build the canonical system prompt from DB-row inputs.
 
-    if agent_def:
+    Kept as a module-level function so the A2A path
+    (``process_a2a_request``) can still get a system-only prompt without
+    paying the full ``build_agent_prompt`` cost.
+    """
+    role_ctx = _role_context(
+        role_id="",  # not used in system message rendering
+        role_name=role_name,
+        authority_rank=authority_rank,
+        agent_def=agent_def,
+    )
+    quorum_ctx = _quorum_context_from_row(quorum_id="", row=quorum_context)
+    if agent_def and getattr(agent_def, "instructions", None):
         instructions = agent_def.instructions
-        domain_tags_str = ", ".join(agent_def.domain_tags) if agent_def.domain_tags else "general"
     else:
         instructions = f"You are the AI facilitator for the {role_name} role."
-        domain_tags_str = "general"
 
-    return (
-        f"You are the AI facilitator for the \"{role_name}\" role "
-        f"in quorum \"{quorum_title}\".\n"
-        f"Quorum: {quorum_desc}\n"
-        f"Your authority rank: {authority_rank}. Higher rank overrides lower on conflicts.\n"
-        f"Your domain tags: {domain_tags_str}\n\n"
-        f"{instructions}\n\n"
-        "Rules:\n"
-        "- Be concise. Max 200 words per response.\n"
-        "- Tag your key points using [tags: tag1, tag2] notation.\n"
-        "- If you detect a conflict with another agent, flag it explicitly.\n"
-        "- If you want to edit a document, output a JSON block fenced with ```edit.\n"
-        "- If you need input from another role, request it explicitly."
+    return build_system_message(
+        agent_instructions=instructions,
+        role=role_ctx,
+        quorum=quorum_ctx,
     )
 
 
@@ -814,70 +954,43 @@ def _build_prompt(
     documents: list[dict],
     pending_requests: list[dict],
     user_message: str,
+    *,
+    role_id: str = "",
+    quorum_id: str = "",
 ) -> list[dict]:
-    """Assemble the full message list for the LLM call."""
-    messages: list[dict] = []
+    """Assemble the full message list for the LLM call.
 
-    # System block (stable — benefits from Azure prefix caching)
-    system_content = _build_system_prompt(
-        role_name=role_name,
-        authority_rank=authority_rank,
-        agent_def=agent_def,
-        quorum_context=quorum_context,
+    Thin adapter around ``quorum_llm.conversation.build_agent_prompt``.  This
+    function lives in agent_engine so the call sites continue to pass raw
+    Supabase rows; the canonical builder takes typed dataclasses.
+
+    Note: ``role_id`` and ``quorum_id`` are passed through purely so the
+    canonical dataclasses are populated for completeness — neither affects
+    LLM-visible content.  They default to empty strings to keep the legacy
+    signature back-compatible.
+    """
+    role_ctx = _role_context(role_id, role_name, authority_rank, agent_def)
+    quorum_ctx = _quorum_context_from_row(quorum_id, quorum_context)
+    if agent_def and getattr(agent_def, "instructions", None):
+        instructions = agent_def.instructions
+    else:
+        instructions = f"You are the AI facilitator for the {role_name} role."
+
+    return build_agent_prompt(
+        agent_instructions=instructions,
+        role=role_ctx,
+        quorum=quorum_ctx,
+        contributions=[],  # station-level human contributions flow via history
+        insights=_insight_contexts_from_rows(insights),
+        documents=_document_contexts_from_rows(documents),
+        history=history,
+        pending_requests=_request_contexts_from_rows(pending_requests),
+        latest_message=user_message,
+        # Preserve the legacy synthetic-ack pattern so chat-completion
+        # providers that expect user/assistant alternation across the context
+        # block see no behavior change (see 11.8 consolidation comment above).
+        include_context_ack=True,
     )
-    messages.append({"role": "system", "content": system_content})
-
-    # Context block: documents + insights + pending requests
-    # Injected as a single "user" message before history so it stays in the
-    # cached prefix region on models that support prefix caching.
-    context_parts: list[str] = []
-
-    if documents:
-        context_parts.append("== ACTIVE DOCUMENTS ==")
-        for doc in documents:
-            doc_summary = json.dumps(doc.get("content", {}))
-            if len(doc_summary) > 500:
-                doc_summary = doc_summary[:500] + "..."
-            context_parts.append(
-                f"Document: {doc['title']} (v{doc['version']}, type={doc['doc_type']})\n"
-                f"{doc_summary}"
-            )
-
-    if insights:
-        context_parts.append("\n== RECENT CROSS-STATION INSIGHTS ==")
-        for ins in insights:
-            tags_str = ", ".join(ins.get("tags") or [])
-            context_parts.append(
-                f"- [{ins.get('insight_type', 'summary')}] "
-                f"{ins['content'][:200]}"
-                + (f" [tags: {tags_str}]" if tags_str else "")
-            )
-
-    if pending_requests:
-        context_parts.append("\n== PENDING REQUESTS FOR YOU ==")
-        for req in pending_requests:
-            context_parts.append(
-                f"- ({req['request_type']}) {req['content'][:200]}"
-            )
-
-    if context_parts:
-        messages.append({
-            "role": "user",
-            "content": "\n".join(context_parts),
-        })
-        # Acknowledge context receipt so conversation flow makes sense
-        messages.append({
-            "role": "assistant",
-            "content": "Understood. I've reviewed the current documents and insights.",
-        })
-
-    # Conversation history (last N turns)
-    messages.extend(history)
-
-    # Latest user message
-    messages.append({"role": "user", "content": user_message})
-
-    return messages
 
 
 def _publish_insight(

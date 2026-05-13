@@ -261,6 +261,26 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
         }
         db.table("roles").insert(role_row).execute()
 
+        # Register the role's A2A endpoint in agent_endpoints so other agents
+        # (and external A2A peers) can discover and POST tasks to this role.
+        # Never fatal — failures are logged inside register_endpoint.
+        try:
+            from quorum_a2a.a2a_server import register_endpoint
+
+            register_endpoint(
+                role_ids[idx],
+                capabilities={
+                    "name": role_def.name,
+                    "authority_rank": role_def.authority_rank,
+                },
+                db=db,
+            )
+        except Exception:
+            logger.warning(
+                "create_quorum: failed to register A2A endpoint for role %s",
+                role_ids[idx], exc_info=True,
+            )
+
     share_url = f"/event/{event.data['slug']}/quorum/{quorum_id}"
 
     # Auto-seed agent documents only in test mode (non-fatal)
@@ -807,6 +827,30 @@ async def architect_ai_start(event_id: str, body: AIStartRequest):
             "fallback_chain": [],
         }
         db.table("roles").insert(role_row).execute()
+
+        # Register the role's A2A endpoint so other agents and external A2A
+        # peers can discover this role's /a2a/agents/{role_id} URL.  This
+        # replaces the v0 process-local _agent_registry dict — once the row
+        # is in agent_endpoints, any worker can route to this agent.
+        try:
+            from quorum_a2a.a2a_server import register_endpoint
+
+            register_endpoint(
+                role_id,
+                capabilities={
+                    "name": role_def.name,
+                    "authority_rank": role_def.authority_rank,
+                    "suggested_prompt_focus": getattr(
+                        role_def, "suggested_prompt_focus", None
+                    ),
+                },
+                db=db,
+            )
+        except Exception:
+            logger.warning(
+                "architect_ai_start: failed to register A2A endpoint for role %s",
+                role_id, exc_info=True,
+            )
 
     # Auto-activate if mode is "auto"
     if body.mode == "auto":

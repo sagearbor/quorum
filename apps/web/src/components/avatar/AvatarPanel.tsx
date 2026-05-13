@@ -8,13 +8,16 @@
 
 "use client";
 
-import { useRef, useEffect, useMemo, useState } from "react";
+import { useRef, useEffect, useMemo, useState, useCallback } from "react";
 import { useAvatarController } from "./useAvatarController";
 import { useQuorumLive } from "@/hooks/useQuorumLive";
 import { IdleScene, type IdleSceneHandle } from "./IdleScene";
 import { resolveArchetype } from "./archetypes/resolveArchetype";
 import { ARCHETYPES, resolveGlbUrl } from "./archetypes/archetypes";
 import { subscribeToFacilitator } from "@/lib/dataProvider";
+import { VisionTracker } from "./VisionTracker";
+
+const CAMERA_STORAGE_KEY = "quorum.avatar.cameraDeviceId";
 
 interface AvatarPanelProps {
   quorumId: string;
@@ -52,6 +55,38 @@ export function AvatarPanel({
   pausedReason = null,
 }: AvatarPanelProps) {
   const idleSceneRef = useRef<IdleSceneHandle>(null);
+
+  // Camera picker state — populated from navigator.mediaDevices.
+  // Restored from localStorage; updated by the dropdown.
+  const [cameras, setCameras] = useState<MediaDeviceInfo[]>([]);
+  const [cameraDeviceId, setCameraDeviceId] = useState<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const stored = window.localStorage.getItem(CAMERA_STORAGE_KEY);
+    if (stored) setCameraDeviceId(stored);
+  }, []);
+
+  const refreshCameras = useCallback(async () => {
+    const list = await VisionTracker.listCameras();
+    setCameras(list);
+  }, []);
+
+  useEffect(() => {
+    if (!enableEmotionTracking) return;
+    refreshCameras();
+    if (typeof navigator === "undefined" || !navigator.mediaDevices) return;
+    const handler = () => refreshCameras();
+    navigator.mediaDevices.addEventListener("devicechange", handler);
+    return () => navigator.mediaDevices.removeEventListener("devicechange", handler);
+  }, [enableEmotionTracking, refreshCameras]);
+
+  const handleCameraChange = useCallback((id: string) => {
+    setCameraDeviceId(id);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(CAMERA_STORAGE_KEY, id);
+    }
+  }, []);
 
   // Get live quorum data (unless overridden for testing)
   const liveState = useQuorumLive(quorumId);
@@ -106,6 +141,7 @@ export function AvatarPanel({
     synthesisText: latestSynthesis,
     paused,
     pausedReason,
+    cameraDeviceId,
   });
 
   // Connect gaze (yaw + pitch) from controller to IdleScene
@@ -142,6 +178,28 @@ export function AvatarPanel({
         >
           <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
           <span>Facilitator paused — reconnecting</span>
+        </div>
+      )}
+
+      {/* Camera picker — only when webcam tracking is enabled */}
+      {enableEmotionTracking && cameras.length > 0 && (
+        <div
+          className="absolute top-2 right-2 z-10"
+          data-testid="avatar-camera-picker"
+        >
+          <select
+            value={cameraDeviceId ?? ""}
+            onChange={(e) => handleCameraChange(e.target.value)}
+            className="text-[10px] bg-black/60 text-white/80 rounded px-1.5 py-0.5 border border-white/20 max-w-[160px]"
+            aria-label="Select camera"
+          >
+            <option value="">Default camera</option>
+            {cameras.map((cam, i) => (
+              <option key={cam.deviceId} value={cam.deviceId}>
+                {cam.label || `Camera ${i + 1}`}
+              </option>
+            ))}
+          </select>
         </div>
       )}
 

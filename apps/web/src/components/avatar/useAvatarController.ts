@@ -55,6 +55,8 @@ export interface AvatarControllerOptions {
   paused?: boolean;
   /** Human-readable reason for the pause, e.g. "llm_unavailable" */
   pausedReason?: string | null;
+  /** Specific webcam deviceId. When changed, the VisionTracker restarts on the new camera. */
+  cameraDeviceId?: string;
 }
 
 export interface AvatarControllerState {
@@ -94,6 +96,7 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
     synthesisText,
     paused = false,
     pausedReason = null,
+    cameraDeviceId,
   } = options;
 
   const [state, setState] = useState<AvatarControllerState>({
@@ -205,6 +208,7 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
         visionPitchRef.current = pitch ?? 0;
         mergeAndSetGaze(stereoYawRef.current, yaw, visionPitchRef.current);
       },
+      deviceId: cameraDeviceId,
     });
     visionRef.current = tracker;
     tracker.start();
@@ -213,7 +217,7 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
       tracker.stop();
       visionRef.current = null;
     };
-  }, [enableVision, mergeAndSetGaze]);
+  }, [enableVision, mergeAndSetGaze, cameraDeviceId]);
 
   // Initialize EmotionDetector (webcam face landmarks → emotion)
   useEffect(() => {

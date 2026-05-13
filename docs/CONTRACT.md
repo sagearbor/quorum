@@ -537,6 +537,25 @@ QUORUM_A2A_ENDPOINT_TTL_S=60    # per-process TTL for the agent_endpoints lookup
                                 # short enough that re-registering an endpoint takes effect quickly;
                                 # long enough that autonomy loops dispatching every 3s aren't all DB hits.
 
+# --- Coordination backend (apps/api/coordination/factory.py) ---
+COORDINATION_BACKEND=supabase   # default: 'supabase'
+                                # Selects how contributions are routed.  Both
+                                # values are real implementations; both
+                                # persist to Supabase — the only difference
+                                # is whether A2A dispatch fires.
+                                #
+                                #  'supabase' — SupabaseBackend.
+                                #      Writes to the contributions/insights
+                                #      tables. This is the production default.
+                                #  'a2a'      — A2ABackend.
+                                #      Subclass of SupabaseBackend: persists
+                                #      to Supabase first, then ALSO fires an
+                                #      agent-to-agent message via A2AClient.
+                                #      A2A dispatch failure is logged but
+                                #      non-fatal (the Supabase row remains).
+                                #
+                                # Any other value falls back to 'supabase'.
+
 # --- Autonomy loop ---
 AUTONOMY_AUTO_CONTRIBUTE_MODE=  # 'off' (default) | 'concat' | 'synthesize'
                                 # Controls whether the autonomy loop fabricates contributions
@@ -549,4 +568,109 @@ AUTONOMY_LOOP_RECLAIM_ORPHANS=  # 'false' (default) | 'true'
                                 # reclaimed by this worker (loop restarted with its persisted
                                 # autonomy_level). Disable in multi-worker deployments where
                                 # the loss-of-heartbeat could be transient on a healthy worker.
+```
+
+## MCP Servers
+
+Four in-process MCP (Model Context Protocol) servers expose internal
+Quorum capabilities as standard tools for any MCP-compliant agent
+(Pydantic AI, Claude Desktop, etc.).  Built with the official Python
+SDK `mcp>=1.12,<2` (FastMCP convenience API).  Constructed via
+`apps.api.mcp_servers.build_all_servers(db, ws_manager)` (the local
+package is named `mcp_servers` rather than `mcp` to avoid shadowing
+the PyPI `mcp` SDK on `sys.path`).
+
+```yaml
+mcp_servers:
+  mcp_state:
+    module: apps/api/mcp_servers/state_server.py
+    factory: build(db) -> FastMCP
+    sdk: mcp>=1.12,<2 (FastMCP)
+    binds: db (Supabase-compatible client)
+    deferred:
+      - Canonical `quorum_state` blackboard module from checklist 11.6
+        had not landed when this server was built; tools currently
+        read/write a JSON envelope on `quorum_state_snapshots` with
+        `__shim__: "11.6-pending"` marker.  Tool signatures are stable
+        across the migration.
+    tools:
+      get_quorum_state:
+        input:  { quorum_id: string }
+        output: { quorum_id, quorum, roles[], contributions[], proposals[], questions[], fields, _shim? }
+      propose:
+        input:  { quorum_id: string, field: string, content: string, proposed_by_role_id: string }
+        output: { proposal_id: string }
+      support_proposal:
+        input:  { quorum_id: string, proposal_id: string, role_id: string }
+        output: { ok: bool }
+      block_proposal:
+        input:  { quorum_id: string, proposal_id: string, role_id: string }
+        output: { ok: bool }
+      raise_question:
+        input:  { quorum_id: string, text: string, raised_by_role_id: string, tags: string[]? }
+        output: { question_id: string }
+
+  mcp_broadcast:
+    module: apps/api/mcp_servers/broadcast_server.py
+    factory: build(ws_manager) -> FastMCP
+    sdk: mcp>=1.12,<2 (FastMCP)
+    binds: ws_manager (apps/api/ws_manager.ConnectionManager)
+    deferred:
+      - `notify_role` uses a quorum-fanout shim with `target_role_id`
+        envelope filtering; when `ws_manager` grows a role-keyed
+        registry the shim should be replaced with direct routing.
+    tools:
+      broadcast:
+        input:  { quorum_id: string, event_type: string, payload: object }
+        output: { ok: bool }
+        note: subject to ws_manager's 1Hz per-quorum debounce
+      notify_role:
+        input:  { role_id: string, event_type: string, payload: object }
+        output: { ok: bool }
+
+  mcp_authority:
+    module: apps/api/mcp_servers/authority_server.py
+    factory: build(db) -> FastMCP
+    sdk: mcp>=1.12,<2 (FastMCP)
+    binds: db
+    source_tables: [roles]
+    tools:
+      get_role_authority:
+        input:  { role_id: string }
+        output: { authority_rank: int, name: string }
+      list_roles_by_quorum:
+        input:  { quorum_id: string }
+        output: list of { role_id, name, authority_rank, capacity, status }
+        order:  authority_rank DESC
+      compare_authority:
+        input:  { role_a_id: string, role_b_id: string }
+        output: "a" | "b" | "tie"
+
+  mcp_search:
+    module: apps/api/mcp_servers/search_server.py
+    factory: build(db) -> FastMCP
+    sdk: mcp>=1.12,<2 (FastMCP)
+    binds: db
+    source_tables: [station_messages, agent_insights, agent_documents]
+    scoring:
+      method: tag-overlap (Jaccard, weight 0.6) + substring match (weight 0.4)
+      deferred:
+        - pgvector cosine similarity using Pydantic AI provider .embed()
+          (PR #16) — checklist item 11.4. Tool signatures unchanged.
+    tools:
+      search_messages:
+        input:  { quorum_id: string, query: string, top_k: int = 10 }
+        output: list of { message_id, content, score }
+      search_insights:
+        input:  { quorum_id: string, query: string, top_k: int = 10 }
+        output: list of { insight_id, content, score }
+      search_documents:
+        input:  { quorum_id: string, query: string, top_k: int = 10 }
+        output: list of { document_id, title, score }
+
+  errors:
+    contract: all tools raise `mcp.server.fastmcp.exceptions.ToolError`
+      on bad input or backend failure; FastMCP wraps these into the
+      standard MCP error envelope (`isError: true`, descriptive text)
+      automatically — no bare exceptions cross the protocol boundary.
 ```

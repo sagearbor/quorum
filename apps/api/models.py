@@ -272,6 +272,11 @@ class AIStartResponse(BaseModel):
 class GuidanceRequest(BaseModel):
     message: str
     target_role_id: str | None = None
+    # Optional — populated when the request body carries the quorum identifier
+    # (e.g. the A2A /a2a/guidance endpoint, which has no path param).
+    # The canonical REST route /quorums/{quorum_id}/architect/guidance reads
+    # quorum_id from the URL path and ignores this field.
+    quorum_id: str | None = None
 
 
 class GuidanceResponse(BaseModel):

@@ -29,6 +29,14 @@ interface AvatarPanelProps {
   staticSynthesisText?: string;
   /** Role name used to resolve archetype and GLB model */
   roleName?: string;
+  /**
+   * When true the backend has signalled that the facilitator is paused
+   * (LLM unavailable). The avatar stays silent and a "reconnecting" pill
+   * appears at the top of the panel.
+   */
+  paused?: boolean;
+  /** Optional reason supplied by the backend (e.g. "llm_unavailable"). */
+  pausedReason?: string | null;
 }
 
 export function AvatarPanel({
@@ -39,6 +47,8 @@ export function AvatarPanel({
   staticHealthScore,
   staticSynthesisText,
   roleName,
+  paused = false,
+  pausedReason = null,
 }: AvatarPanelProps) {
   const idleSceneRef = useRef<IdleSceneHandle>(null);
 
@@ -71,6 +81,8 @@ export function AvatarPanel({
     enableMic,
     enableEmotion: enableEmotionTracking,
     synthesisText: latestSynthesis,
+    paused,
+    pausedReason,
   });
 
   // Connect gaze (yaw + pitch) from controller to IdleScene
@@ -92,6 +104,24 @@ export function AvatarPanel({
       className="w-full h-full flex flex-col items-center justify-center relative bg-black/20 rounded-xl"
       data-testid="avatar-panel"
     >
+      {/* Paused pill — visible when the backend has signalled that the
+          facilitator is paused (LLM unavailable). Auto-dismisses when the
+          next non-paused reply arrives. Styled to match the existing emotion
+          badges so the panel stays visually calm during the dropout. */}
+      {avatarState.paused && (
+        <div
+          className="absolute top-2 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5
+                     text-xs px-2.5 py-1 rounded-full bg-amber-500/20 text-amber-300
+                     border border-amber-400/30"
+          data-testid="avatar-paused-pill"
+          role="status"
+          aria-live="polite"
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-pulse" />
+          <span>Facilitator paused — reconnecting</span>
+        </div>
+      )}
+
       {/* 3D avatar — IdleScene handles WebGL */}
       <div
         className="flex-1 flex items-center justify-center min-h-0 w-full"

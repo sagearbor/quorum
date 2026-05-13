@@ -46,6 +46,15 @@ export interface AvatarControllerOptions {
   enableEmotion?: boolean;
   /** Latest synthesis text to speak */
   synthesisText?: string;
+  /**
+   * Facilitator paused signal — the backend LLM call failed for the latest
+   * turn. When true the controller MUST NOT speak anything (no provider.speak,
+   * no browserSpeakText). The conversation should look as if the agent simply
+   * didn't reply this turn. Clears automatically on the next non-paused reply.
+   */
+  paused?: boolean;
+  /** Human-readable reason for the pause, e.g. "llm_unavailable" */
+  pausedReason?: string | null;
 }
 
 export interface AvatarControllerState {
@@ -63,6 +72,14 @@ export interface AvatarControllerState {
   speaking: boolean;
   /** Whether the controller is initialized */
   ready: boolean;
+  /**
+   * True when the backend has signalled that the facilitator is paused
+   * (e.g. LLM unavailable). The controller does not speak in this state.
+   * Components render a calm status pill instead of an assistant message.
+   */
+  paused: boolean;
+  /** Human-readable reason supplied by the backend (e.g. "llm_unavailable"). */
+  pausedReason: string | null;
 }
 
 export function useAvatarController(options: AvatarControllerOptions): AvatarControllerState {
@@ -75,6 +92,8 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
     enableVision = typeof window !== "undefined",
     enableEmotion = false,
     synthesisText,
+    paused = false,
+    pausedReason = null,
   } = options;
 
   const [state, setState] = useState<AvatarControllerState>({
@@ -85,6 +104,8 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
     detectedEmotion: "neutral",
     speaking: false,
     ready: false,
+    paused: false,
+    pausedReason: null,
   });
 
   const providerRef = useRef<AvatarProvider | null>(null);
@@ -219,9 +240,31 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
     setState((s) => ({ ...s, emotion }));
   }, [healthScore, computeEmotion]);
 
+  // Mirror the paused prop into state so consumers (AvatarPanel) can render
+  // a status pill. When paused becomes false again (next non-paused reply),
+  // the pill auto-dismisses.
+  useEffect(() => {
+    setState((s) => {
+      if (s.paused === paused && s.pausedReason === pausedReason) return s;
+      return { ...s, paused, pausedReason };
+    });
+  }, [paused, pausedReason]);
+
   // Speak new synthesis text.
   // Priority: configured AvatarProvider (ElevenLabs/Simli) → browser SpeechSynthesis fallback.
+  //
+  // CRITICAL: when ``paused`` is true the controller MUST NOT speak. The
+  // backend uses a paused sentinel when the LLM is unavailable; speaking the
+  // sentinel (or any error string) on the 60-inch projector reads as "the
+  // AI is broken" to the audience. Stay silent and let AvatarPanel surface
+  // the recovery pill instead.
   useEffect(() => {
+    if (paused) {
+      // Track the synthesisText so a subsequent non-paused identical reply
+      // is not blocked by the dedup guard.
+      prevSynthesisRef.current = synthesisText;
+      return;
+    }
     if (!synthesisText || synthesisText === prevSynthesisRef.current) return;
     if (speakingRef.current) return; // Don't interrupt current speech
 
@@ -243,7 +286,7 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
       // This gives immediate audible feedback without requiring external credentials.
       browserSpeakText(synthesisText).then(done);
     }
-  }, [synthesisText, healthScore, computeEmotion]);
+  }, [synthesisText, healthScore, computeEmotion, paused]);
 
   return state;
 }

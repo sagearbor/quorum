@@ -222,8 +222,15 @@ export default function QuorumPage() {
     }
   }, [currentRole, conversation.loading, conversation.messages.length, loading, quorumTitle, quorumDescription]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // When there is a live facilitator reply, derive synthesisText for the avatar
-  const synthesisText = conversation.facilitatorReply?.reply ?? undefined;
+  // When there is a live facilitator reply, derive synthesisText for the avatar.
+  // Paused replies have no text and must not be spoken — AvatarPanel shows a
+  // status pill instead.
+  const facilitatorPaused = conversation.facilitatorReply?.paused === true;
+  const facilitatorPausedReason =
+    conversation.facilitatorReply?.reason ?? null;
+  const synthesisText = facilitatorPaused
+    ? undefined
+    : conversation.facilitatorReply?.reply ?? undefined;
 
   useEffect(() => {
     let cancelled = false;
@@ -324,7 +331,17 @@ export default function QuorumPage() {
 
         // Wire facilitator reply from /contribute response to AvatarPanel and
         // the conversation thread — satisfies the TODO in AvatarPanel.tsx.
-        if (data.facilitator_reply) {
+        if (data.facilitator_paused) {
+          // Facilitator paused (LLM unavailable). Don't render an assistant
+          // message and don't speak; surface the paused state to the avatar.
+          conversation.ingestFacilitatorReply({
+            reply: null,
+            message_id: null,
+            tags: [],
+            paused: true,
+            reason: data.facilitator_paused_reason ?? "llm_unavailable",
+          });
+        } else if (data.facilitator_reply) {
           conversation.ingestFacilitatorReply({
             reply: data.facilitator_reply,
             message_id: data.facilitator_message_id ?? `auto-${Date.now()}`,
@@ -415,6 +432,8 @@ export default function QuorumPage() {
             enableMic={!audioMuted}
             roleName={currentRole?.name}
             staticSynthesisText={audioMuted ? undefined : synthesisText}
+            paused={facilitatorPaused}
+            pausedReason={facilitatorPausedReason}
           />
         </div>
       </div>

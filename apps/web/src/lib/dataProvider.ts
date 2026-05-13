@@ -510,11 +510,20 @@ import type {
   AgentRequest,
 } from "@quorum/types";
 
-/** Response from the ask-facilitator endpoint. */
+/**
+ * Response from the ask-facilitator endpoint.
+ *
+ * When the backend LLM call fails, ``paused`` is true and ``reply`` /
+ * ``message_id`` are null. The frontend MUST NOT speak or render an
+ * assistant message in that case — it should show the "reconnecting" pill
+ * on the avatar and leave the thread untouched.
+ */
 export interface FacilitatorReply {
-  reply: string;
-  message_id: string;
+  reply: string | null;
+  message_id: string | null;
   tags: string[];
+  paused?: boolean;
+  reason?: string | null;
 }
 
 /** Response from the contribute endpoint (extended for agent system). */
@@ -525,6 +534,9 @@ export interface ContributeAgentResponse {
   facilitator_message_id: string | null;
   facilitator_tags: string[] | null;
   a2a_requests_triggered: number;
+  /** True when the facilitator turn was skipped because the LLM was unavailable. */
+  facilitator_paused?: boolean;
+  facilitator_paused_reason?: string | null;
 }
 
 /**

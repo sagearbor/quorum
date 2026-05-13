@@ -132,7 +132,11 @@ async def _run_autonomy_round(
     2. Pick an agent to take a proactive turn (probability scales with autonomy)
     3. At high autonomy (>0.7), consider submitting contributions
     """
-    from agent_engine import process_a2a_request, process_agent_turn
+    from agent_engine import (
+        is_paused_reply,
+        process_a2a_request,
+        process_agent_turn,
+    )
     from ws_manager import manager
 
     # --- Phase 1: Process pending A2A requests ---
@@ -256,24 +260,32 @@ async def _run_autonomy_round(
             supabase_client=db,
             llm_provider=llm_provider,
         )
-        logger.info(
-            "Proactive turn: role=%s round=%d tags=%s",
-            role["name"],
-            round_num,
-            tags[:3],
-        )
+        if is_paused_reply(reply, tags):
+            # Facilitator paused — skip broadcasting activity for this round.
+            # The agent will retry on the next autonomy tick.
+            logger.warning(
+                "autonomy_loop: proactive turn paused for role=%s round=%d",
+                role["name"], round_num,
+            )
+        else:
+            logger.info(
+                "Proactive turn: role=%s round=%d tags=%s",
+                role["name"],
+                round_num,
+                tags[:3],
+            )
 
-        # Broadcast activity
-        await manager.broadcast(
-            quorum_id,
-            {
-                "type": "autonomous_activity",
-                "role_id": role["id"],
-                "role_name": role["name"],
-                "round": round_num,
-                "tags": tags[:5],
-            },
-        )
+            # Broadcast activity
+            await manager.broadcast(
+                quorum_id,
+                {
+                    "type": "autonomous_activity",
+                    "role_id": role["id"],
+                    "role_name": role["name"],
+                    "round": round_num,
+                    "tags": tags[:5],
+                },
+            )
     except Exception:
         logger.warning(
             "Proactive turn failed for role %s", role["id"], exc_info=True

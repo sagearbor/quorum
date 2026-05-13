@@ -163,6 +163,12 @@ class ContributeResponse(BaseModel):
     facilitator_message_id: str | None = None
     facilitator_tags: list[str] | None = None
     a2a_requests_triggered: int = 0
+    # When True the facilitator skipped this turn because the LLM was
+    # unavailable. The frontend MUST NOT speak any reply and MUST NOT render
+    # an assistant message — the conversation should look as if the agent
+    # simply didn't reply. ``facilitator_*`` fields are all None in this case.
+    facilitator_paused: bool = False
+    facilitator_paused_reason: str | None = None
 
 
 # GET /quorums/{quorum_id}/state
@@ -299,9 +305,14 @@ class AskRequest(BaseModel):
 
 
 class AskResponse(BaseModel):
-    reply: str
-    message_id: str
+    # reply / message_id / tags are None on paused turns. When ``paused`` is
+    # True the frontend MUST NOT speak the reply or render an assistant
+    # message — the facilitator is silent until the next non-paused reply.
+    reply: str | None = None
+    message_id: str | None = None
     tags: list[str] = Field(default_factory=list)
+    paused: bool = False
+    reason: str | None = None
 
 
 # GET /quorums/{id}/documents

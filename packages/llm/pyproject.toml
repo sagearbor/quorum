@@ -10,6 +10,13 @@ requires-python = ">=3.11"
 dependencies = [
     "openai>=1.0.0",
     "anthropic>=0.39.0",
+    # Pydantic AI consolidates per-provider parameter quirks (max_tokens vs
+    # max_completion_tokens, GPT-5 Responses-API routing, reasoning-model
+    # temperature restrictions).  Pinned to the v1.94 release line that
+    # introduced OpenAIChatModel + AzureProvider as the canonical Azure path.
+    # `pydantic-ai-slim` ships only the core; the openai/anthropic extras pull
+    # in the per-provider SDK shims (we already depend on those directly).
+    "pydantic-ai-slim[openai,anthropic]>=1.94.0,<2.0",
 ]
 
 [project.optional-dependencies]

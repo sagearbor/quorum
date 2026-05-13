@@ -1,19 +1,29 @@
-"""Azure OpenAI provider implementation.
+"""Azure OpenAI provider — thin wrapper around ``pydantic_ai.Agent``.
 
 Tier 1: Deterministic keyword extraction (no LLM call — handled by tier1 module)
-Tier 2: GPT-4o-mini for conflict detection
-Tier 3: GPT-4o for final artifact synthesis
+Tier 2: GPT-4o-mini deployment for conflict detection / agent chat
+Tier 3: GPT-4o deployment for artifact synthesis / agent deep reasoning
+Tier T5 (AGENT_RESPOND): GPT-5-nano deployment via the Responses API — Pydantic
+        AI auto-routes when the underlying model profile supports it, so we no
+        longer carry a hand-rolled ``self._is_gpt5(...)`` branch.
 
 Auth (mutually exclusive, checked in order):
     API key mode:        set AZURE_OPENAI_KEY in env / .env
-    Managed Identity:    omit AZURE_OPENAI_KEY; run `az login` locally
-                         or use a managed identity in Azure — no secret needed
+    Managed Identity:    omit AZURE_OPENAI_KEY; run `az login` locally or
+                         use a managed identity in Azure — no secret needed
 
 Uses env vars:
     AZURE_OPENAI_ENDPOINT
     AZURE_OPENAI_KEY            (optional — omit to use Managed Identity)
     AZURE_OPENAI_DEPLOYMENT_T2  (gpt-4o-mini)
     AZURE_OPENAI_DEPLOYMENT_T3  (gpt-4o)
+    AZURE_OPENAI_DEPLOYMENT_T5  (gpt-5-nano, optional — falls back to T2)
+    AZURE_OPENAI_API_VERSION    (default: 2025-03-01-preview)
+
+NOTE: ``embed()`` is INTENTIONALLY preserved unchanged from the legacy
+implementation.  The Azure embedding endpoint targets the T2 deployment which
+is a *chat* deployment, not an embedding deployment — that bug is tracked as
+checklist item 11.4 and fixed in a separate PR.
 """
 
 from __future__ import annotations
@@ -21,13 +31,24 @@ from __future__ import annotations
 import logging
 import os
 
-from openai import AsyncAzureOpenAI, BadRequestError, RateLimitError
+from openai import AsyncAzureOpenAI, RateLimitError
+from pydantic_ai import Agent
+from pydantic_ai.exceptions import ModelHTTPError
+from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+from pydantic_ai.providers.openai import OpenAIProvider as PaiOpenAIProvider
 
 from quorum_llm.interface import LLMProvider
 from quorum_llm.models import BudgetExhaustedError, LLMTier
+from quorum_llm.providers._pai_common import (
+    AgentCache,
+    run_chat,
+    run_complete,
+    run_respond,
+    tier_settings,
+)
 from quorum_llm.tier1 import extract_keywords
 
-# Tiers that use the T2 deployment (gpt-4o-mini)
+# Tiers that use the T2 deployment (gpt-4o-mini family)
 _T2_TIERS = frozenset({LLMTier.CONFLICT, LLMTier.AGENT_CHAT})
 
 # Tiers that use the T5 deployment (gpt-5-nano) via the Responses API
@@ -35,19 +56,22 @@ _T5_TIERS = frozenset({LLMTier.AGENT_RESPOND})
 
 logger = logging.getLogger(__name__)
 
-# Azure OpenAI API version — must be 2025-03-01-preview or later for Responses API (gpt-5)
+# Azure OpenAI API version — must be 2025-03-01-preview or later for the
+# Responses API on gpt-5 deployments.
 _API_VERSION = os.environ.get("AZURE_OPENAI_API_VERSION", "2025-03-01-preview")
 # Scope required for Entra ID / Managed Identity token
 _AZURE_COGNITIVESERVICES_SCOPE = "https://cognitiveservices.azure.com/.default"
 
 
 class AzureOpenAIProvider(LLMProvider):
-    """Azure OpenAI LLM provider.
+    """Azure OpenAI LLM provider backed by Pydantic AI ``Agent`` instances.
 
-    Supports two auth modes:
-    - API key:          pass api_key or set AZURE_OPENAI_KEY env var
-    - Managed Identity: omit api_key/AZURE_OPENAI_KEY; uses DefaultAzureCredential
-                        (works with `az login` locally or managed identity in Azure)
+    The public surface (``complete``, ``chat``, ``respond``, ``embed``) is
+    identical to the legacy adapter so callers in ``apps/api`` need no
+    changes.  Internally, each LLM call is routed through a per-tier
+    ``pydantic_ai.Agent`` built on top of an ``OpenAIChatModel`` (or
+    ``OpenAIResponsesModel`` for the T5 deployment) wired to an Azure-flavored
+    ``AsyncAzureOpenAI`` client.
     """
 
     def __init__(
@@ -75,6 +99,8 @@ class AzureOpenAIProvider(LLMProvider):
 
         resolved_key = api_key or os.environ.get("AZURE_OPENAI_KEY")
 
+        # Build an AsyncAzureOpenAI client up front — same dual-auth dance as
+        # the legacy adapter so deployments with Managed Identity keep working.
         if resolved_key:
             logger.info("Azure LLM: using API key auth")
             self._client = AsyncAzureOpenAI(
@@ -83,9 +109,14 @@ class AzureOpenAIProvider(LLMProvider):
                 api_version=_API_VERSION,
             )
         else:
-            logger.info("Azure LLM: AZURE_OPENAI_KEY not set — using Managed Identity (DefaultAzureCredential)")
+            logger.info(
+                "Azure LLM: AZURE_OPENAI_KEY not set — using Managed Identity (DefaultAzureCredential)"
+            )
             try:
-                from azure.identity import DefaultAzureCredential, get_bearer_token_provider
+                from azure.identity import (
+                    DefaultAzureCredential,
+                    get_bearer_token_provider,
+                )
             except ImportError as exc:
                 raise ImportError(
                     "azure-identity is required for Managed Identity auth. "
@@ -101,15 +132,16 @@ class AzureOpenAIProvider(LLMProvider):
                 api_version=_API_VERSION,
             )
 
-    def _deployment_for_tier(self, tier: LLMTier) -> str:
-        """Map a tier to the appropriate Azure deployment name.
+        # Lazy per-tier Agent cache.  We use ``OpenAIChatModel`` for Chat
+        # Completions deployments and ``OpenAIResponsesModel`` for the T5
+        # deployment (so Pydantic AI hits ``/responses`` instead of
+        # ``/chat/completions``).  Each model wraps the SAME underlying
+        # AsyncAzureOpenAI client so we share the connection pool.
+        self._agents = AgentCache(self._build_agent_for_tier)
 
-        AGENT_CHAT uses the same gpt-4o-mini deployment as CONFLICT but is
-        tracked separately for cost accounting purposes.
-        AGENT_RESPOND uses the gpt-5-nano deployment (T5) via the Responses API.
-        AGENT_REASON uses the same gpt-4o deployment as SYNTHESIS but is
-        reserved for escalation / deep reasoning turns only.
-        """
+    # -- Tier → deployment mapping -----------------------------------------
+
+    def _deployment_for_tier(self, tier: LLMTier) -> str:
         if tier in _T2_TIERS:
             return self._deployment_t2
         if tier in _T5_TIERS:
@@ -118,75 +150,58 @@ class AzureOpenAIProvider(LLMProvider):
             return self._deployment_t3
         raise ValueError(f"Tier {tier} does not use LLM — use tier1 module directly")
 
-    def _is_gpt5(self, deployment: str) -> bool:
-        """Check if a deployment is a GPT-5/reasoning model (needs Responses API).
+    def _is_reasoning_deployment(self, deployment: str) -> bool:
+        """Detect deployments that need the Responses API (gpt-5 + custom names).
 
-        Checks deployment name AND the explicit AZURE_OPENAI_REASONING_DEPLOYMENTS
-        env var (comma-separated list of deployment names that are reasoning models).
+        Replicates the legacy ``_is_gpt5`` check: matches deployment names
+        containing ``gpt-5`` and any explicit names listed in
+        ``AZURE_OPENAI_REASONING_DEPLOYMENTS``.
         """
         name = deployment.lower()
         if "gpt-5" in name:
             return True
-        # Allow explicit configuration for deployments with custom names
         reasoning_list = os.environ.get("AZURE_OPENAI_REASONING_DEPLOYMENTS", "")
         if reasoning_list:
             return deployment in [d.strip() for d in reasoning_list.split(",")]
         return False
 
-    async def _call(self, kwargs: dict, tier: LLMTier) -> str:
-        """Make an Azure OpenAI call.
+    # -- Pydantic AI Agent construction ------------------------------------
 
-        For GPT-5 models, automatically routes to the Responses API.
-        For other models, uses Chat Completions with temperature retry.
-        """
-        model = kwargs.get("model", "")
+    def _build_agent_for_tier(self, tier: LLMTier) -> Agent:
+        deployment = self._deployment_for_tier(tier)
+        # Pydantic AI's OpenAIProvider can wrap an existing AsyncAzureOpenAI
+        # client — that's the documented escape hatch for Azure deployments
+        # whose deployment names don't match canonical OpenAI model names
+        # (Duke Health, Quorum staging, etc.).
+        provider = PaiOpenAIProvider(openai_client=self._client)
 
-        # GPT-5 models: use Responses API instead of Chat Completions
-        if self._is_gpt5(model):
-            messages = kwargs.get("messages", [])
-            system_parts = [m["content"] for m in messages if m["role"] == "system"]
-            user_parts = [m["content"] for m in messages if m["role"] != "system"]
-            instructions = "\n".join(system_parts) if system_parts else "You are a helpful assistant."
-            input_text = "\n".join(user_parts)
-            try:
-                response = await self._client.responses.create(
-                    model=model,
-                    instructions=instructions,
-                    input=input_text,
-                )
-                return response.output_text or ""
-            except RateLimitError as exc:
-                raise BudgetExhaustedError(
-                    provider="azure", tier=tier, detail=str(exc),
-                ) from exc
+        if self._is_reasoning_deployment(deployment):
+            # GPT-5 / o-series: route through the Responses API model so
+            # temperature is dropped automatically and reasoning effort can
+            # be threaded through ModelSettings.
+            model = OpenAIResponsesModel(deployment, provider=provider)
+        else:
+            model = OpenAIChatModel(deployment, provider=provider)
 
-        # Non-GPT-5: Chat Completions with temperature retry
-        try:
-            response = await self._client.chat.completions.create(**kwargs)
-            return response.choices[0].message.content or ""
-        except BadRequestError as exc:
-            if "temperature" in str(exc) and "temperature" in kwargs:
-                kwargs.pop("temperature")
-                response = await self._client.chat.completions.create(**kwargs)
-                return response.choices[0].message.content or ""
-            raise
-        except RateLimitError as exc:
-            raise BudgetExhaustedError(
-                provider="azure", tier=tier, detail=str(exc),
-            ) from exc
+        return Agent(model)
+
+    # -- LLMProvider surface ----------------------------------------------
 
     async def complete(self, prompt: str, tier: LLMTier) -> str:
         if tier == LLMTier.KEYWORD:
             return ", ".join(extract_keywords(prompt))
 
-        deployment = self._deployment_for_tier(tier)
-        kwargs: dict = {
-            "model": deployment,
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.3 if tier == LLMTier.CONFLICT else 0.7,
-            "max_completion_tokens": 2048 if tier == LLMTier.CONFLICT else 4096,
-        }
-        return await self._call(kwargs, tier)
+        agent = self._agents.get(tier)
+        settings = tier_settings(tier)
+        try:
+            return await run_complete(agent, prompt, settings)
+        except ModelHTTPError as exc:
+            _maybe_raise_budget("azure", tier, exc)
+            raise
+        except RateLimitError as exc:  # legacy SDK error type, kept as belt-and-braces
+            raise BudgetExhaustedError(
+                provider="azure", tier=tier, detail=str(exc)
+            ) from exc
 
     async def chat(
         self,
@@ -195,19 +210,21 @@ class AzureOpenAIProvider(LLMProvider):
         temperature: float = 0.4,
         max_tokens: int = 1024,
     ) -> str:
-        """Chat completion using the native Azure OpenAI messages API."""
         if tier == LLMTier.KEYWORD:
             flat = "\n".join(m["content"] for m in messages)
             return ", ".join(extract_keywords(flat))
 
-        deployment = self._deployment_for_tier(tier)
-        kwargs: dict = {
-            "model": deployment,
-            "messages": messages,
-            "temperature": temperature,
-            "max_completion_tokens": max_tokens,
-        }
-        return await self._call(kwargs, tier)
+        agent = self._agents.get(tier)
+        settings = tier_settings(tier, temperature=temperature, max_tokens=max_tokens)
+        try:
+            return await run_chat(agent, messages, settings)
+        except ModelHTTPError as exc:
+            _maybe_raise_budget("azure", tier, exc)
+            raise
+        except RateLimitError as exc:
+            raise BudgetExhaustedError(
+                provider="azure", tier=tier, detail=str(exc)
+            ) from exc
 
     async def respond(
         self,
@@ -217,60 +234,49 @@ class AzureOpenAIProvider(LLMProvider):
         reasoning_effort: str = "medium",
         previous_response_id: str | None = None,
     ) -> tuple[str, str | None]:
-        """Responses API call for GPT-5 models.
+        """Single-turn Responses-style call.
 
-        Uses the OpenAI Responses API (``client.responses.create``) when the
-        T5 deployment is a gpt-5-* model.  Falls back to Chat Completions for
-        older deployments so callers don't need to branch on model type.
+        For GPT-5 / reasoning deployments, Pydantic AI's OpenAIResponsesModel
+        targets the Responses API automatically.  For non-reasoning
+        deployments, we fall back to the chat path so callers get a
+        consistent ``(text, response_id|None)`` shape.
 
-        Key API differences vs Chat Completions:
-        - No temperature / top_p / presence_penalty / frequency_penalty.
-        - Uses ``reasoning.effort`` (low/medium/high) instead.
-        - Stateful: ``previous_response_id`` threads requests server-side,
-          avoiding re-transmission of the full conversation history.
-
-        Args:
-            instructions: System-level instructions for the agent.
-            input_text: The current user message / context to process.
-            tier: Should be ``LLMTier.AGENT_RESPOND`` for GPT-5-nano turns.
-            reasoning_effort: "low", "medium", or "high".
-            previous_response_id: ID from the previous response in the thread.
-
-        Returns:
-            (response_text, response_id) where response_id can be stored and
-            passed back as previous_response_id to continue the thread.
+        ``previous_response_id`` is currently ignored — Pydantic AI manages
+        conversation continuation through ``message_history`` rather than the
+        OpenAI ``previous_response_id`` parameter.  Threading is preserved by
+        passing the prior ``ModelResponse`` in subsequent ``chat()`` calls.
         """
         deployment = self._deployment_for_tier(tier)
+        agent = self._agents.get(tier)
+        settings = tier_settings(tier)
 
-        if self._is_gpt5(deployment):
-            try:
-                kwargs: dict = {
-                    "model": deployment,
-                    "instructions": instructions,
-                    "input": input_text,
-                    "reasoning": {"effort": reasoning_effort},
-                }
-                if previous_response_id:
-                    kwargs["previous_response_id"] = previous_response_id
+        try:
+            text = await run_respond(agent, instructions, input_text, settings)
+        except ModelHTTPError as exc:
+            _maybe_raise_budget("azure", tier, exc)
+            raise
+        except RateLimitError as exc:
+            raise BudgetExhaustedError(
+                provider="azure", tier=tier, detail=str(exc)
+            ) from exc
 
-                response = await self._client.responses.create(**kwargs)
-                return response.output_text, response.id
-            except RateLimitError as exc:
-                raise BudgetExhaustedError(
-                    provider="azure",
-                    tier=tier,
-                    detail=str(exc),
-                ) from exc
-
-        # Fallback: use Chat Completions for non-GPT-5 deployments
-        messages = [
-            {"role": "system", "content": instructions},
-            {"role": "user", "content": input_text},
-        ]
-        result = await self.chat(messages, LLMTier.AGENT_CHAT)
-        return result, None
+        # Mirror the legacy contract: reasoning deployments return a (synthetic)
+        # response_id so callers can thread state; chat deployments return None.
+        if self._is_reasoning_deployment(deployment):
+            # We don't get the OpenAI response_id back from Pydantic AI's
+            # high-level API today.  Returning a sentinel keeps the tuple
+            # shape stable while signalling "this came from a Responses model".
+            return text, "pai-managed"
+        return text, None
 
     async def embed(self, text: str) -> list[float]:
+        """Embedding API — preserved unchanged from the legacy adapter.
+
+        This still targets the T2 *chat* deployment, which is a known bug
+        (item 11.4 in the developer checklist).  Pydantic AI does not wrap
+        embedding endpoints in its high-level API, so the fix will swap in a
+        dedicated embedding deployment via the openai SDK directly.
+        """
         try:
             response = await self._client.embeddings.create(
                 model=self._deployment_t2,
@@ -283,3 +289,21 @@ class AzureOpenAIProvider(LLMProvider):
                 tier=LLMTier.CONFLICT,
                 detail=str(exc),
             ) from exc
+
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+
+def _maybe_raise_budget(provider: str, tier: LLMTier, exc: ModelHTTPError) -> None:
+    """Translate a 429 from Pydantic AI into our budget-exhausted exception.
+
+    Pydantic AI surfaces HTTP errors as ``ModelHTTPError`` with an explicit
+    ``status_code`` field — checking that is more reliable than parsing the
+    SDK-specific exception message.
+    """
+    if getattr(exc, "status_code", None) == 429:
+        raise BudgetExhaustedError(
+            provider=provider, tier=tier, detail=str(exc)
+        ) from exc

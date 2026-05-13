@@ -1,6 +1,15 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { AvatarPanel } from "../AvatarPanel";
+
+vi.mock("../VisionTracker", () => ({
+  VisionTracker: {
+    listCameras: vi.fn().mockResolvedValue([
+      { deviceId: "cam-1", kind: "videoinput", label: "USB Webcam", groupId: "g1" },
+      { deviceId: "cam-2", kind: "videoinput", label: "Built-in", groupId: "g2" },
+    ]),
+  },
+}));
 
 // Mock useQuorumLive
 vi.mock("@/hooks/useQuorumLive", () => ({
@@ -93,5 +102,39 @@ describe("AvatarPanel with direction indicator", () => {
     expect(indicator).toHaveTextContent("L");
     expect(indicator).toHaveTextContent("C");
     expect(indicator).toHaveTextContent("R");
+  });
+});
+
+describe("AvatarPanel camera picker", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+  });
+
+  it("does not show camera picker when emotion tracking is off", () => {
+    render(<AvatarPanel quorumId="test-quorum" />);
+    expect(screen.queryByTestId("avatar-camera-picker")).toBeNull();
+  });
+
+  it("shows camera picker with enumerated cameras when emotion tracking is on", async () => {
+    render(<AvatarPanel quorumId="test-quorum" enableEmotionTracking />);
+    const picker = await waitFor(() => screen.getByTestId("avatar-camera-picker"));
+    expect(picker).toBeTruthy();
+    const select = picker.querySelector("select")!;
+    await waitFor(() => {
+      expect(select.querySelectorAll("option").length).toBeGreaterThanOrEqual(3);
+    });
+    expect(select.textContent).toContain("USB Webcam");
+    expect(select.textContent).toContain("Built-in");
+  });
+
+  it("persists selected camera to localStorage", async () => {
+    render(<AvatarPanel quorumId="test-quorum" enableEmotionTracking />);
+    const picker = await waitFor(() => screen.getByTestId("avatar-camera-picker"));
+    const select = picker.querySelector("select")! as HTMLSelectElement;
+    await waitFor(() => {
+      expect(select.querySelectorAll("option").length).toBeGreaterThanOrEqual(3);
+    });
+    fireEvent.change(select, { target: { value: "cam-1" } });
+    expect(window.localStorage.getItem("quorum.avatar.cameraDeviceId")).toBe("cam-1");
   });
 });

@@ -59,12 +59,13 @@ class TestCoordinationFactory:
 
 
 # ---------------------------------------------------------------------------
-# 2. Agent card shape
+# 2. Agent card shape — now uses the LF A2A 1.0 spec via a2a-sdk
 # ---------------------------------------------------------------------------
 
 class TestAgentCard:
     def test_agent_card_shape(self):
-        from apps.api.a2a.agent_card import build_agent_card
+        """The card must carry the v1.0 spec fields built via a2a-sdk types."""
+        from apps.api.quorum_a2a.agent_card import build_agent_card_dict
 
         role = {
             "id": "role-123",
@@ -73,55 +74,94 @@ class TestAgentCard:
             "authority_rank": 3,
             "capacity": 1,
         }
-        card = build_agent_card(role)
+        card = build_agent_card_dict(role)
 
         assert card["name"] == "quorum-role-Clinician"
         assert "Clinician" in card["description"]
-        assert card["version"] == "0.1.0"
+        # v1.0 cards use a `version` string — we ship 1.0.0.
+        assert card["version"] == "1.0.0"
+        # Capabilities now use the camelCase wire form via the SDK helper.
         assert "capabilities" in card
-        assert card["capabilities"]["streaming"] is False
+        assert card["capabilities"].get("streaming") in (False, None, 0)
+        # Skills carry id + name + (optionally) tags.
         assert len(card["skills"]) >= 1
         assert card["skills"][0]["id"] == "contribute"
-        assert card["metadata"]["role_id"] == "role-123"
-        assert card["metadata"]["quorum_id"] == "q-456"
-        assert card["metadata"]["authority_rank"] == 3
+        # The v1.0 spec moves the URL inside supportedInterfaces.
+        interfaces = card.get("supportedInterfaces") or []
+        assert interfaces, f"missing supportedInterfaces in card: {card}"
+        assert "role-123" in interfaces[0]["url"]
+        # Quorum-specific extras still surface via the x-quorum namespace.
+        assert card["x-quorum"]["role_id"] == "role-123"
+        assert card["x-quorum"]["quorum_id"] == "q-456"
+        assert card["x-quorum"]["authority_rank"] == 3
 
     def test_agent_card_with_base_url(self):
-        from apps.api.a2a.agent_card import build_agent_card
+        from apps.api.quorum_a2a.agent_card import build_agent_card_dict
 
         role = {"id": "r1", "name": "Nurse", "authority_rank": 1}
-        card = build_agent_card(role, base_url="https://example.com")
-        assert card["url"] == "https://example.com/a2a/agents/r1"
+        card = build_agent_card_dict(role, base_url="https://example.com")
+        interfaces = card.get("supportedInterfaces") or []
+        assert interfaces[0]["url"] == "https://example.com/a2a/agents/r1"
 
 
 # ---------------------------------------------------------------------------
-# 3. A2A client
+# 3. A2A client — now uses real httpx with retry/timeout
 # ---------------------------------------------------------------------------
 
 class TestA2AClient:
     def test_client_register_and_lookup(self):
-        from apps.api.a2a.a2a_client import A2AClient
+        from apps.api.quorum_a2a.a2a_client import A2AClient, _agent_registry
+        _agent_registry.clear()
         client = A2AClient()
-        assert client.get_agent_url("unknown") is None
+        # No endpoint registered AND no DB row → None.
+        from unittest.mock import patch
+        with patch("apps.api.quorum_a2a.a2a_server.lookup_endpoint", return_value=None):
+            assert client.get_agent_url("unknown") is None
         client.register_agent("r1", "http://localhost:9000/agent")
         assert client.get_agent_url("r1") == "http://localhost:9000/agent"
 
     @pytest.mark.asyncio
-    async def test_send_message_no_endpoint(self):
-        from apps.api.a2a.a2a_client import A2AClient, _agent_registry
+    async def test_send_message_no_endpoint_returns_none(self):
+        from apps.api.quorum_a2a.a2a_client import A2AClient, _agent_registry
+        from unittest.mock import patch
         _agent_registry.clear()
         client = A2AClient()
-        result = await client.send_message("missing-role", {"type": "test"})
+        with patch("apps.api.quorum_a2a.a2a_server.lookup_endpoint", return_value=None):
+            result = await client.send_message("missing-role", {"type": "test"})
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_send_message_with_endpoint(self):
-        from apps.api.a2a.a2a_client import A2AClient
-        client = A2AClient()
+    async def test_send_message_with_endpoint_returns_parsed_response(self):
+        """When the agent is reachable, send_message returns a parsed Task."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+        from apps.api.quorum_a2a.a2a_client import A2AClient
+
+        client = A2AClient(timeout_s=0.5, max_retries=1, backoff_base_s=0.0)
         client.register_agent("r1", "http://localhost:9000/agent")
-        result = await client.send_message("r1", {"type": "test"})
+
+        fake_resp = MagicMock()
+        fake_resp.status_code = 200
+        fake_resp.json = lambda: {
+            "task": {
+                "id": "t-1",
+                "contextId": "ctx-1",
+                "status": {"state": "TASK_STATE_COMPLETED"},
+                "artifacts": [{"parts": [{"text": "received"}]}],
+            }
+        }
+
+        class _CM:
+            async def __aenter__(self_inner):
+                inst = MagicMock()
+                inst.post = AsyncMock(return_value=fake_resp)
+                return inst
+            async def __aexit__(self_inner, *a): return None
+
+        with patch("apps.api.quorum_a2a.a2a_client.httpx.AsyncClient", return_value=_CM()):
+            result = await client.send_message("r1", {"type": "test", "message": "hello"})
+
         assert result is not None
-        assert result["status"] == "sent"
+        assert result.get("task", {}).get("status", {}).get("state") == "TASK_STATE_COMPLETED"
 
 
 # ---------------------------------------------------------------------------
@@ -130,13 +170,13 @@ class TestA2AClient:
 
 class TestGuidanceModel:
     def test_guidance_request_valid(self):
-        from apps.api.a2a.a2a_server import GuidanceRequest
+        from apps.api.quorum_a2a.a2a_server import GuidanceRequest
         req = GuidanceRequest(quorum_id="q1", message="focus on safety")
         assert req.target_role_id is None
         assert req.message == "focus on safety"
 
     def test_guidance_request_with_target(self):
-        from apps.api.a2a.a2a_server import GuidanceRequest
+        from apps.api.quorum_a2a.a2a_server import GuidanceRequest
         req = GuidanceRequest(quorum_id="q1", message="hello", target_role_id="r1")
         assert req.target_role_id == "r1"
 

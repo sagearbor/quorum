@@ -606,3 +606,127 @@ def test_worker_id_fallback_to_gethostname(monkeypatch):
     assert ":" in wid
     host_part = wid.split(":", 1)[0]
     assert host_part  # not empty
+
+
+# ---------------------------------------------------------------------------
+# 12.4 — Heartbeat lease integration coverage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_loop_start_then_iteration_then_cancel_full_cycle(db):
+    """Full lifecycle: start -> one heartbeat-ed iteration -> cancel.
+
+    Verifies the row goes through:
+        (no row) -> running+worker_id -> heartbeat_at advances -> stopped+null
+    """
+    from autonomy_loop import _heartbeat_loop_state, _worker_id, start_autonomy_loop, stop_autonomy_loop
+
+    quorum_id = "q-full-cycle"
+
+    # Patch _run_quorum_loop so it doesn't actually iterate forever.
+    with patch("autonomy_loop._run_quorum_loop", new=AsyncMock(return_value=None)):
+        await start_autonomy_loop(quorum_id, 0.5)
+
+        # Row exists with status=running, our worker_id, round_num=0.
+        rows = db.rows("autonomy_loop_state")
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["status"] == "running"
+        assert row["worker_id"] == _worker_id()
+        assert row["round_num"] == 0
+        initial_heartbeat = row["heartbeat_at"]
+
+        # Simulate one loop iteration's heartbeat. Real code calls
+        # `_heartbeat_loop_state(db, quorum_id, round_num)` from inside the
+        # while True body.
+        await asyncio.sleep(0.001)  # ensure isoformat advances
+        _heartbeat_loop_state(db, quorum_id, round_num=1)
+
+        rows = db.rows("autonomy_loop_state")
+        assert rows[0]["round_num"] == 1
+        assert rows[0]["heartbeat_at"] != initial_heartbeat
+
+        # Cancel.
+        await stop_autonomy_loop(quorum_id)
+
+    rows = db.rows("autonomy_loop_state")
+    assert rows[0]["status"] == "stopped"
+    assert rows[0]["worker_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_two_workers_do_not_double_run(db):
+    """Worker A starts the loop, then Worker B starts the same quorum.
+
+    Both upserts target the same PK (quorum_id), so worker_id flips from A
+    to B and only ONE row exists. Worker A's heartbeat is then a no-op
+    because its CAS guard (worker_id=A) finds the row owned by B.
+    """
+    from autonomy_loop import _heartbeat_loop_state, _upsert_loop_state, _worker_id
+
+    quorum_id = "q-two-workers"
+
+    # Worker A claims.
+    _upsert_loop_state(
+        db,
+        quorum_id=quorum_id,
+        autonomy_level=0.5,
+        status="running",
+        worker_id="worker-a:1",
+    )
+
+    # Worker B takes over.
+    _upsert_loop_state(
+        db,
+        quorum_id=quorum_id,
+        autonomy_level=0.5,
+        status="running",
+        worker_id="worker-b:2",
+    )
+
+    rows = db.rows("autonomy_loop_state")
+    assert len(rows) == 1
+    assert rows[0]["worker_id"] == "worker-b:2"
+
+    # Worker A's heartbeat must be a no-op — its CAS finds the wrong worker_id.
+    # We patch _worker_id() to return "worker-a:1" for one call.
+    with patch("autonomy_loop._worker_id", return_value="worker-a:1"):
+        _heartbeat_loop_state(db, quorum_id, round_num=99)
+
+    rows = db.rows("autonomy_loop_state")
+    # round_num must NOT have been bumped to 99 by worker A.
+    assert rows[0]["round_num"] != 99
+    # worker_id must still be B.
+    assert rows[0]["worker_id"] == "worker-b:2"
+
+
+@pytest.mark.asyncio
+async def test_lease_lost_during_iteration_exits_cleanly(db):
+    """Inside the main loop, if another worker steals the lease, the iteration
+    should observe `_lease_still_held() == False` and exit.
+
+    We don't run `_run_quorum_loop` directly (it's an infinite loop) — instead
+    we assert the primitive `_lease_still_held` returns False when the row's
+    worker_id no longer matches us, which is what the loop checks each
+    iteration.
+    """
+    from autonomy_loop import _lease_still_held, _worker_id
+
+    quorum_id = "q-stolen-lease"
+
+    # Seed a row that USED to be ours, then got stolen.
+    db.seed(
+        "autonomy_loop_state",
+        [
+            {
+                "quorum_id": quorum_id,
+                "status": "running",
+                "worker_id": "thief-host:42",
+                "autonomy_level": 0.5,
+                "heartbeat_at": datetime.now(timezone.utc).isoformat(),
+            }
+        ],
+    )
+
+    assert _lease_still_held(db, quorum_id) is False

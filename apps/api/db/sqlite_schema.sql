@@ -305,3 +305,25 @@ CREATE INDEX IF NOT EXISTS idx_conversations_quorum_role
 -- non-NULL participant_id buckets are de-duplicated correctly.
 CREATE UNIQUE INDEX IF NOT EXISTS conversations_unique_triple
     ON conversations(quorum_id, role_id, participant_id);
+
+-- =============================================================================
+-- QUORUM_STATE (orchestrator blackboard — checklist item 11.6)
+-- =============================================================================
+-- One row per quorum.  Mirrors supabase/migrations/20260513000003_quorum_state.sql.
+-- All jsonb columns stored as JSON-as-TEXT in SQLite; the SQLite client knows
+-- to (de)serialise them via the _JSON_COLUMNS registry.
+--
+-- CAS-on-version pattern: agents read the row, mutate jsonb in Python, then
+-- UPDATE ... WHERE quorum_id = ? AND version = ?  with version bumped by 1.
+-- A zero-rowcount UPDATE means someone else wrote first → caller retries with
+-- a fresh read.
+CREATE TABLE IF NOT EXISTS quorum_state (
+    quorum_id       TEXT PRIMARY KEY REFERENCES quorums(id) ON DELETE CASCADE,
+    open_questions  TEXT NOT NULL DEFAULT '[]',
+    proposals       TEXT NOT NULL DEFAULT '[]',
+    decisions       TEXT NOT NULL DEFAULT '[]',
+    conflicts       TEXT NOT NULL DEFAULT '[]',
+    dissents        TEXT NOT NULL DEFAULT '[]',
+    version         INTEGER NOT NULL DEFAULT 1,
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);

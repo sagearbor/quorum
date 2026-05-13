@@ -345,6 +345,11 @@ class TestProcessA2ARequest:
             chain = MagicMock()
             is_single = [False]
             chain.single.side_effect = lambda: setattr(chain, "_single", True) or chain
+            # routes.py / agent_engine.py both call .maybe_single() — must
+            # toggle the same _single flag so .execute() returns a single row.
+            chain.maybe_single.side_effect = (
+                lambda: setattr(chain, "_single", True) or chain
+            )
 
             for method in (
                 "select", "eq", "neq", "lt", "gt", "gte", "lte",

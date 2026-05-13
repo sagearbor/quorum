@@ -193,13 +193,19 @@ CREATE TABLE IF NOT EXISTS agent_requests (
     version        INTEGER NOT NULL DEFAULT 1,
     priority       INTEGER NOT NULL DEFAULT 0,
     created_at     TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    resolved_at    TEXT
+    resolved_at    TEXT,
+    -- claimed_at: set by the autonomy loop when a row transitions to
+    -- 'processing'. Used by the stale-claim reaper (see autonomy_loop.py).
+    claimed_at     TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_agent_requests_quorum    ON agent_requests(quorum_id);
 CREATE INDEX IF NOT EXISTS idx_agent_requests_to_role   ON agent_requests(to_role_id, status);
 CREATE INDEX IF NOT EXISTS idx_agent_requests_from_role ON agent_requests(from_role_id);
 CREATE INDEX IF NOT EXISTS idx_agent_requests_document  ON agent_requests(document_id);
+-- Reaper lookup: in-flight requests sorted by claim age
+CREATE INDEX IF NOT EXISTS idx_agent_requests_claimed_at ON agent_requests(claimed_at)
+    WHERE status = 'processing';
 
 CREATE TABLE IF NOT EXISTS oscillation_events (
     id              TEXT PRIMARY KEY,

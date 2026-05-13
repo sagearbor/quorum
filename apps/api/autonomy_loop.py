@@ -32,6 +32,34 @@ def _now_iso() -> str:
     """ISO-8601 UTC timestamp matching the DB default format."""
     return datetime.now(timezone.utc).isoformat()
 
+
+def _extract_a2a_reply(a2a_response: dict) -> str | None:
+    """Pull the reply text out of an A2A SendMessageResponse dict.
+
+    The /message:send handler wraps the agent's reply in a Task whose
+    ``history`` contains a single ROLE_AGENT message with a text part, plus
+    an artifact with the same text. We look in both places (history first)
+    so we tolerate minor server-side schema variations.
+
+    Returns None when no text can be extracted — caller should fall back
+    to the direct ``process_agent_turn`` path.
+    """
+    if not isinstance(a2a_response, dict):
+        return None
+    task = a2a_response.get("task") or {}
+    history = task.get("history") or []
+    for msg in history:
+        for part in (msg or {}).get("parts", []) or []:
+            text = part.get("text") if isinstance(part, dict) else None
+            if text:
+                return text
+    for art in task.get("artifacts") or []:
+        for part in (art or {}).get("parts", []) or []:
+            text = part.get("text") if isinstance(part, dict) else None
+            if text:
+                return text
+    return None
+
 # Loop is managed by these module-level vars
 _active_loops: dict[str, asyncio.Task] = {}  # quorum_id -> task
 
@@ -262,9 +290,70 @@ async def _run_autonomy_round(
     if not active_roles:
         return
 
-    # Pick a random role to take a proactive turn
-    role = random.choice(active_roles)
+    # --- Speaker election: Magentic-One style orchestrator ---
+    # Replaces the legacy ``random.choice(active_roles)`` with a typed-output
+    # facilitator that picks the next role based on relevance + anti-monopoly
+    # and produces a one-sentence narration the avatar speaks while the
+    # role-agent does its work. See ``agents/orchestrator.py`` and
+    # docs/audit/2026-05-12-overnight-plan.html item 11.3.
+    from agents.orchestrator import (
+        antimonopoly_random_pick,
+        next_turn as orchestrator_next_turn,
+    )
+
+    plan = await orchestrator_next_turn(quorum_id, db, llm_provider)
+
+    # Find the most recent assistant speaker for the random fallback.
+    last_speaker_id: str | None = None
+    try:
+        recent = (
+            db.table("station_messages")
+            .select("role_id, role, created_at")
+            .eq("quorum_id", quorum_id)
+            .eq("role", "assistant")
+            .order("created_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        rows = recent.data or []
+        if rows:
+            last_speaker_id = rows[0].get("role_id")
+    except Exception:
+        logger.debug("autonomy: last-speaker lookup failed", exc_info=True)
+
+    if plan is None:
+        # Orchestrator unavailable (LLM error, parse fail, validation reject).
+        # Fall back to anti-monopoly random pick so the demo keeps moving.
+        role = antimonopoly_random_pick(active_roles, last_speaker_id)
+        narration = None
+        orchestrator_reason: str | None = None
+    else:
+        role = next(
+            (r for r in active_roles if r["id"] == plan.next_speaker_role_id),
+            active_roles[0],
+        )
+        narration = plan.narration
+        orchestrator_reason = plan.reason
+
     station_id = f"auto-{role['id'][:8]}"
+
+    # Broadcast the facilitator narration FIRST — the avatar speaks the
+    # one-sentence rationale while the role-agent thinks. This is the
+    # synthesisText AvatarPanel was missing (the TODO at lines 62-64).
+    if narration:
+        try:
+            await manager.broadcast(
+                quorum_id,
+                {
+                    "type": "facilitator_narration",
+                    "narration": narration,
+                    "next_role_id": role["id"],
+                    "next_role_name": role.get("name"),
+                    "reason": orchestrator_reason,
+                },
+            )
+        except Exception:
+            logger.debug("autonomy: facilitator_narration broadcast failed", exc_info=True)
 
     # Generate a proactive prompt based on the round and context
     quorum_data = (
@@ -321,15 +410,61 @@ async def _run_autonomy_round(
             "If you need input from another role, request it explicitly."
         )
 
+    # --- Dispatch the role-agent turn ---
+    # Preferred path: A2A SDK so it goes through /message:send and we get end-
+    # to-end confirmation that the LF A2A 1.0 wire format actually works on
+    # our own infrastructure. Fallback to direct process_agent_turn when A2A
+    # returns None (no endpoint registered, transport error, HTTP 5xx after
+    # retries) — that keeps the demo responsive without a running uvicorn /
+    # agent_endpoints table.
+    reply: str | None = None
+    msg_id: str | None = None
+    tags: list[str] = []
+    dispatch_path = "direct"
     try:
-        reply, msg_id, tags = await process_agent_turn(
-            quorum_id=quorum_id,
-            role_id=role["id"],
-            station_id=station_id,
-            user_message=proactive_prompt,
-            supabase_client=db,
-            llm_provider=llm_provider,
+        from quorum_a2a.a2a_client import A2AClient
+
+        a2a_client = A2AClient()
+        a2a_result = await a2a_client.send_message(
+            role["id"],
+            {
+                # Caller-shape: we send the proactive prompt as the text body.
+                # The /message:send handler unpacks it into agent_engine and
+                # we capture the reply from the SendMessageResponse artifact.
+                "message": proactive_prompt,
+                "type": "orchestrator_turn",
+                "quorum_id": quorum_id,
+                "reason": orchestrator_reason or "random fallback",
+            },
         )
+        if a2a_result is not None:
+            # Pull the reply text out of the SendMessageResponse. The server
+            # wraps the agent reply in a Task.history Message + an Artifact.
+            reply = _extract_a2a_reply(a2a_result)
+            dispatch_path = "a2a"
+    except Exception:
+        logger.debug("autonomy: A2A dispatch raised", exc_info=True)
+
+    if reply is None:
+        # Direct fallback — preserves all existing behaviour (persistence,
+        # tag extraction, paused-sentinel handling) at the cost of bypassing
+        # the A2A wire format.
+        try:
+            reply, msg_id, tags = await process_agent_turn(
+                quorum_id=quorum_id,
+                role_id=role["id"],
+                station_id=station_id,
+                user_message=proactive_prompt,
+                supabase_client=db,
+                llm_provider=llm_provider,
+            )
+        except Exception:
+            logger.warning(
+                "Proactive turn failed for role %s", role["id"], exc_info=True
+            )
+            return
+
+    try:
         if is_paused_reply(reply, tags):
             # Facilitator paused — skip broadcasting activity for this round.
             # The agent will retry on the next autonomy tick.
@@ -339,10 +474,11 @@ async def _run_autonomy_round(
             )
         else:
             logger.info(
-                "Proactive turn: role=%s round=%d tags=%s",
+                "Proactive turn: role=%s round=%d tags=%s dispatch=%s",
                 role["name"],
                 round_num,
                 tags[:3],
+                dispatch_path,
             )
 
             # Broadcast activity
@@ -354,11 +490,12 @@ async def _run_autonomy_round(
                     "role_name": role["name"],
                     "round": round_num,
                     "tags": tags[:5],
+                    "dispatch": dispatch_path,
                 },
             )
     except Exception:
         logger.warning(
-            "Proactive turn failed for role %s", role["id"], exc_info=True
+            "Proactive-turn broadcast failed for role %s", role["id"], exc_info=True
         )
 
     # --- Phase 3: Auto-contribute at high autonomy ---

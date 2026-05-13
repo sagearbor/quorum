@@ -170,6 +170,11 @@ WS /quorums/{quorum_id}/live:
         next_role_id: uuid
         next_role_name: string
         reason: string             # orchestrator reason code
+    - type: "arbitration"          # checklist 11.7 — emitted at end of each autonomy round
+      data:                        #   when the authority-arbitrator wrote >=1 decision/dissent
+        decisions: integer         #   count of new decisions written this round
+        dissents: integer          #   count of new dissent records written this round
+        ties_unresolved: integer   #   count of conflicts left open due to tied authority_rank
 
 # --- Sessions / participants (migration: 20260512000003_participants.sql) ---
 

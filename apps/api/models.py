@@ -103,7 +103,6 @@ class CreateEventRequest(BaseModel):
     name: str
     slug: str
     access_code: str | None = None
-    require_access_code: bool = False
     max_active_quorums: int = 5
 
 

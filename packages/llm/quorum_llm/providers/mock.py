@@ -174,14 +174,56 @@ class MockLLMProvider(LLMProvider):
         tier: LLMTier,
         temperature: float = 0.4,
         max_tokens: int = 1024,
+        *,
+        message_history=None,
     ) -> str:
         """Chat completion — records the call and delegates to complete().
 
         The mock flattens the messages array so the existing call_log format
         (prompt_hash, tier) stays consistent across complete() and chat().
+
+        ``message_history`` is recorded on the call_log entry so tests can
+        assert it threaded through.  We do NOT incorporate the history into
+        the response itself — the mock stays deterministic and ignores prior
+        state, which is the correct behaviour for unit tests that only care
+        about the wiring.
         """
         flat = "\n".join(f"[{m['role']}]: {m['content']}" for m in messages)
-        return await self.complete(flat, tier)
+        text = await self.complete(flat, tier)
+        # Annotate the last call_log entry with history info for test asserts.
+        if self.call_log:
+            self.call_log[-1]["message_history_len"] = (
+                len(message_history) if message_history else 0
+            )
+        return text
+
+    async def chat_with_history(
+        self,
+        messages: list[dict[str, str]],
+        tier: LLMTier,
+        temperature: float = 0.4,
+        max_tokens: int = 1024,
+        *,
+        message_history=None,
+    ):
+        """Deterministic chat returning a ChatResult with empty new_messages.
+
+        The mock provider doesn't simulate Pydantic AI message production;
+        callers that wire ``conversation_store.save_history`` on top of the
+        mock will simply persist an empty delta.  That is enough to exercise
+        the conversation-store code paths in unit tests without coupling them
+        to Pydantic AI's internal message-record format.
+        """
+        from quorum_llm.providers._pai_common import ChatResult
+
+        text = await self.chat(
+            messages,
+            tier,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            message_history=message_history,
+        )
+        return ChatResult(text=text, new_messages=[])
 
     async def respond(
         self,

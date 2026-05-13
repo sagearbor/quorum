@@ -97,28 +97,48 @@ def _is_gpt5_model(model: str) -> bool:
     return model.startswith("gpt-5")
 
 
-async def _call_llm(llm_provider, messages: list[dict], agent_def=None) -> str:
+async def _call_llm(
+    llm_provider,
+    messages: list[dict],
+    agent_def=None,
+    *,
+    message_history: list | None = None,
+) -> tuple[str, list]:
     """Call LLM using the appropriate API based on the agent's model.
 
     Routing logic:
     1. If the agent definition specifies a gpt-5-* model AND the provider
        exposes ``respond()``, use the Responses API (stateless call — no
        previous_response_id since we don't persist it yet at this level).
-    2. If the provider exposes ``chat()``, use it for full message history.
-    3. Otherwise flatten to a single string and call ``complete()``.
+    2. If the provider exposes ``chat_with_history()`` (Pydantic AI–backed
+       providers shipped after 9.2), use it so we can capture the
+       new-message delta for persistence in the ``conversations`` table.
+    3. Else if the provider exposes ``chat()``, use it for full message-list
+       context (legacy path, no delta capture).
+    4. Otherwise flatten to a single string and call ``complete()``.
 
     The agent_def parameter is optional; when absent the logic falls through
     to chat() or complete() as before (safe for callers that don't have the
     definition readily available).
+
+    Returns:
+        (reply_text, new_messages) where ``new_messages`` is the Pydantic AI
+        message delta from this run (empty list when the provider doesn't
+        expose ``chat_with_history`` or for the Responses-API / complete()
+        fallback paths).  Callers persist the delta via
+        ``conversation_store.save_history``.
     """
     from quorum_llm.models import LLMTier
 
-    # Route gpt-5 agents through the Responses API when available
+    # Route gpt-5 agents through the Responses API when available.  The
+    # Responses API doesn't expose Pydantic AI's new_messages() in a useful
+    # way (the call is single-shot per the legacy contract), so we return
+    # an empty delta — the conversations table simply doesn't grow for gpt-5
+    # turns.  That's a known limitation we may revisit if Pydantic AI later
+    # surfaces a message-history-compatible API on top of Responses.
     if agent_def is not None and _is_gpt5_model(getattr(agent_def, "model", "")):
         if hasattr(llm_provider, "respond"):
             try:
-                # Extract the system message as instructions and the last
-                # user message as input_text for the Responses API format.
                 instructions = next(
                     (m["content"] for m in messages if m["role"] == "system"),
                     "",
@@ -131,7 +151,7 @@ async def _call_llm(llm_provider, messages: list[dict], agent_def=None) -> str:
                     input_text=input_text,
                     tier=LLMTier.AGENT_RESPOND,
                 )
-                return reply
+                return reply, []
             except Exception:
                 logger.warning(
                     "agent_engine: respond() failed for gpt-5 agent '%s', "
@@ -140,10 +160,41 @@ async def _call_llm(llm_provider, messages: list[dict], agent_def=None) -> str:
                     exc_info=True,
                 )
 
-    # Standard path: use chat() for full message-list context
+    # Preferred path: chat_with_history() returns (text, new_messages) so we
+    # can persist the delta.  Providers that don't expose it fall through to
+    # plain chat() below.
+    if hasattr(llm_provider, "chat_with_history"):
+        try:
+            result = await llm_provider.chat_with_history(
+                messages,
+                LLMTier.AGENT_CHAT,
+                message_history=message_history,
+            )
+            # ChatResult has a ``new_messages`` attribute (list) — see
+            # ``packages/llm/quorum_llm/providers/_pai_common.ChatResult``.
+            return result.text, list(getattr(result, "new_messages", []) or [])
+        except Exception:
+            logger.warning(
+                "agent_engine: chat_with_history() failed, falling back to chat()",
+                exc_info=True,
+            )
+
+    # Standard path: use chat() for full message-list context — pass
+    # message_history through as a kwarg.  Providers that don't accept it
+    # raise TypeError, which we catch and retry without the kwarg so legacy
+    # mocks (e.g. unittest.mock.AsyncMock) keep working.
     if hasattr(llm_provider, "chat"):
         try:
-            return await llm_provider.chat(messages, LLMTier.AGENT_CHAT)
+            try:
+                reply = await llm_provider.chat(
+                    messages,
+                    LLMTier.AGENT_CHAT,
+                    message_history=message_history,
+                )
+            except TypeError:
+                # Legacy chat() without message_history kwarg — call without it.
+                reply = await llm_provider.chat(messages, LLMTier.AGENT_CHAT)
+            return reply, []
         except Exception:
             logger.warning(
                 "agent_engine: chat() failed, falling back to complete()",
@@ -152,7 +203,8 @@ async def _call_llm(llm_provider, messages: list[dict], agent_def=None) -> str:
 
     # Final fallback: flatten to a single prompt and use complete()
     flat = _flatten_messages(messages)
-    return await llm_provider.complete(flat, LLMTier.AGENT_CHAT)
+    text = await llm_provider.complete(flat, LLMTier.AGENT_CHAT)
+    return text, []
 
 
 # ---------------------------------------------------------------------------
@@ -166,6 +218,8 @@ async def process_agent_turn(
     user_message: str,
     supabase_client,
     llm_provider,
+    *,
+    participant_id: str | None = None,
 ) -> tuple[str, str, list[str]]:
     """Run one agent turn for a station.
 
@@ -230,6 +284,24 @@ async def process_agent_turn(
         user_message=user_message,
     )
 
+    # --- 7.5. Load persisted Pydantic AI message history (item 9.2) ---
+    # Best-effort: a failure here drops us back to a stateless turn but the
+    # turn still completes.  We isolate this with its own try/except so the
+    # bigger LLM call below stays focused on the success path.
+    persisted_history: list = []
+    try:
+        from conversation_store import load_history
+
+        persisted_history = load_history(
+            db, quorum_id, role_id, participant_id=participant_id
+        )
+    except Exception:
+        logger.warning(
+            "agent_engine: load_history failed; proceeding with empty history",
+            exc_info=True,
+        )
+        persisted_history = []
+
     # --- 8. Call LLM (routing: gpt-5 → Responses API, others → chat()) ---
     # On LLM failure we return a structured paused sentinel instead of a
     # chat-string error fallback. Returning a string like "I encountered an
@@ -239,7 +311,12 @@ async def process_agent_turn(
     # as if the agent simply didn't reply this turn (no row in station_messages
     # for the assistant side).
     try:
-        reply = await _call_llm(llm_provider, messages, agent_def=agent_def)
+        reply, new_pai_messages = await _call_llm(
+            llm_provider,
+            messages,
+            agent_def=agent_def,
+            message_history=persisted_history,
+        )
     except Exception as exc:
         logger.warning(
             "facilitator_paused",
@@ -313,6 +390,28 @@ async def process_agent_turn(
         }).execute()
     except Exception:
         logger.warning("agent_engine: failed to persist agent reply", exc_info=True)
+
+    # --- 11.5. Persist Pydantic AI message-history delta (item 9.2) ---
+    # Best-effort: a failure here means the NEXT turn will start with a
+    # slightly stale persisted history (missing this turn's delta), which is
+    # strictly better than failing the turn the user is currently waiting on.
+    if new_pai_messages:
+        try:
+            from conversation_store import save_history
+
+            save_history(
+                db,
+                quorum_id,
+                role_id,
+                new_messages=new_pai_messages,
+                participant_id=participant_id,
+            )
+        except Exception:
+            logger.warning(
+                "agent_engine: save_history failed; turn succeeded but history "
+                "delta was not persisted",
+                exc_info=True,
+            )
 
     # --- 12. Publish insight if reply is substantive (>50 chars) ---
     if len(reply.strip()) > 50:
@@ -412,9 +511,34 @@ async def process_a2a_request(
         {"role": "user", "content": a2a_user_content},
     ]
 
+    # --- 3.5. Load persisted Pydantic AI history for this role (item 9.2) ---
+    # A2A turns have no human participant — use participant_id=None so all
+    # autonomous turns for this (quorum, role) pair share a single bucket.
+    a2a_quorum_id_for_history: str = req.get("quorum_id", "")
+    persisted_history: list = []
+    if a2a_quorum_id_for_history:
+        try:
+            from conversation_store import load_history
+
+            persisted_history = load_history(
+                db, a2a_quorum_id_for_history, to_role_id, participant_id=None
+            )
+        except Exception:
+            logger.warning(
+                "process_a2a_request: load_history failed; proceeding stateless",
+                exc_info=True,
+            )
+            persisted_history = []
+
     # --- 4. Call LLM (routing: gpt-5 → Responses API, others → chat()) ---
+    new_pai_messages: list = []
     try:
-        response_text = await _call_llm(llm_provider, messages, agent_def=agent_def)
+        response_text, new_pai_messages = await _call_llm(
+            llm_provider,
+            messages,
+            agent_def=agent_def,
+            message_history=persisted_history,
+        )
     except Exception:
         logger.error(
             "process_a2a_request: LLM failed for request %s", request_id, exc_info=True
@@ -454,6 +578,27 @@ async def process_a2a_request(
         update_chain.execute()
     except Exception:
         logger.warning("process_a2a_request: failed to update request status", exc_info=True)
+
+    # --- 6. Persist Pydantic AI message-history delta for this autonomous
+    # turn (item 9.2).  Same best-effort pattern as process_agent_turn —
+    # failure here doesn't unwind the request resolution.
+    if new_pai_messages and a2a_quorum_id_for_history:
+        try:
+            from conversation_store import save_history
+
+            save_history(
+                db,
+                a2a_quorum_id_for_history,
+                to_role_id,
+                new_messages=new_pai_messages,
+                participant_id=None,
+            )
+        except Exception:
+            logger.warning(
+                "process_a2a_request: save_history failed; request succeeded but "
+                "history delta was not persisted",
+                exc_info=True,
+            )
 
     return response_text
 

@@ -158,6 +158,13 @@ WS /quorums/{quorum_id}/live:
         next_role_id: uuid
         next_role_name: string
         reason: string             # orchestrator reason code
+    - type: "facilitator_observation"   # 9.4 — meta-narration (every Nth round)
+      data:
+        summary: string            # one sentence, audience-facing
+        severity: string           # "info" | "notable" | "action_needed"
+        referenced_role_ids: [uuid]
+        suggested_tool_calls: [string]   # transparency only — NOT auto-executed
+        round: integer?            # orchestrator round number that produced this
 
 # --- Sessions / participants (migration: 20260512000003_participants.sql) ---
 

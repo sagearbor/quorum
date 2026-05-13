@@ -215,9 +215,21 @@ def _install_quorum_llm_mock() -> None:
 
 
 def _install_supabase_mock() -> None:
-    """Install a minimal supabase stub into sys.modules."""
+    """Install a minimal supabase stub into sys.modules.
+
+    Skip the stub when real Supabase credentials are configured AND the real
+    package is importable — this allows the live RLS tests in
+    ``test_rls_lockdown.py`` to exercise a real project.
+    """
     if "supabase" in sys.modules:
         return
+
+    if os.environ.get("SUPABASE_URL") and os.environ.get("SUPABASE_ANON_KEY"):
+        try:
+            import supabase  # noqa: F401
+            return
+        except ImportError:
+            pass
 
     pkg = types.ModuleType("supabase")
 

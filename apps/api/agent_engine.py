@@ -19,7 +19,6 @@ Design notes:
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -28,6 +27,15 @@ from quorum_llm.affinity import (
     compute_tag_affinity,
     extract_tags_from_text,
     find_relevant_agents,
+)
+from quorum_llm.conversation import (
+    AgentDocumentContext,
+    AgentInsightContext,
+    AgentRequestContext,
+    QuorumContext,
+    RoleContext,
+    build_agent_prompt,
+    build_system_message,
 )
 from tag_vocabulary import get_vocabulary, update_vocabulary
 
@@ -97,6 +105,95 @@ def _is_gpt5_model(model: str) -> bool:
     return model.startswith("gpt-5")
 
 
+def _is_reasoning_model(model: str) -> bool:
+    """Return True if the model name indicates a reasoning model.
+
+    Reasoning models (GPT-5 family, o1/o3/o4 series, Claude reasoning variants)
+    reject the ``temperature`` parameter at the API level.  When the architect
+    pins an ``agent_configs.temperature`` to such a model we DROP the override
+    with a warning rather than letting the SDK 400.  Pydantic AI also strips
+    unsupported params via the model profile, but we add the upstream warning
+    so the architect gets feedback that the slider had no effect.
+    """
+    if not model:
+        return False
+    name = model.lower()
+    if "gpt-5" in name:
+        return True
+    if any(name.startswith(p) for p in ("o1", "o3", "o4")):
+        return True
+    # Some Claude reasoning variants surface as ``claude-*-reasoning``.
+    if "reasoning" in name:
+        return True
+    return False
+
+
+def _resolve_call_settings(
+    agent_def,
+) -> tuple[float | None, int | None]:
+    """Pull ``temperature`` / ``max_tokens`` overrides from an agent_def.
+
+    Returns ``(temperature, max_tokens)``, either of which may be ``None``
+    meaning "use the tier default".  Validation rules:
+
+    - ``temperature`` is clamped to the [0.0, 1.0] range per the
+      ``agent_configs.temperature`` CHECK constraint in Supabase / SQLite.
+      Out-of-range values are clamped + logged at WARNING so the architect
+      can see the slider was capped.
+    - ``temperature`` is dropped (returned as ``None``) when the agent's
+      model is a reasoning model — those endpoints reject the parameter and
+      Pydantic AI will silently drop it anyway, but we surface a WARNING so
+      the architect knows their setting had no effect.
+    - ``max_tokens`` is preserved as-is; null in the DB → None here → tier
+      default downstream.
+    """
+    if agent_def is None:
+        return None, None
+
+    raw_temp = getattr(agent_def, "temperature", None)
+    raw_max = getattr(agent_def, "max_tokens", None)
+
+    temperature: float | None = None
+    if raw_temp is not None:
+        try:
+            t = float(raw_temp)
+        except (TypeError, ValueError):
+            t = None
+        if t is not None:
+            if t < 0.0 or t > 1.0:
+                clamped = max(0.0, min(1.0, t))
+                logger.warning(
+                    "agent_engine: clamped out-of-range temperature %.3f → %.3f "
+                    "for agent '%s' (CHECK temperature BETWEEN 0 AND 1)",
+                    t,
+                    clamped,
+                    getattr(agent_def, "name", "unknown"),
+                )
+                t = clamped
+            temperature = t
+
+    if temperature is not None and _is_reasoning_model(getattr(agent_def, "model", "")):
+        logger.warning(
+            "agent_engine: dropping temperature=%.3f override for agent '%s' — "
+            "reasoning model %r does not accept temperature",
+            temperature,
+            getattr(agent_def, "name", "unknown"),
+            getattr(agent_def, "model", ""),
+        )
+        temperature = None
+
+    max_tokens: int | None = None
+    if raw_max is not None:
+        try:
+            m = int(raw_max)
+            if m > 0:
+                max_tokens = m
+        except (TypeError, ValueError):
+            max_tokens = None
+
+    return temperature, max_tokens
+
+
 async def _call_llm(
     llm_provider,
     messages: list[dict],
@@ -130,6 +227,22 @@ async def _call_llm(
     """
     from quorum_llm.models import LLMTier
 
+    # Resolve per-agent overrides from agent_configs (item 11.9).  These are
+    # the architect-authored temperature/max_tokens sliders.  ``None`` means
+    # "use the tier default" — the provider's ``tier_settings()`` helper
+    # falls through to ``_TIER_DEFAULTS`` in that case, so unconfigured
+    # agents see no behavioural change.
+    temperature, max_tokens = _resolve_call_settings(agent_def)
+
+    # Build the per-call override kwargs.  Only include keys that are not
+    # None so legacy provider mocks that don't accept these params keep
+    # working — see ``_safe_call_with_overrides`` below.
+    call_overrides: dict = {}
+    if temperature is not None:
+        call_overrides["temperature"] = temperature
+    if max_tokens is not None:
+        call_overrides["max_tokens"] = max_tokens
+
     # Route gpt-5 agents through the Responses API when available.  The
     # Responses API doesn't expose Pydantic AI's new_messages() in a useful
     # way (the call is single-shot per the legacy contract), so we return
@@ -146,6 +259,10 @@ async def _call_llm(
                 user_messages = [m for m in messages if m["role"] == "user"]
                 input_text = user_messages[-1]["content"] if user_messages else ""
 
+                # GPT-5 / reasoning models reject temperature.  ``respond()``
+                # already drops it via the model profile, but we don't even
+                # try to pass it through — ``_resolve_call_settings`` set
+                # temperature to None for these models anyway.
                 reply, _ = await llm_provider.respond(
                     instructions=instructions,
                     input_text=input_text,
@@ -165,9 +282,11 @@ async def _call_llm(
     # plain chat() below.
     if hasattr(llm_provider, "chat_with_history"):
         try:
-            result = await llm_provider.chat_with_history(
+            result = await _safe_call_with_overrides(
+                llm_provider.chat_with_history,
                 messages,
                 LLMTier.AGENT_CHAT,
+                call_overrides=call_overrides,
                 message_history=message_history,
             )
             # ChatResult has a ``new_messages`` attribute (list) — see
@@ -180,20 +299,19 @@ async def _call_llm(
             )
 
     # Standard path: use chat() for full message-list context — pass
-    # message_history through as a kwarg.  Providers that don't accept it
-    # raise TypeError, which we catch and retry without the kwarg so legacy
-    # mocks (e.g. unittest.mock.AsyncMock) keep working.
+    # message_history + overrides as kwargs.  Providers that don't accept
+    # them raise TypeError, which ``_safe_call_with_overrides`` catches and
+    # retries without the extras so legacy mocks (e.g. unittest.mock.AsyncMock)
+    # keep working.
     if hasattr(llm_provider, "chat"):
         try:
-            try:
-                reply = await llm_provider.chat(
-                    messages,
-                    LLMTier.AGENT_CHAT,
-                    message_history=message_history,
-                )
-            except TypeError:
-                # Legacy chat() without message_history kwarg — call without it.
-                reply = await llm_provider.chat(messages, LLMTier.AGENT_CHAT)
+            reply = await _safe_call_with_overrides(
+                llm_provider.chat,
+                messages,
+                LLMTier.AGENT_CHAT,
+                call_overrides=call_overrides,
+                message_history=message_history,
+            )
             return reply, []
         except Exception:
             logger.warning(
@@ -201,10 +319,61 @@ async def _call_llm(
                 exc_info=True,
             )
 
-    # Final fallback: flatten to a single prompt and use complete()
+    # Final fallback: flatten to a single prompt and use complete().
+    # complete() has no temperature/max_tokens slot in the ABC, so per-agent
+    # overrides are silently lost on this leg — the providers all override
+    # ``chat()`` so we only land here for the deepest legacy fallback.
     flat = _flatten_messages(messages)
     text = await llm_provider.complete(flat, LLMTier.AGENT_CHAT)
     return text, []
+
+
+async def _safe_call_with_overrides(
+    method,
+    messages,
+    tier,
+    *,
+    call_overrides: dict,
+    message_history,
+):
+    """Invoke ``method(messages, tier, **kwargs)`` with graceful degradation.
+
+    Tries the call with the full set of kwargs first
+    (``message_history`` + per-agent overrides like ``temperature`` and
+    ``max_tokens``).  If the underlying callable doesn't accept one of those
+    kwargs (``TypeError``), we progressively strip them and retry.  Order of
+    removal: overrides first (because they're the newest item-11.9 plumbing
+    most likely to be absent on legacy mocks), then ``message_history``.
+
+    This keeps the call site clean while preserving backward compatibility
+    with every shape of provider/mock we've shipped — including
+    ``unittest.mock.AsyncMock`` wrappers in tests written before per-agent
+    settings existed.
+    """
+    # Attempt 1: pass everything.
+    try:
+        return await method(
+            messages,
+            tier,
+            message_history=message_history,
+            **call_overrides,
+        )
+    except TypeError:
+        pass
+
+    # Attempt 2: drop the overrides, keep message_history.
+    if call_overrides:
+        try:
+            return await method(
+                messages,
+                tier,
+                message_history=message_history,
+            )
+        except TypeError:
+            pass
+
+    # Attempt 3: drop message_history too — legacy two-arg shape.
+    return await method(messages, tier)
 
 
 # ---------------------------------------------------------------------------
@@ -282,6 +451,8 @@ async def process_agent_turn(
         documents=documents,
         pending_requests=pending_requests,
         user_message=user_message,
+        role_id=role_id,
+        quorum_id=quorum_id,
     )
 
     # --- 7.5. Load persisted Pydantic AI message history (item 9.2) ---
@@ -779,36 +950,166 @@ def _load_pending_requests(db, quorum_id: str, role_id: str) -> list[dict]:
         return []
 
 
+# ---------------------------------------------------------------------------
+# Adapter helpers (DB rows -> conversation.py dataclasses)
+# ---------------------------------------------------------------------------
+#
+# Item 11.8 consolidation: the actual prompt-shape decisions (system message
+# wording, context-block ordering, token budget, tag delimiter, etc.) live in
+# ``packages/llm/quorum_llm/conversation.py``.  ``agent_engine`` is now a thin
+# adapter that maps Supabase row shapes into the canonical dataclasses and
+# calls ``build_agent_prompt``.
+#
+# Drift between the legacy ``agent_engine._build_prompt`` and the canonical
+# builder, aligned in this consolidation (LLM-visible behavior changes —
+# additive, no regressions expected):
+#
+#   1. System prompt now includes the ``create_doc`` JSON-block directive and
+#      the structured ``[request: Role, "Q"]`` syntax (previously only the
+#      ```edit block and free-form request prose were taught).
+#   2. System prompt now phrases authority as "N out of M" using the quorum's
+#      ``max_authority_rank`` (was "N." with no scale).  Defaults to 5 when
+#      the quorum row doesn't carry the field.
+#   3. Pending-request rendering now includes sender name, priority, and tags
+#      (was: ``({type}) {content[:200]}`` — terse).
+#   4. Insight rendering now includes the source role name and timestamp
+#      (was: ``[{type}] {content[:200]}``).
+#   5. Documents are now rendered with json-indented content up to 800 chars
+#      (was: flat json.dumps, 500 chars).  Last-editor name is shown when known.
+#   6. Context block ordering is now requests → documents → insights →
+#      contributions (was: documents → insights → requests).
+#   7. A token budget of 8000 tokens is now enforced across the context block;
+#      individual sections truncate gracefully when over budget.
+#
+# Drift preserved as an opt-in flag to avoid changing the LLM-visible message
+# *structure* (the alternation pattern, not the wording):
+#
+#   * ``include_context_ack=True`` retains the synthetic
+#     ``"Understood. I've reviewed the current documents and insights."``
+#     assistant message that the legacy builder inserted between the context
+#     USER message and history.  Some downstream chat-completion providers
+#     are sensitive to two USER messages in a row, so we keep the historical
+#     interleave.  See the canonical builder docstring for the flag.
+
+
+def _quorum_context_from_row(quorum_id: str, row: dict | None) -> QuorumContext:
+    """Map a ``quorums`` row to a ``QuorumContext`` dataclass."""
+    row = row or {}
+    return QuorumContext(
+        quorum_id=quorum_id,
+        title=row.get("title") or "this quorum",
+        description=row.get("description") or "",
+        # max_authority_rank is not on the legacy quorum row schema — fall back
+        # to the conversation.py default (5).  Routes that need a non-default
+        # value can update ``quorums.max_authority_rank`` in a follow-up.
+        max_authority_rank=row.get("max_authority_rank") or 5,
+    )
+
+
+def _role_context(
+    role_id: str,
+    role_name: str,
+    authority_rank: int,
+    agent_def,
+) -> RoleContext:
+    """Build the canonical ``RoleContext`` from agent_engine inputs."""
+    domain_tags: list[str] = (
+        list(agent_def.domain_tags) if agent_def and agent_def.domain_tags else []
+    )
+    return RoleContext(
+        role_id=role_id,
+        role_name=role_name,
+        authority_rank=authority_rank,
+        domain_tags=domain_tags,
+    )
+
+
+def _insight_contexts_from_rows(rows: list[dict]) -> list[AgentInsightContext]:
+    """Map ``agent_insights`` rows to the canonical context dataclass.
+
+    The legacy renderer did not surface ``source_role_name`` (only the row's
+    ``source_role_id`` was carried).  We pass the raw id here so the canonical
+    renderer at least labels the source — resolving id → name would require
+    an extra DB hit per insight which is overkill for prompt assembly.
+    """
+    out: list[AgentInsightContext] = []
+    for row in rows or []:
+        out.append(
+            AgentInsightContext(
+                insight_id=str(row.get("id", "")),
+                source_role_name=str(row.get("source_role_id", "another role")),
+                insight_type=row.get("insight_type") or "summary",
+                content=str(row.get("content", "")),
+                tags=list(row.get("tags") or []),
+                created_at=str(row.get("created_at") or ""),
+            )
+        )
+    return out
+
+
+def _document_contexts_from_rows(rows: list[dict]) -> list[AgentDocumentContext]:
+    """Map ``agent_documents`` rows to the canonical context dataclass."""
+    out: list[AgentDocumentContext] = []
+    for row in rows or []:
+        out.append(
+            AgentDocumentContext(
+                document_id=str(row.get("id", "")),
+                title=str(row.get("title", "")),
+                doc_type=str(row.get("doc_type", "")),
+                version=int(row.get("version") or 1),
+                content=row.get("content") or {},
+                tags=list(row.get("tags") or []),
+                last_editor_name="",  # not tracked on the legacy schema
+            )
+        )
+    return out
+
+
+def _request_contexts_from_rows(rows: list[dict]) -> list[AgentRequestContext]:
+    """Map ``agent_requests`` rows to the canonical context dataclass."""
+    out: list[AgentRequestContext] = []
+    for row in rows or []:
+        out.append(
+            AgentRequestContext(
+                request_id=str(row.get("id", "")),
+                from_role_name=str(row.get("from_role_id", "another agent")),
+                request_type=row.get("request_type") or "input_request",
+                content=str(row.get("content", "")),
+                tags=list(row.get("tags") or []),
+                priority=int(row.get("priority") or 0),
+            )
+        )
+    return out
+
+
 def _build_system_prompt(
     role_name: str,
     authority_rank: int,
     agent_def,
     quorum_context: dict | None,
 ) -> str:
-    """Build the stable system prompt (benefits from Azure prefix caching)."""
-    quorum_title = (quorum_context or {}).get("title", "this quorum")
-    quorum_desc = (quorum_context or {}).get("description", "")
+    """Thin adapter: build the canonical system prompt from DB-row inputs.
 
-    if agent_def:
+    Kept as a module-level function so the A2A path
+    (``process_a2a_request``) can still get a system-only prompt without
+    paying the full ``build_agent_prompt`` cost.
+    """
+    role_ctx = _role_context(
+        role_id="",  # not used in system message rendering
+        role_name=role_name,
+        authority_rank=authority_rank,
+        agent_def=agent_def,
+    )
+    quorum_ctx = _quorum_context_from_row(quorum_id="", row=quorum_context)
+    if agent_def and getattr(agent_def, "instructions", None):
         instructions = agent_def.instructions
-        domain_tags_str = ", ".join(agent_def.domain_tags) if agent_def.domain_tags else "general"
     else:
         instructions = f"You are the AI facilitator for the {role_name} role."
-        domain_tags_str = "general"
 
-    return (
-        f"You are the AI facilitator for the \"{role_name}\" role "
-        f"in quorum \"{quorum_title}\".\n"
-        f"Quorum: {quorum_desc}\n"
-        f"Your authority rank: {authority_rank}. Higher rank overrides lower on conflicts.\n"
-        f"Your domain tags: {domain_tags_str}\n\n"
-        f"{instructions}\n\n"
-        "Rules:\n"
-        "- Be concise. Max 200 words per response.\n"
-        "- Tag your key points using [tags: tag1, tag2] notation.\n"
-        "- If you detect a conflict with another agent, flag it explicitly.\n"
-        "- If you want to edit a document, output a JSON block fenced with ```edit.\n"
-        "- If you need input from another role, request it explicitly."
+    return build_system_message(
+        agent_instructions=instructions,
+        role=role_ctx,
+        quorum=quorum_ctx,
     )
 
 
@@ -822,70 +1123,43 @@ def _build_prompt(
     documents: list[dict],
     pending_requests: list[dict],
     user_message: str,
+    *,
+    role_id: str = "",
+    quorum_id: str = "",
 ) -> list[dict]:
-    """Assemble the full message list for the LLM call."""
-    messages: list[dict] = []
+    """Assemble the full message list for the LLM call.
 
-    # System block (stable — benefits from Azure prefix caching)
-    system_content = _build_system_prompt(
-        role_name=role_name,
-        authority_rank=authority_rank,
-        agent_def=agent_def,
-        quorum_context=quorum_context,
+    Thin adapter around ``quorum_llm.conversation.build_agent_prompt``.  This
+    function lives in agent_engine so the call sites continue to pass raw
+    Supabase rows; the canonical builder takes typed dataclasses.
+
+    Note: ``role_id`` and ``quorum_id`` are passed through purely so the
+    canonical dataclasses are populated for completeness — neither affects
+    LLM-visible content.  They default to empty strings to keep the legacy
+    signature back-compatible.
+    """
+    role_ctx = _role_context(role_id, role_name, authority_rank, agent_def)
+    quorum_ctx = _quorum_context_from_row(quorum_id, quorum_context)
+    if agent_def and getattr(agent_def, "instructions", None):
+        instructions = agent_def.instructions
+    else:
+        instructions = f"You are the AI facilitator for the {role_name} role."
+
+    return build_agent_prompt(
+        agent_instructions=instructions,
+        role=role_ctx,
+        quorum=quorum_ctx,
+        contributions=[],  # station-level human contributions flow via history
+        insights=_insight_contexts_from_rows(insights),
+        documents=_document_contexts_from_rows(documents),
+        history=history,
+        pending_requests=_request_contexts_from_rows(pending_requests),
+        latest_message=user_message,
+        # Preserve the legacy synthetic-ack pattern so chat-completion
+        # providers that expect user/assistant alternation across the context
+        # block see no behavior change (see 11.8 consolidation comment above).
+        include_context_ack=True,
     )
-    messages.append({"role": "system", "content": system_content})
-
-    # Context block: documents + insights + pending requests
-    # Injected as a single "user" message before history so it stays in the
-    # cached prefix region on models that support prefix caching.
-    context_parts: list[str] = []
-
-    if documents:
-        context_parts.append("== ACTIVE DOCUMENTS ==")
-        for doc in documents:
-            doc_summary = json.dumps(doc.get("content", {}))
-            if len(doc_summary) > 500:
-                doc_summary = doc_summary[:500] + "..."
-            context_parts.append(
-                f"Document: {doc['title']} (v{doc['version']}, type={doc['doc_type']})\n"
-                f"{doc_summary}"
-            )
-
-    if insights:
-        context_parts.append("\n== RECENT CROSS-STATION INSIGHTS ==")
-        for ins in insights:
-            tags_str = ", ".join(ins.get("tags") or [])
-            context_parts.append(
-                f"- [{ins.get('insight_type', 'summary')}] "
-                f"{ins['content'][:200]}"
-                + (f" [tags: {tags_str}]" if tags_str else "")
-            )
-
-    if pending_requests:
-        context_parts.append("\n== PENDING REQUESTS FOR YOU ==")
-        for req in pending_requests:
-            context_parts.append(
-                f"- ({req['request_type']}) {req['content'][:200]}"
-            )
-
-    if context_parts:
-        messages.append({
-            "role": "user",
-            "content": "\n".join(context_parts),
-        })
-        # Acknowledge context receipt so conversation flow makes sense
-        messages.append({
-            "role": "assistant",
-            "content": "Understood. I've reviewed the current documents and insights.",
-        })
-
-    # Conversation history (last N turns)
-    messages.extend(history)
-
-    # Latest user message
-    messages.append({"role": "user", "content": user_message})
-
-    return messages
 
 
 def _publish_insight(

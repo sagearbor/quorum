@@ -18,6 +18,7 @@ from quorum_llm.conversation import (
     QuorumContext,
     RoleContext,
     build_agent_prompt,
+    build_system_message,
     extract_tags_from_response,
     summarize_history,
 )
@@ -332,6 +333,82 @@ def test_build_agent_prompt_contributions_included(role, quorum):
 
     content = " ".join(m["content"] for m in messages)
     assert "adverse event" in content
+
+
+def test_build_agent_prompt_include_context_ack_emits_assistant_ack(
+    role, quorum, documents
+):
+    """When include_context_ack=True the context user message is followed by
+    a synthetic assistant ack so the stream stays user/assistant-alternating.
+
+    This is the legacy ``agent_engine._build_prompt`` shape, preserved as an
+    opt-in flag during the 11.8 consolidation so existing turns don't change
+    structure on the wire.
+    """
+    messages = build_agent_prompt(
+        agent_instructions="",
+        role=role,
+        quorum=quorum,
+        contributions=[],
+        insights=[],
+        documents=documents,
+        history=[],
+        latest_message="Continue.",
+        include_context_ack=True,
+    )
+
+    # Find the context user message (the one with "ACTIVE DOCUMENTS")
+    ctx_idx = next(
+        i for i, m in enumerate(messages)
+        if m["role"] == "user" and "ACTIVE DOCUMENTS" in m["content"]
+    )
+    # The very next message should be the synthetic assistant ack.
+    assert messages[ctx_idx + 1]["role"] == "assistant"
+    assert "Understood" in messages[ctx_idx + 1]["content"]
+
+
+def test_build_agent_prompt_include_context_ack_skipped_without_context(
+    role, quorum
+):
+    """If no context block is emitted, the ack must not be inserted either —
+    we don't want a dangling assistant turn with no preceding user context.
+    """
+    messages = build_agent_prompt(
+        agent_instructions="",
+        role=role,
+        quorum=quorum,
+        contributions=[],
+        insights=[],
+        documents=[],
+        history=[],
+        latest_message="Hi.",
+        include_context_ack=True,
+    )
+
+    assert not any(m["role"] == "assistant" for m in messages)
+
+
+def test_build_system_message_matches_full_prompt(role, quorum):
+    """The public ``build_system_message`` wrapper must produce the exact
+    same system content that ``build_agent_prompt`` emits at position [0].
+    """
+    full = build_agent_prompt(
+        agent_instructions="Be thorough.",
+        role=role,
+        quorum=quorum,
+        contributions=[],
+        insights=[],
+        documents=[],
+        history=[],
+        latest_message="",
+    )
+    standalone = build_system_message(
+        agent_instructions="Be thorough.",
+        role=role,
+        quorum=quorum,
+    )
+    assert full[0]["role"] == "system"
+    assert full[0]["content"] == standalone
 
 
 # ---------------------------------------------------------------------------

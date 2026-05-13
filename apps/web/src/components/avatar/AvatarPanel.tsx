@@ -204,7 +204,11 @@ export function AvatarPanel({
         </div>
       )}
 
-      {/* 3D avatar — IdleScene handles WebGL */}
+      {/* 3D avatar — IdleScene handles WebGL.
+          cameraMode flips to "torso" while speaking so the facilitator
+          stops reading as a standing mannequin and starts reading as
+          a talking head; idle reverts to the full-body framing so the
+          subtle pacing animation has room to breathe. */}
       <div
         className="flex-1 flex items-center justify-center min-h-0 w-full"
         data-testid="avatar-container"
@@ -214,6 +218,7 @@ export function AvatarPanel({
           glbUrl={glbUrl}
           width="100%"
           height="100%"
+          cameraMode={avatarState.speaking ? "torso" : "full_body"}
         />
       </div>
 

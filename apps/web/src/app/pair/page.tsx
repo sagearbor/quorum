@@ -6,11 +6,18 @@
  * The station QR codes point here (?qr=<quorum_id>&st=<station_label>).
  * On mount we POST /sessions/participant to mint a phone participant_id,
  * stash it in sessionStorage as `quorum.participant`, then redirect to the
- * station URL (10.5 will introduce /agent/<role_id>; until then we fall back
- * to the existing station page with `?participant=<id>`).
+ * mobile agent route at `/agent/<role_id>?ds=<participant_id>`.
  *
- * No JWT, no token exchange — just a UUID.  See checklist 10.4 + the audit
- * plan at docs/audit/2026-05-12-overnight-plan.html.
+ * Role selection: the QR code does NOT carry a role_id, and the
+ * `/sessions/participant` endpoint does not yet echo one back.  As a stop-gap
+ * we look up the quorum's roles and pick by station index (1-based) — e.g.
+ * `?st=station-1` → roles[0], `?st=station-2` → roles[1].  Falls back to
+ * `roles[0]` when the index can't be parsed.  See the follow-up note in the
+ * 10.5 report: a future API change should return the role_id with the
+ * participant.
+ *
+ * No JWT, no token exchange — just a UUID.  See checklist 10.4 + 10.5 in
+ * docs/audit/2026-05-12-overnight-plan.html.
  */
 
 import { useEffect, useState } from "react";
@@ -29,34 +36,40 @@ interface CreateParticipantResponse {
   display_name: string;
 }
 
-interface QuorumLookup {
+interface MinimalRole {
   id: string;
-  event_slug: string;
+  authority_rank?: number;
 }
 
 /**
- * Look up the event slug for a given quorum_id so we can build the station
- * fallback URL.  We hit GET /events and walk the results until we find the
- * matching quorum.  This is good enough for the small expo demo — a future
- * dedicated endpoint can replace it.
+ * Pick the role_id this station should bind to.  Stations are 1-indexed in
+ * `station_label` ("station-1", "station-2", …); roles are returned in
+ * authority_rank-descending order by `getRoles`.  When the index is missing
+ * or out of range we pick the highest-rank role so the visitor always lands
+ * on *something*.
  */
-async function resolveQuorumSlug(quorumId: string): Promise<string | null> {
-  try {
-    const eventsRes = await fetch(`${API_BASE}/events`);
-    if (!eventsRes.ok) return null;
-    const events: Array<{ slug: string }> = await eventsRes.json();
-    for (const event of events) {
-      const ids = await fetch(
-        `${API_BASE}/events/${event.slug}/quorum-ids`,
-      ).then((r) => (r.ok ? r.json() : []));
-      if (Array.isArray(ids) && ids.includes(quorumId)) {
-        return event.slug;
-      }
-    }
-  } catch {
-    /* fall through to null */
+function pickRoleId(
+  roles: MinimalRole[],
+  stationLabel: string | null,
+): string | null {
+  if (roles.length === 0) return null;
+  const match = stationLabel?.match(/(\d+)/);
+  const idx = match ? parseInt(match[1], 10) - 1 : 0;
+  if (Number.isNaN(idx) || idx < 0 || idx >= roles.length) {
+    return roles[0].id;
   }
-  return null;
+  return roles[idx].id;
+}
+
+async function fetchQuorumRoles(quorumId: string): Promise<MinimalRole[]> {
+  try {
+    const res = await fetch(`${API_BASE}/quorums/${quorumId}/roles`);
+    if (!res.ok) return [];
+    const data = (await res.json()) as MinimalRole[];
+    return Array.isArray(data) ? data : [];
+  } catch {
+    return [];
+  }
 }
 
 export default function PairPage() {
@@ -107,11 +120,28 @@ export default function PairPage() {
         const data = (await res.json()) as CreateParticipantResponse;
         if (cancelled) return;
 
+        // Resolve role_id by listing the quorum's roles and picking by
+        // station index.  Done AFTER the mint so we can still surface a
+        // pairing-failed UI if the quorum has no roles configured.
+        const roles = await fetchQuorumRoles(quorumId);
+        const roleId = pickRoleId(roles, stationLabel);
+        if (!roleId) {
+          if (!cancelled) {
+            setStatus({
+              kind: "error",
+              message:
+                "No roles are set up on this quorum yet. Ask the host.",
+            });
+          }
+          return;
+        }
+
         const participant = {
           participant_id: data.participant_id,
           display_name: data.display_name,
           quorum_id: quorumId,
           station_label: stationLabel,
+          role_id: roleId,
           device_kind: "phone" as const,
         };
         try {
@@ -125,18 +155,11 @@ export default function PairPage() {
 
         setStatus({ kind: "ok", displayName: data.display_name });
 
-        // 10.5 will introduce /agent/<role_id>; until then fall back to the
-        // station page with ?participant=<id>.
-        const slug = await resolveQuorumSlug(quorumId);
-        const stationParam = stationLabel
-          ? `&station=${encodeURIComponent(
-              stationLabel.replace(/^station-/, ""),
-            )}`
-          : "";
-        const target = slug
-          ? `/event/${slug}/quorum/${quorumId}?participant=${data.participant_id}${stationParam}`
-          : `/event?participant=${data.participant_id}`;
-        router.replace(target);
+        router.replace(
+          `/agent/${encodeURIComponent(roleId)}?ds=${encodeURIComponent(
+            data.participant_id,
+          )}`,
+        );
       } catch {
         if (!cancelled) {
           setStatus({
@@ -177,7 +200,7 @@ export default function PairPage() {
               Welcome, {status.displayName}
             </h1>
             <p className="text-sm text-slate-500 dark:text-slate-400">
-              Redirecting to the station...
+              Redirecting to the agent...
             </p>
           </>
         )}

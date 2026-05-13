@@ -36,6 +36,9 @@ MessageRole: [user, assistant, system]
 InsightType: [summary, conflict, suggestion, question, decision, escalation]
 A2AStatus: [pending, acknowledged, processing, resolved, expired]
 A2ARequestType: [conflict_flag, input_request, review_request, doc_edit_notify, escalation, negotiation]
+SynthesisTier: [keyword, conflict, synthesis]
+DeviceKind: [laptop, phone]
+AutonomyAutoContributeMode: [off, concat, synthesize]
 ```
 
 ## API Routes
@@ -149,6 +152,71 @@ WS /quorums/{quorum_id}/live:
     - { type: "health_update", data: { score: float, metrics: HealthMetrics } }
     - { type: "artifact_update", data: Artifact }
     - { type: "role_join", data: { role_id: uuid, count: integer } }
+    - type: "facilitator_narration"
+      data:
+        narration: string          # one-sentence speaker-election rationale
+        next_role_id: uuid
+        next_role_name: string
+        reason: string             # orchestrator reason code
+
+# --- Sessions / participants (migration: 20260512000003_participants.sql) ---
+
+POST /sessions/participant:
+  description: Mint an anonymous participant_id from a QR scan or first station-page load. No JWT.
+  body:
+    quorum_id: uuid
+    role_id: uuid?
+    station_label: string?
+    device_kind: DeviceKind
+  returns:
+    participant_id: uuid
+    display_name: string           # auto-assigned "Visitor N" per (quorum_id, station_label)
+  status: 201
+  errors:
+    422: "device_kind must be 'laptop' or 'phone'"
+    404: "Quorum or role not found"
+
+POST /sessions/heartbeat:
+  description: 30s presence keepalive — refreshes participants.last_heartbeat_at.
+  body: { participant_id: uuid }
+  returns: null
+  status: 204
+  errors: { 404: "Participant not found" }
+
+# --- A2A protocol (Linux Foundation a2a-sdk 1.0.x) ---
+
+GET /a2a/:
+  description: Discovery banner — declares the host speaks LF A2A 1.0.
+  returns:
+    protocol: "a2a"
+    protocol_version: "1.0"
+    implementation: "a2a-sdk"
+    name: string
+    description: string
+
+GET /a2a/agents/{role_id}/.well-known/agent-card.json:
+  description: LF A2A 1.0 canonical AgentCard for a role. Public, no auth.
+  returns: AgentCard               # SDK-shaped JSON (camelCase, see a2a-sdk types)
+  errors: { 404: "Role not found" }
+  aliases:
+    - GET /a2a/agents/{role_id}/.well-known/agent.json   # 0.3→1.0 migration alias
+    - GET /a2a/agents/{role_id}/agent.json               # pre-1.0 alias
+
+POST /a2a/agents/{role_id}/message:send:
+  description: LF A2A 1.0 canonical send-message — dispatches a turn to the role's agent.
+  body:                            # SendMessageRequest (a2a-sdk protobuf, camelCase JSON)
+    message:
+      messageId: string
+      role: "ROLE_USER" | "ROLE_AGENT"
+      contextId: string?           # treated as station_id by our agent_engine
+      taskId: string?
+      parts: [{ text: string }]    # v1.0 uses `parts`; v0.3 `content` is auto-rewritten
+  returns: SendMessageResponse     # Task with status=TASK_STATE_COMPLETED + reply artifact
+  errors:
+    400: "Invalid A2A SendMessageRequest body | SendMessageRequest missing message | Role has no quorum_id"
+    404: "Role not found"
+  aliases:
+    - POST /a2a/agents/{role_id}/tasks/send   # pre-1.0 name; accepts bare-message body too
 ```
 
 ## Supabase Tables
@@ -305,6 +373,62 @@ oscillation_events:
   escalated: boolean DEFAULT false
   created_at: timestamptz
 
+# --- Synthesis snapshots (migration: 20260512000001_synthesis_snapshots.sql) ---
+
+synthesis_snapshots:
+  id: uuid PK
+  quorum_id: uuid FK quorums.id ON DELETE CASCADE
+  tier: SynthesisTier             # 'keyword' | 'conflict' | 'synthesis'
+  content: jsonb                  # raw structured tier output
+  contribution_ids: uuid[] DEFAULT '{}'
+  token_cost: integer (nullable)  # prompt+completion tokens; null for tier 1
+  model: text (nullable)          # e.g. 'gpt-4o-mini', 'gpt-4o' — null for tier 1
+  version: integer DEFAULT 1      # monotonic per (quorum_id, tier); bumped on re-synthesis
+  created_at: timestamptz
+  rls:
+    select: open
+    insert/update/delete: service_role only
+
+# --- Participants (migration: 20260512000003_participants.sql) ---
+
+participants:
+  id: uuid PK
+  quorum_id: uuid FK quorums.id ON DELETE CASCADE
+  role_id: uuid FK roles.id ON DELETE SET NULL (nullable)
+  station_label: text (nullable)
+  display_name: text             # auto: "Visitor N" per (quorum_id, station_label)
+  device_kind: DeviceKind        # 'laptop' | 'phone'
+  last_heartbeat_at: timestamptz DEFAULT now()
+  created_at: timestamptz DEFAULT now()
+  rls:
+    select: open
+    insert/update/delete: service_role only
+
+# Column additions from 20260512000003_participants.sql:
+station_messages:
+  participant_id: uuid FK participants.id ON DELETE SET NULL (nullable)   # attributes message to originating participant
+contributions:
+  participant_id: uuid FK participants.id ON DELETE SET NULL (nullable)   # attributes contribution to originating participant
+
+# --- A2A endpoint registry (migration: 20260512000004_agent_endpoints.sql) ---
+
+agent_endpoints:
+  role_id: uuid PK FK roles.id ON DELETE CASCADE
+  url: text                      # base URL the A2A client POSTs to (no trailing slash)
+  capabilities: jsonb DEFAULT '{}'  # mirrored from AgentCard (skills, domain_tags, ...)
+  registered_at: timestamptz DEFAULT now()
+  last_seen_at: timestamptz DEFAULT now()
+  realtime: true                 # ADDED to supabase_realtime publication
+  rls:
+    select: public
+    insert/update/delete: service_role only
+
+# Column additions from 20260512000005_a2a_request_claimed_at.sql:
+agent_requests:
+  claimed_at: timestamptz (nullable)   # set when autonomy loop CAS-claims a 'pending' row → 'processing'
+  # A2AStatus enum: 'processing' value (re-asserted; defensively added by this migration if missing)
+  # Index: idx_agent_requests_processing_claimed_at — partial, WHERE status = 'processing'
+
 # --- Conversations (migration: 20260513000001_conversations.sql) ---
 
 conversations:
@@ -350,14 +474,51 @@ interface LLMProvider {
 
 ```
 AZURE_OPENAI_ENDPOINT=
-AZURE_OPENAI_KEY=
-AZURE_OPENAI_DEPLOYMENT_T2=    # cheap model (gpt-4o-mini) — conflict detection
-AZURE_OPENAI_DEPLOYMENT_T3=    # expensive model (gpt-4o) — artifact synthesis
-AZURE_OPENAI_DEPLOYMENT_T5=    # embedding model (text-embedding-ada-002 or text-embedding-3-small)
-                                # Used for semantic similarity in tag affinity engine.
-                                # Falls back to tag-only Jaccard similarity if unset.
+AZURE_OPENAI_KEY=                       # optional — omit to use Managed Identity (DefaultAzureCredential)
+AZURE_OPENAI_DEPLOYMENT_T2=             # cheap model (gpt-4o-mini) — conflict detection / agent chat
+AZURE_OPENAI_DEPLOYMENT_T3=             # expensive model (gpt-4o) — artifact synthesis / deep reasoning
+AZURE_OPENAI_DEPLOYMENT_T5=             # gpt-5-nano deployment via Responses API (optional — falls back to T2)
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=      # embedding deployment (text-embedding-3-small → 1536 dims,
+                                        # text-embedding-3-large → 3072 dims).
+                                        # REQUIRED for embed() on Azure; chat deployments do NOT serve embeddings.
+                                        # Unset → AzureOpenAIProvider.embed() raises ValueError.
+AZURE_OPENAI_API_VERSION=               # default: 2025-03-01-preview (required for Responses API on gpt-5)
+AZURE_OPENAI_REASONING_DEPLOYMENTS=     # optional comma list of deployment names that should use Responses API
+
+OPENAI_API_KEY=                         # required for plain OpenAIProvider
+OPENAI_MODEL_T2=                        # default: gpt-4o-mini
+OPENAI_MODEL_T3=                        # default: gpt-4o
+OPENAI_EMBEDDING_MODEL=                 # default: text-embedding-3-small (1536 dims)
+
+ANTHROPIC_API_KEY=                      # AnthropicProvider — embed() raises NotImplementedError
+ANTHROPIC_MODEL_T2=                     # default: claude-haiku-4-5-20251001
+ANTHROPIC_MODEL_T3=                     # default: claude-sonnet-4-6
+
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_KEY=           # required for seed-agent-documents.py (bypasses RLS)
+SUPABASE_SERVICE_KEY=                   # required for seed-agent-documents.py (bypasses RLS)
 NEXTAUTH_SECRET=
+
+# --- LLM provider envs (Pydantic AI provider implementations) ---
+AZURE_OPENAI_API_VERSION=       # default '2025-03-01-preview'
+AZURE_OPENAI_REASONING_DEPLOYMENTS=   # comma-separated deployment names that are reasoning models
+ANTHROPIC_API_KEY=
+ANTHROPIC_MODEL_T2=             # e.g. 'claude-3-5-haiku-20241022'
+ANTHROPIC_MODEL_T3=             # e.g. 'claude-3-5-sonnet-20241022'
+OPENAI_API_KEY=
+OPENAI_MODEL_T2=                # e.g. 'gpt-4o-mini'
+OPENAI_MODEL_T3=                # e.g. 'gpt-4o'
+OLLAMA_BASE_URL=                # local Ollama endpoint, e.g. 'http://localhost:11434'
+OLLAMA_MODEL=                   # local model tag
+
+# --- A2A protocol ---
+QUORUM_A2A_BASE_URL=            # overrides the host advertised in AgentCard urls
+                                # falls back to the incoming request origin if unset
+
+# --- Autonomy loop ---
+AUTONOMY_AUTO_CONTRIBUTE_MODE=  # 'off' (default) | 'concat' | 'synthesize'
+                                # Controls whether the autonomy loop fabricates contributions
+                                # when humans are silent. KEEP DEFAULT 'off' for expo —
+                                # 'concat' produces fragment-salad artifacts;
+                                # 'synthesize' adds one LLM call per turn.
 ```

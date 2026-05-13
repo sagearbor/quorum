@@ -60,7 +60,15 @@ def _make_fake_supabase(overrides: dict[str, Any] | None = None) -> MagicMock:
             is_single[0] = True
             return chain
 
+        def _maybe_single():
+            # Real supabase-py returns None when no row matches and the
+            # row dict when one does — same single-row contract as
+            # .single() from the caller's perspective.
+            is_single[0] = True
+            return chain
+
         chain.single = _single
+        chain.maybe_single = _maybe_single
 
         # All other builder methods return self
         for method in (
@@ -73,7 +81,7 @@ def _make_fake_supabase(overrides: dict[str, Any] | None = None) -> MagicMock:
         def _execute():
             result = MagicMock()
             if is_single[0]:
-                # .single() → return first row or None (not a list)
+                # .single() / .maybe_single() → return first row or None
                 result.data = rows[0] if rows else None
             else:
                 result.data = rows[:] if rows else []

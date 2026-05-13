@@ -32,6 +32,8 @@ CREATE INDEX IF NOT EXISTS idx_agent_endpoints_last_seen
 
 ALTER TABLE agent_endpoints ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS "agent_endpoints_select_public" ON agent_endpoints;
+
 CREATE POLICY "agent_endpoints_select_public"
     ON agent_endpoints FOR SELECT
     USING (true);
@@ -40,5 +42,12 @@ CREATE POLICY "agent_endpoints_select_public"
 -- policies are needed.  Anon/authenticated callers will be denied writes.
 
 -- Realtime publication (optional — useful for live dashboards that show
--- which agents are online).
-ALTER PUBLICATION supabase_realtime ADD TABLE agent_endpoints;
+-- which agents are online).  Wrapped in DO/EXCEPTION so re-runs and local
+-- environments without the supabase_realtime publication don't error.
+DO $$
+BEGIN
+    ALTER PUBLICATION supabase_realtime ADD TABLE agent_endpoints;
+EXCEPTION
+    WHEN duplicate_object THEN NULL;     -- table already in publication
+    WHEN undefined_object THEN NULL;     -- publication doesn't exist (local dev)
+END $$;

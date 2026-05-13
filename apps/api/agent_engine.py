@@ -451,7 +451,9 @@ async def process_a2a_request(
     5. Update request status to acknowledged.
     6. Return response text.
 
-    Never raises — returns a fallback string on error.
+    Never raises. On LLM failure returns the ``PAUSED_SENTINEL`` string —
+    callers MUST check for this and avoid persisting a canned reply
+    (mirrors the ``process_agent_turn`` 10.6 fix on the A2A path).
     """
     db = supabase_client
 
@@ -540,10 +542,17 @@ async def process_a2a_request(
             message_history=persisted_history,
         )
     except Exception:
-        logger.error(
-            "process_a2a_request: LLM failed for request %s", request_id, exc_info=True
+        # Mirror the human-facing ``process_agent_turn`` paused-sentinel
+        # pattern (bug 10.6 fix) on the A2A path: do NOT persist a canned
+        # acknowledgement that future agents will read back as "insight".
+        # Return the sentinel and let the caller (autonomy loop) flip the
+        # request back to ``pending`` for a retry.
+        logger.warning(
+            "process_a2a_request: LLM failed for request %s; returning paused sentinel",
+            request_id,
+            exc_info=True,
         )
-        response_text = "I acknowledge your request and will respond shortly."
+        return PAUSED_SENTINEL
 
     # --- 5. Update request status to acknowledged ---
     # Load vocabulary for the quorum if available (best-effort; req row has quorum_id)

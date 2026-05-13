@@ -4,6 +4,8 @@ import { useState, useEffect } from "react";
 import { useArchitectStore } from "@/store/architect";
 import { slugify } from "@/lib/slugify";
 import { QRCodeSVG } from "qrcode.react";
+import { ArchitectMicButton } from "./ArchitectMicButton";
+import type { RealtimeToolCall } from "@/hooks/useArchitectRealtime";
 
 interface ExistingEvent {
   id: string;
@@ -86,11 +88,51 @@ export function CreateEventForm() {
   const isValid =
     eventDraft.name.trim() !== "" &&
     eventDraft.slug.trim() !== "" &&
-    
+
     eventDraft.max_active_quorums > 0;
+
+  // Voice-driven form fill. gpt-realtime calls these tools mid-conversation
+  // via WebRTC and we route the parsed arguments back into Zustand here.
+  // `problem_description` belongs to step 2 but we stash it on the architect
+  // store so the next step can pick it up without the user re-typing.
+  function handleVoiceFormUpdate(call: RealtimeToolCall) {
+    const args = call.arguments as {
+      event_title?: string;
+      event_slug?: string;
+      problem_description?: string;
+    };
+    if (call.name === "set_event_metadata") {
+      const patch: Partial<typeof eventDraft> = {};
+      if (typeof args.event_title === "string" && args.event_title.trim()) {
+        patch.name = args.event_title.trim();
+        if (!args.event_slug) {
+          patch.slug = slugify(args.event_title);
+        }
+      }
+      if (typeof args.event_slug === "string" && args.event_slug.trim()) {
+        patch.slug = slugify(args.event_slug);
+      }
+      if (Object.keys(patch).length > 0) setEventDraft(patch);
+      if (
+        typeof args.problem_description === "string" &&
+        args.problem_description.trim()
+      ) {
+        useArchitectStore
+          .getState()
+          .setProblemDescription(args.problem_description.trim());
+      }
+    } else if (call.name === "submit_form") {
+      if (isValid && !submitting) {
+        const fakeEvt = { preventDefault: () => {} } as React.FormEvent;
+        void handleSubmit(fakeEvt);
+      }
+    }
+  }
 
   return (
     <div className="space-y-6">
+      <ArchitectMicButton onFormUpdate={handleVoiceFormUpdate} />
+
       {/* Existing events — pick one to add more quorums */}
       {existingEvents.length > 0 && (
         <div>

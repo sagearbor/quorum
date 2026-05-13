@@ -446,3 +446,38 @@ class A2ARequestResponse(BaseModel):
     resolved_at: str | None = None
     # Present when the target agent auto-responded during request creation
     target_response: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Realtime voice (architect mic) — POST /architect/realtime/session
+# and Whisper fallback POST /architect/transcribe
+# ---------------------------------------------------------------------------
+
+
+class RealtimeSessionRequest(BaseModel):
+    """Optional overrides for the realtime session. Frontend may POST {}."""
+
+    model: str | None = None  # default: env OPENAI_REALTIME_MODEL or "gpt-realtime"
+    voice: str | None = None  # default: env OPENAI_REALTIME_VOICE or "alloy"
+    instructions: str | None = None  # default: ARCHITECT_INSTRUCTIONS in voice_routes.py
+    tools: list[dict[str, Any]] | None = None  # default: ARCHITECT_TOOLS
+
+
+class RealtimeSessionResponse(BaseModel):
+    """Ephemeral session token returned to the browser.
+
+    The browser uses `client_secret` as the Bearer token when it POSTs its
+    WebRTC SDP offer to https://api.openai.com/v1/realtime/calls.
+    """
+
+    client_secret: str  # the `ek_…` ephemeral key
+    expires_at: int | None = None  # epoch seconds — may be omitted by some API versions
+    model: str
+    voice: str
+
+
+class TranscribeResponse(BaseModel):
+    """Whisper STT response — fallback path when Realtime API is unavailable."""
+
+    text: str
+    model: str

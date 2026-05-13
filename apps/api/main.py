@@ -20,6 +20,7 @@ from quorum_a2a.a2a_server import a2a_router
 from coordination.factory import get_backend_name
 from routes import router
 from seed_loader import load_seed_quorum
+from voice_routes import router as voice_router
 
 logger = logging.getLogger(__name__)
 
@@ -158,6 +159,7 @@ app.add_middleware(
 
 app.include_router(router)
 app.include_router(a2a_router)
+app.include_router(voice_router)
 
 # Serve local uploads when STORAGE_PROVIDER=local (default)
 if os.environ.get("STORAGE_PROVIDER", "local").lower() == "local":

@@ -48,11 +48,29 @@ CREATE TABLE IF NOT EXISTS roles (
 CREATE INDEX IF NOT EXISTS idx_roles_quorum_id     ON roles(quorum_id);
 CREATE INDEX IF NOT EXISTS idx_roles_quorum_status ON roles(quorum_id, status);
 
+-- Participants — one row per QR scan (laptop or phone).
+-- Allows contributions and station_messages to be attributed to the human
+-- who actually said them, instead of the hardcoded "anon-local" token.
+CREATE TABLE IF NOT EXISTS participants (
+    id                 TEXT PRIMARY KEY,
+    quorum_id          TEXT NOT NULL REFERENCES quorums(id) ON DELETE CASCADE,
+    role_id            TEXT REFERENCES roles(id) ON DELETE SET NULL,
+    station_label      TEXT,
+    display_name       TEXT NOT NULL,
+    device_kind        TEXT NOT NULL CHECK (device_kind IN ('laptop','phone')),
+    last_heartbeat_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    created_at         TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_participants_quorum    ON participants(quorum_id);
+CREATE INDEX IF NOT EXISTS idx_participants_heartbeat ON participants(last_heartbeat_at);
+
 CREATE TABLE IF NOT EXISTS contributions (
     id                TEXT PRIMARY KEY,
     quorum_id         TEXT NOT NULL REFERENCES quorums(id) ON DELETE CASCADE,
     role_id           TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
     user_token        TEXT NOT NULL,
+    participant_id    TEXT REFERENCES participants(id) ON DELETE SET NULL,
     content           TEXT NOT NULL,
     structured_fields TEXT,
     tier_processed    INTEGER,
@@ -109,15 +127,16 @@ CREATE INDEX IF NOT EXISTS idx_agent_configs_quorum ON agent_configs(quorum_id);
 CREATE INDEX IF NOT EXISTS idx_agent_configs_slug   ON agent_configs(agent_slug);
 
 CREATE TABLE IF NOT EXISTS station_messages (
-    id          TEXT PRIMARY KEY,
-    quorum_id   TEXT NOT NULL REFERENCES quorums(id) ON DELETE CASCADE,
-    role_id     TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
-    station_id  TEXT NOT NULL,
-    role        TEXT NOT NULL,
-    content     TEXT NOT NULL,
-    tags        TEXT NOT NULL DEFAULT '[]',
-    metadata    TEXT,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    id              TEXT PRIMARY KEY,
+    quorum_id       TEXT NOT NULL REFERENCES quorums(id) ON DELETE CASCADE,
+    role_id         TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    station_id      TEXT NOT NULL,
+    participant_id  TEXT REFERENCES participants(id) ON DELETE SET NULL,
+    role            TEXT NOT NULL,
+    content         TEXT NOT NULL,
+    tags            TEXT NOT NULL DEFAULT '[]',
+    metadata        TEXT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_station_messages_quorum_role ON station_messages(quorum_id, role_id);

@@ -1,8 +1,10 @@
 /**
- * Tests for the /pair landing page (10.4).
+ * Tests for the /pair landing page (10.4 → 10.5).
  *
  * The page mints a participant_id by POSTing /sessions/participant,
- * stashes it in sessionStorage, then redirects to the station fallback URL.
+ * resolves the role_id for the station via /quorums/<id>/roles, stashes
+ * the bundle in sessionStorage, then redirects to
+ * `/agent/<role_id>?ds=<participant_id>`.
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
@@ -13,7 +15,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 const replaceMock = vi.fn();
 const searchParams = new URLSearchParams({
   qr: "quorum-abc",
-  st: "station-1",
+  st: "station-2",
 });
 
 // Stable router/searchParams objects so useEffect deps don't change identity
@@ -36,7 +38,7 @@ describe("/pair", () => {
     window.sessionStorage.clear();
   });
 
-  it("mints a participant_id and stashes it in sessionStorage", async () => {
+  it("mints a participant_id, resolves a role_id, and redirects to /agent", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
       if (url.endsWith("/sessions/participant")) {
@@ -48,15 +50,13 @@ describe("/pair", () => {
           { status: 201, headers: { "Content-Type": "application/json" } },
         );
       }
-      if (url.endsWith("/events")) {
+      if (url.endsWith("/quorums/quorum-abc/roles")) {
         return new Response(
-          JSON.stringify([{ slug: "demo-event" }]),
-          { status: 200, headers: { "Content-Type": "application/json" } },
-        );
-      }
-      if (url.includes("/quorum-ids")) {
-        return new Response(
-          JSON.stringify(["quorum-abc"]),
+          JSON.stringify([
+            { id: "role-medical", authority_rank: 3 },
+            { id: "role-ethics", authority_rank: 2 },
+            { id: "role-patient", authority_rank: 1 },
+          ]),
           { status: 200, headers: { "Content-Type": "application/json" } },
         );
       }
@@ -68,23 +68,21 @@ describe("/pair", () => {
     render(<PairPage />);
 
     await waitFor(() => {
-      // sessionStorage entry written
       const raw = window.sessionStorage.getItem("quorum.participant");
       expect(raw).toBeTruthy();
       const parsed = JSON.parse(raw!);
       expect(parsed.participant_id).toBe("pid-123");
+      // station-2 → index 1 → role-ethics
+      expect(parsed.role_id).toBe("role-ethics");
     });
 
-    // Welcome line rendered before redirect
     expect(screen.getByText(/Welcome, Visitor 1/i)).toBeInTheDocument();
 
-    // Redirect fired with participant param appended
     await waitFor(() => {
       expect(replaceMock).toHaveBeenCalledTimes(1);
     });
     const target = replaceMock.mock.calls[0][0] as string;
-    expect(target).toContain("/event/demo-event/quorum/quorum-abc");
-    expect(target).toContain("participant=pid-123");
+    expect(target).toBe("/agent/role-ethics?ds=pid-123");
   });
 
   it("shows an error when the participant endpoint returns 404", async () => {

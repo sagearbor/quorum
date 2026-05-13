@@ -16,6 +16,7 @@ import { resolveArchetype } from "./archetypes/resolveArchetype";
 import { ARCHETYPES, resolveGlbUrl } from "./archetypes/archetypes";
 import { subscribeToFacilitator } from "@/lib/dataProvider";
 import { VisionTracker } from "./VisionTracker";
+import { ObservationStrip } from "./ObservationStrip";
 
 const CAMERA_STORAGE_KEY = "quorum.avatar.cameraDeviceId";
 
@@ -203,7 +204,11 @@ export function AvatarPanel({
         </div>
       )}
 
-      {/* 3D avatar — IdleScene handles WebGL */}
+      {/* 3D avatar — IdleScene handles WebGL.
+          cameraMode flips to "torso" while speaking so the facilitator
+          stops reading as a standing mannequin and starts reading as
+          a talking head; idle reverts to the full-body framing so the
+          subtle pacing animation has room to breathe. */}
       <div
         className="flex-1 flex items-center justify-center min-h-0 w-full"
         data-testid="avatar-container"
@@ -213,6 +218,7 @@ export function AvatarPanel({
           glbUrl={glbUrl}
           width="100%"
           height="100%"
+          cameraMode={avatarState.speaking ? "torso" : "full_body"}
         />
       </div>
 
@@ -259,6 +265,13 @@ export function AvatarPanel({
           ))}
         </div>
       )}
+
+      {/* 9.4 — Facilitator meta-observation strip. Hidden until the first
+          ``facilitator_observation`` frame arrives so it doesn't take up
+          vertical space on a fresh quorum. */}
+      <div className="w-full px-3 pb-3">
+        <ObservationStrip quorumId={quorumId} />
+      </div>
     </div>
   );
 }

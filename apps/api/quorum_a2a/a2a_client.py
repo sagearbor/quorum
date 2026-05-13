@@ -9,11 +9,20 @@ journal — preserving the existing degraded-mode behaviour from v0.
 Endpoint lookup goes through ``agent_endpoints`` (the SQL table created by
 migration 20260512000004) via ``quorum_a2a.a2a_server.lookup_endpoint``.
 
-Backwards compatibility: the module still exposes a process-local
-``_agent_registry`` dict and ``register_agent`` method so the existing
-test_a2a_wire.py tests keep working without DB plumbing.  Lookups prefer the
-process-local registry first (for unit-test injection), then fall through to
-``agent_endpoints``.
+State management (checklist item 11.5)
+--------------------------------------
+
+The DB-backed ``agent_endpoints`` table is the source of truth. To avoid a
+DB roundtrip on every A2A dispatch (autonomy_level=1.0 fires these every
+few seconds), we keep a tiny per-process TTL cache (``_ENDPOINT_TTL_S``,
+default 60s). The cache is keyed by role_id; entries expire on the next
+lookup after their TTL passes.
+
+The ``_agent_registry`` dict from PR #14 is kept ONLY for explicit unit-test
+injection via ``A2AClient.register_agent()`` — it lets test fixtures inject
+fake endpoints without standing up a DB. In production the cache is fed
+from the DB, never written to directly. This is similar to a write-through
+read cache.
 """
 
 from __future__ import annotations
@@ -21,6 +30,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 import uuid
 from typing import Any
 
@@ -35,12 +45,29 @@ from a2a.types.a2a_pb2 import (
     SendMessageResponse,
 )
 
+# 12.6: thread-pool wrapper. The DB lookup inside ``lookup_endpoint`` would
+# otherwise block the autonomy loop on every A2A dispatch.
+from db.aexec import aexec
+
 logger = logging.getLogger(__name__)
 
-# Process-local registry — kept for backwards compatibility with tests that
-# call register_agent() directly.  Prefer the DB-backed lookup_endpoint() in
-# production paths.
+# Process-local test-injection registry — kept ONLY for unit tests that call
+# ``A2AClient.register_agent()`` directly.  Production code paths read from
+# the DB (with the TTL cache below).  Anything in this dict shadows the DB
+# lookup at read time, which is the right precedence for test isolation.
 _agent_registry: dict[str, str] = {}
+
+# Per-process TTL cache for the DB-backed endpoint lookup. The DB is the
+# source of truth (agent_endpoints table); this cache is just to avoid one
+# round-trip on every dispatch.  Entries: role_id -> (url, expires_at_epoch).
+_endpoint_cache: dict[str, tuple[str, float]] = {}
+
+# Cache TTL in seconds. 60s strikes a balance:
+#   • Short enough that an architect re-registering an endpoint takes
+#     effect within a minute (no stale-routing pain in dev).
+#   • Long enough that an autonomy loop firing every 3s gets ~20 cached
+#     reads between DB hits.
+_ENDPOINT_TTL_S = float(os.environ.get("QUORUM_A2A_ENDPOINT_TTL_S", "60.0"))
 
 # Tunables (overridable via env for staging tweaks).
 _DEFAULT_TIMEOUT_S = float(os.environ.get("QUORUM_A2A_TIMEOUT_S", "5.0"))
@@ -49,6 +76,28 @@ _DEFAULT_MAX_RETRIES = int(os.environ.get("QUORUM_A2A_MAX_RETRIES", "3"))
 # With base=0.25 the worst-case wait between attempts is 0.25 + 0.5 + 1.0 = 1.75s
 # — well under a few seconds even on 3 retries.
 _BACKOFF_BASE_S = float(os.environ.get("QUORUM_A2A_BACKOFF_BASE_S", "0.25"))
+
+
+def _cache_clear() -> None:
+    """Drop all cached endpoint entries (test helper / admin op)."""
+    _endpoint_cache.clear()
+
+
+def _cache_get(role_id: str) -> str | None:
+    """Return a cached endpoint URL iff it exists AND hasn't expired."""
+    entry = _endpoint_cache.get(role_id)
+    if entry is None:
+        return None
+    url, expires_at = entry
+    if time.monotonic() >= expires_at:
+        _endpoint_cache.pop(role_id, None)
+        return None
+    return url
+
+
+def _cache_put(role_id: str, url: str) -> None:
+    """Cache a freshly-looked-up endpoint URL."""
+    _endpoint_cache[role_id] = (url, time.monotonic() + _ENDPOINT_TTL_S)
 
 
 def _build_send_message_payload(
@@ -111,33 +160,51 @@ class A2AClient:
 
     # ------------------------------------------------------------------ registry
     def register_agent(self, role_id: str, endpoint_url: str) -> None:
-        """Register an agent endpoint in the process-local cache.
+        """Register an agent endpoint in the process-local test-injection map.
 
-        For production use, prefer the DB-backed registry (``register_endpoint``
-        in ``quorum_a2a.a2a_server``).  This in-memory cache is kept so unit
-        tests can inject endpoints without a DB.
+        This is ONLY for unit tests that need to inject a fake endpoint
+        without standing up a DB. Production code should write to
+        ``agent_endpoints`` via ``quorum_a2a.a2a_server.register_endpoint``,
+        which is the source of truth across workers + restarts.
+
+        Writing here ALSO invalidates the TTL cache for the role so a
+        subsequent ``get_agent_url`` immediately reflects the injection.
         """
         _agent_registry[role_id] = endpoint_url
+        _endpoint_cache.pop(role_id, None)
 
     def get_agent_url(self, role_id: str) -> str | None:
         """Look up the endpoint URL for a role.
 
         Lookup order:
-          1. Process-local ``_agent_registry`` (unit-test friendly).
-          2. ``agent_endpoints`` DB table (production source of truth).
+          1. Test-injection ``_agent_registry`` (highest precedence; lets
+             unit tests override the DB without a write).
+          2. Per-process TTL cache of DB results (hot path for autonomy
+             loops dispatching every few seconds).
+          3. ``agent_endpoints`` DB table (the source of truth).
+
+        Each layer falls through to the next on a miss. The TTL cache is
+        populated on every successful DB lookup.
         """
         url = _agent_registry.get(role_id)
         if url:
             return url
+        cached = _cache_get(role_id)
+        if cached:
+            return cached
         # DB-backed lookup — imported lazily to avoid a circular import at
         # module load (a2a_server imports A2AClient).
         try:
             from .a2a_server import lookup_endpoint
 
-            return lookup_endpoint(role_id)
+            url = lookup_endpoint(role_id)
         except Exception:
             logger.debug("A2AClient.get_agent_url: DB lookup failed", exc_info=True)
             return None
+
+        if url:
+            _cache_put(role_id, url)
+        return url
 
     # ------------------------------------------------------------------ send
     async def send_message(
@@ -159,7 +226,9 @@ class A2AClient:
             any transport failure — the caller is expected to fall back to
             the ``agent_requests`` Supabase journal.
         """
-        url = self.get_agent_url(target_role_id)
+        # 12.6: ``get_agent_url`` may hit Supabase via ``lookup_endpoint``.
+        # Bounce it to a thread so the autonomy loop keeps moving.
+        url = await aexec(lambda: self.get_agent_url(target_role_id))
         if not url:
             logger.debug(
                 "A2A send_message: no endpoint registered for role %s", target_role_id

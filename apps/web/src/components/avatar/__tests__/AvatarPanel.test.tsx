@@ -49,6 +49,13 @@ vi.mock("@/lib/dataProvider", () => ({
     lastFacilitatorHandler = handler;
     return mockUnsubscribe;
   },
+  // 9.4 — ObservationStrip subscribes to facilitator observations. Stub
+  // returns an unsubscribe so the strip mounts without a WebSocket and
+  // stays hidden until the test sends it a static observation.
+  subscribeToFacilitatorObservations: (
+    _quorumId: string,
+    _handler: (frame: unknown) => void,
+  ) => mockUnsubscribe,
 }));
 
 // Track what the avatar controller is invoked with so tests can assert that
@@ -114,9 +121,17 @@ vi.mock("../AvatarProvider", () => ({
   }),
 }));
 
-// Mock IdleScene to avoid Three.js in tests
+// Mock IdleScene to avoid Three.js in tests.
+// Capture the most recent props so cameraMode tests below can assert
+// what AvatarPanel passes down based on `avatarState.speaking`.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const idleSceneCalls: any[] = [];
 vi.mock("../IdleScene", () => ({
-  IdleScene: vi.fn(() => null),
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  IdleScene: vi.fn((props: any) => {
+    idleSceneCalls.push(props);
+    return null;
+  }),
 }));
 
 // Mock archetype modules
@@ -133,6 +148,7 @@ beforeEach(() => {
   mockSpeak.mockClear();
   mockBrowserSpeak.mockClear();
   mockUnsubscribe.mockClear();
+  idleSceneCalls.length = 0;
   lastFacilitatorHandler = null;
   mockControllerState = {
     direction: "center",
@@ -336,6 +352,47 @@ describe("AvatarPanel orchestrator narration", () => {
     expect(mockBrowserSpeak).not.toHaveBeenCalledWith(
       "Live narration that should NOT win."
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Camera framing — torso while talking, full body while idle
+//
+// Sophie: "It's very off-putting now you see the avatar's full body when
+// it's talking and it's just standing still. So it should just be the top
+// torso during the talking section."
+//
+// AvatarPanel reads `avatarState.speaking` from useAvatarController and
+// forwards it to IdleScene as `cameraMode={speaking ? "torso" : "full_body"}`.
+// ---------------------------------------------------------------------------
+
+describe("AvatarPanel cameraMode", () => {
+  it("passes cameraMode='full_body' to IdleScene when not speaking", () => {
+    mockControllerState.speaking = false;
+    render(<AvatarPanel quorumId="test-quorum" />);
+    // Last call captures the final render's props.
+    const latest = idleSceneCalls[idleSceneCalls.length - 1];
+    expect(latest).toBeDefined();
+    expect(latest.cameraMode).toBe("full_body");
+  });
+
+  it("passes cameraMode='torso' to IdleScene when speaking", () => {
+    mockControllerState.speaking = true;
+    render(<AvatarPanel quorumId="test-quorum" />);
+    const latest = idleSceneCalls[idleSceneCalls.length - 1];
+    expect(latest).toBeDefined();
+    expect(latest.cameraMode).toBe("torso");
+  });
+
+  it("flips cameraMode from full_body to torso when speaking transitions", () => {
+    mockControllerState.speaking = false;
+    const { rerender } = render(<AvatarPanel quorumId="test-quorum" />);
+    expect(idleSceneCalls[idleSceneCalls.length - 1].cameraMode).toBe("full_body");
+
+    // Simulate the controller flipping into "speaking".
+    mockControllerState.speaking = true;
+    rerender(<AvatarPanel quorumId="test-quorum" />);
+    expect(idleSceneCalls[idleSceneCalls.length - 1].cameraMode).toBe("torso");
   });
 });
 

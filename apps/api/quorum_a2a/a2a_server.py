@@ -31,7 +31,10 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from google.protobuf.json_format import MessageToDict, ParseDict
 from google.protobuf.timestamp_pb2 import Timestamp
-from pydantic import BaseModel
+
+# Canonical GuidanceRequest lives in apps.api.models — import & re-export so
+# legacy callers (and tests) that imported it from a2a_server keep working.
+from models import GuidanceRequest  # noqa: F401  (re-export)
 
 # SDK imports — use the real a2a-sdk types, not bespoke dicts.
 from a2a.types.a2a_pb2 import (
@@ -47,6 +50,7 @@ from a2a.types.a2a_pb2 import (
 )
 
 from database import get_supabase
+from db.aexec import aexec  # 12.6: thread-pool wrapper for sync Supabase calls.
 from .a2a_client import A2AClient
 from .agent_card import build_agent_card_dict
 
@@ -151,16 +155,21 @@ async def a2a_root() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Architect Guidance (Quorum-specific, kept from v0)
 # ---------------------------------------------------------------------------
-
-class GuidanceRequest(BaseModel):
-    quorum_id: str
-    message: str
-    target_role_id: str | None = None
+# GuidanceRequest is the canonical model from apps.api.models — re-exported
+# at the top of this module so the v0 import path
+# (`from quorum_a2a.a2a_server import GuidanceRequest`) keeps working.
+# On THIS route, `body.quorum_id` MUST be populated since the A2A endpoint
+# has no URL path parameter; we validate that explicitly below.
 
 
 @a2a_router.post("/guidance")
 async def post_guidance(body: GuidanceRequest) -> dict[str, Any]:
     """Send architect guidance — via A2A if target agent known, else Supabase fallback."""
+    if not body.quorum_id:
+        raise HTTPException(
+            status_code=422,
+            detail="quorum_id is required for /a2a/guidance (no URL path param)",
+        )
     client = A2AClient()
 
     if body.target_role_id:
@@ -195,7 +204,8 @@ async def post_guidance(body: GuidanceRequest) -> dict[str, Any]:
         "role_name": "_architect_guidance",
     }
     try:
-        db.table("contributions").insert(row).execute()
+        # 12.6: bounce the sync insert to a thread.
+        await aexec(db.table("contributions").insert(row))
     except Exception:
         logger.warning("Guidance Supabase insert failed", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to store guidance")
@@ -207,14 +217,14 @@ async def post_guidance(body: GuidanceRequest) -> dict[str, Any]:
 async def get_guidance(quorum_id: str) -> dict[str, Any]:
     """Return recent architect guidance messages for a quorum."""
     db = get_supabase()
-    result = (
+    # 12.6: thread-pool the sync Supabase fetch.
+    result = await aexec(
         db.table("contributions")
         .select("id, content, created_at, role_id")
         .eq("quorum_id", quorum_id)
         .eq("user_token", "_architect")
         .order("created_at", desc=True)
         .limit(50)
-        .execute()
     )
     return {"quorum_id": quorum_id, "messages": result.data}
 
@@ -274,7 +284,8 @@ async def get_agent_card_v1(role_id: str, request: Request) -> JSONResponse:
 
     Returns the spec-compliant card built from the role + agent_config.
     """
-    role, agent_config = _load_role_and_config(role_id)
+    # 12.6: thread-pool the sync DB lookups inside ``_load_role_and_config``.
+    role, agent_config = await aexec(lambda: _load_role_and_config(role_id))
     base_url = _resolve_base_url(request)
     card_dict = build_agent_card_dict(role, base_url=base_url, agent_config=agent_config)
     return JSONResponse(card_dict)
@@ -363,7 +374,9 @@ async def _handle_send_message(role_id: str, body: dict[str, Any]) -> dict[str, 
     whose artifacts/history carry the reply.
     """
     # 1. Verify role exists (and grab quorum_id for the agent turn).
-    role, _ = _load_role_and_config(role_id)
+    # 12.6: ``_load_role_and_config`` is sync and hits Supabase twice — bounce
+    # it to a thread so the A2A endpoint doesn't stall the event loop.
+    role, _ = await aexec(lambda: _load_role_and_config(role_id))
     quorum_id: str = str(role.get("quorum_id") or "")
     if not quorum_id:
         raise HTTPException(status_code=400, detail="Role has no quorum_id")

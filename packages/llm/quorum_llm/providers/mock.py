@@ -88,6 +88,120 @@ def _hash_key(text: str) -> str:
     return hashlib.sha256(text.encode()).hexdigest()[:12]
 
 
+# ---------------------------------------------------------------------------
+# Canned typed-output payloads (item 9.3)
+# ---------------------------------------------------------------------------
+
+_CANNED_CONFLICT_DETECTION: dict = {
+    "conflicts": [
+        {
+            "contribution_ids": [],
+            "field_name": "",
+            "description": (
+                "The Principal Investigator recommends a 12-week dosing "
+                "interval while the IRB requires a 6-week safety review "
+                "checkpoint. Higher-authority role (IRB) overrides on safety."
+            ),
+            "severity": "high",
+        }
+    ],
+    "confidence": 0.85,
+    "notes": "Canned mock output — deterministic for tests.",
+}
+
+_CANNED_CONFLICT_DETECTION_EMPTY: dict = {
+    "conflicts": [],
+    "confidence": 0.9,
+    "notes": "All contributions align on the proposed protocol timeline.",
+}
+
+_CANNED_ARTIFACT_CONTENT: dict = {
+    "sections": [
+        {"title": s["title"], "content": s["content"]}
+        for s in _TIER3_ARTIFACT_SECTIONS
+    ]
+}
+
+# Architect role suggestions for typed-agent generate_roles in unit tests
+_CANNED_ROLE_SUGGESTIONS: list[dict] = [
+    {
+        "name": "Researcher",
+        "description": (
+            "Domain expert who evaluates evidence quality, methodology, "
+            "and scientific rigor."
+        ),
+        "authority_rank": 3,
+        "capacity": "unlimited",
+        "suggested_prompt_focus": (
+            "Evaluate the evidence base and methodological soundness."
+        ),
+        "system_prompt": (
+            "You are the Researcher on this quorum. Your job is to evaluate "
+            "the evidence base behind every proposal. Tag your key points "
+            "with [tags: ...]."
+        ),
+        "domain_tags": [
+            "research", "evidence", "methodology", "statistics",
+            "study_design", "replication", "data", "validity",
+            "literature", "uncertainty",
+        ],
+        "temperature": 0.3,
+        "model": "gpt-4o-mini",
+    },
+    {
+        "name": "Ethicist",
+        "description": (
+            "Ethics specialist ensuring decisions align with moral principles."
+        ),
+        "authority_rank": 4,
+        "capacity": 1,
+        "suggested_prompt_focus": (
+            "Identify ethical implications and consent requirements."
+        ),
+        "system_prompt": (
+            "You are the Ethicist on this quorum. You speak for the moral "
+            "and regulatory dimensions of every decision. Tag your key "
+            "points with [tags: ...]."
+        ),
+        "domain_tags": [
+            "ethics", "consent", "compliance", "regulation", "fairness",
+            "autonomy", "harm", "vulnerable_populations", "irb", "privacy",
+        ],
+        "temperature": 0.4,
+        "model": "gpt-4o-mini",
+    },
+]
+
+
+def _canned_typed_output(output_type, prompt: str):
+    """Dispatch a canned typed-output payload by ``output_type.__name__``.
+
+    Falls back to ``output_type.model_validate({})`` when the type name is
+    unknown so tests asking the mock for an unsupported type get a clear
+    Pydantic ValidationError describing what fields were expected.
+    """
+    name = output_type.__name__
+
+    if name == "ConflictDetectionOutput":
+        contrib_lines = [
+            l for l in prompt.split("\n") if l.strip().startswith("- [")
+        ]
+        payload = (
+            _CANNED_CONFLICT_DETECTION
+            if len(contrib_lines) >= 2
+            else _CANNED_CONFLICT_DETECTION_EMPTY
+        )
+        return output_type.model_validate(payload)
+
+    if name == "ArtifactContentOutput":
+        return output_type.model_validate(_CANNED_ARTIFACT_CONTENT)
+
+    if name == "RoleSuggestionList":
+        return output_type.model_validate({"roles": _CANNED_ROLE_SUGGESTIONS})
+
+    return output_type.model_validate({})
+
+
 class MockLLMProvider(LLMProvider):
     """Deterministic mock provider for testing.
 
@@ -172,8 +286,8 @@ class MockLLMProvider(LLMProvider):
         self,
         messages: list[dict[str, str]],
         tier: LLMTier,
-        temperature: float = 0.4,
-        max_tokens: int = 1024,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
         *,
         message_history=None,
     ) -> str:
@@ -187,22 +301,30 @@ class MockLLMProvider(LLMProvider):
         the response itself — the mock stays deterministic and ignores prior
         state, which is the correct behaviour for unit tests that only care
         about the wiring.
+
+        ``temperature`` / ``max_tokens`` are accepted for parity with the real
+        providers and recorded on the call_log entry so tests can assert
+        per-agent overrides (item 11.9) were threaded through.  The mock
+        ignores them when computing the response.
         """
         flat = "\n".join(f"[{m['role']}]: {m['content']}" for m in messages)
         text = await self.complete(flat, tier)
-        # Annotate the last call_log entry with history info for test asserts.
+        # Annotate the last call_log entry with history + override info so
+        # callers can assert per-agent temperature/max_tokens propagated.
         if self.call_log:
             self.call_log[-1]["message_history_len"] = (
                 len(message_history) if message_history else 0
             )
+            self.call_log[-1]["temperature"] = temperature
+            self.call_log[-1]["max_tokens"] = max_tokens
         return text
 
     async def chat_with_history(
         self,
         messages: list[dict[str, str]],
         tier: LLMTier,
-        temperature: float = 0.4,
-        max_tokens: int = 1024,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
         *,
         message_history=None,
     ):
@@ -259,6 +381,29 @@ class MockLLMProvider(LLMProvider):
         # Generate a deterministic but unique-looking response ID based on input
         fake_response_id = f"resp_{_hash_key(combo)}_{str(uuid.uuid4())[:8]}"
         return response_text, fake_response_id
+
+    async def run_typed(
+        self,
+        prompt: str,
+        tier: LLMTier,
+        *,
+        output_type,
+        instructions: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ):
+        """Deterministic typed-output mock for item 9.3 (Option 1 in brief).
+
+        Returns canned Pydantic instances directly rather than going through
+        JSON serialisation — cleaner than emitting JSON strings, and gives
+        tests stable in-memory objects to assert against.
+        """
+        self.call_log.append({
+            "prompt_hash": _hash_key(prompt),
+            "tier": int(tier),
+            "output_type": output_type.__name__,
+        })
+        return _canned_typed_output(output_type, prompt)
 
     async def embed(self, text: str) -> list[float]:
         self.call_log.append({"prompt_hash": _hash_key(text), "tier": "embed"})

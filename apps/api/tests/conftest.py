@@ -36,6 +36,7 @@ def _alias_bare_modules() -> None:
         "routes", "seed_loader", "database", "health", "models",
         "agent_engine", "document_engine", "llm", "tag_vocabulary",
         "voice_routes",
+        "quorum_state",
         # quorum_a2a submodules — bare import path is used by main.py / routes.py
         # so we MUST alias these so unittest.mock.patch("apps.api.quorum_a2a...")
         # targets the same module object that the running app calls into.
@@ -174,7 +175,76 @@ def _install_quorum_llm_mock() -> None:
                 stub.canonicalize_tag = lambda t: t.lower().replace(" ", "_")[:30]
                 stub.merge_tag_vocabularies = lambda existing, new, max_size=500: existing | set(new)
             elif sub == "conversation":
-                stub.build_agent_prompt = lambda **kw: [{"role": "user", "content": "mock"}]
+                # Lightweight stand-ins matching the real conversation.py
+                # exports.  ``agent_engine`` (post-11.8 consolidation) imports
+                # the dataclasses + builders directly, so they must exist
+                # here even in the minimal-deps test environment.
+                from dataclasses import dataclass, field
+
+                @dataclass
+                class _RoleCtx:
+                    role_id: str = ""
+                    role_name: str = ""
+                    authority_rank: int = 0
+                    domain_tags: list = field(default_factory=list)
+
+                @dataclass
+                class _QuorumCtx:
+                    quorum_id: str = ""
+                    title: str = "this quorum"
+                    description: str = ""
+                    max_authority_rank: int = 5
+
+                @dataclass
+                class _DocCtx:
+                    document_id: str = ""
+                    title: str = ""
+                    doc_type: str = ""
+                    version: int = 1
+                    content: object = None
+                    tags: list = field(default_factory=list)
+                    last_editor_name: str = ""
+
+                @dataclass
+                class _InsightCtx:
+                    insight_id: str = ""
+                    source_role_name: str = ""
+                    insight_type: str = "summary"
+                    content: str = ""
+                    tags: list = field(default_factory=list)
+                    created_at: str = ""
+
+                @dataclass
+                class _RequestCtx:
+                    request_id: str = ""
+                    from_role_name: str = ""
+                    request_type: str = "input_request"
+                    content: str = ""
+                    tags: list = field(default_factory=list)
+                    priority: int = 0
+
+                def _stub_build_agent_prompt(**kw):
+                    # Return a minimally-valid message list — agent_engine
+                    # tests don't inspect the contents, just that LLM is
+                    # called with *something* shaped like a chat array.
+                    return [{"role": "user", "content": "mock"}]
+
+                def _stub_build_system_message(
+                    agent_instructions: str, role, quorum
+                ) -> str:
+                    return (
+                        f"You are the AI facilitator for the "
+                        f"\"{getattr(role, 'role_name', '')}\" role "
+                        f"in quorum \"{getattr(quorum, 'title', '')}\"."
+                    )
+
+                stub.RoleContext = _RoleCtx
+                stub.QuorumContext = _QuorumCtx
+                stub.AgentDocumentContext = _DocCtx
+                stub.AgentInsightContext = _InsightCtx
+                stub.AgentRequestContext = _RequestCtx
+                stub.build_agent_prompt = _stub_build_agent_prompt
+                stub.build_system_message = _stub_build_system_message
                 stub.extract_tags_from_response = lambda text, tags=None: []
                 stub.summarize_history = lambda msgs, max_t, **kw: msgs[-5:]
             sys.modules[full] = stub

@@ -64,6 +64,23 @@ class RoleSuggestion(BaseModel):
     )
 
 
+class RoleSuggestionList(BaseModel):
+    """Typed wrapper for the Pydantic AI ``output_type`` on ``generate_roles``.
+
+    Pydantic AI's ``Agent.run(output_type=...)`` works most reliably with an
+    object-rooted schema rather than ``list[Model]`` directly — some model
+    profiles refuse list-root tool schemas.  Wrapping the list in an object
+    also gives us a place to surface metadata (counts, confidence) later
+    without breaking the public ``generate_roles`` signature.
+    """
+
+    roles: list[RoleSuggestion] = Field(
+        ...,
+        min_length=1,
+        description="The set of suggested roles for the quorum (4-6 typical).",
+    )
+
+
 _MOCK_ROLES: list[dict[str, Any]] = [
     {
         "name": "Researcher",
@@ -180,13 +197,45 @@ _MOCK_ROLES: list[dict[str, Any]] = [
 ]
 
 
+_ROLE_GENERATION_INSTRUCTIONS = (
+    "You are an expert multi-stakeholder facilitation designer. "
+    "Given a problem or decision, suggest 4-6 distinct roles for a structured "
+    "deliberation quorum. Each role should represent a different perspective, "
+    "expertise, or stakeholder interest.\n\n"
+    "For EACH role you must ALSO author a complete persona — the system "
+    "prompt that role's AI agent will use at runtime. The persona must be "
+    "300-500 words, written in second person ('You are the X'), and must "
+    "establish:\n"
+    "  - the role's perspective and core priorities\n"
+    "  - the questions this role asks on every proposal\n"
+    "  - how this role behaves when other roles push back\n"
+    "  - tone (direct, warm, skeptical, etc.)\n"
+    "  - instructions to tag key points with [tags: ...] notation\n\n"
+    "You must also supply 8-15 short snake_case domain_tags (used for "
+    "affinity routing between agents) and a temperature in the range "
+    "0.2-0.7 that fits the role (lower = more analytical, higher = more "
+    "exploratory).\n\n"
+    "Make ONE LLM call returning all roles at once — do not split into "
+    "multiple round-trips."
+)
+
+
 async def generate_roles(
     problem: str, llm_provider: LLMProvider | None = None
 ) -> list[RoleSuggestion]:
     """Generate role suggestions for a quorum given a problem description.
 
     When QUORUM_TEST_MODE=true, returns 4 hardcoded mock roles.
-    Otherwise uses the LLM to generate role suggestions.
+    Otherwise uses a typed Pydantic AI agent (output_type=RoleSuggestionList)
+    so the LLM response is validated and retried automatically — no manual
+    ``json.loads`` glue.
+
+    Item 9.3 swap: previously called ``provider.respond`` / ``provider.chat``
+    with a free-text prompt, then stripped markdown fences and ``json.loads``.
+    Now it asks the provider for a typed instance via ``run_typed`` which
+    delegates to ``pydantic_ai.Agent.run(output_type=RoleSuggestionList)``.
+    Legacy MagicMock-based test fixtures continue to work via the fallback
+    path that calls respond/chat directly (see ``_generate_roles_legacy``).
     """
     if os.environ.get("QUORUM_TEST_MODE", "").lower() in ("true", "1", "yes"):
         return [RoleSuggestion(**r) for r in _MOCK_ROLES]
@@ -195,24 +244,62 @@ async def generate_roles(
         provider_name = os.environ.get("QUORUM_LLM_PROVIDER", "azure")
         llm_provider = get_llm_provider(provider_name)
 
-    system_prompt = (
-        "You are an expert multi-stakeholder facilitation designer. "
-        "Given a problem or decision, suggest 4-6 distinct roles for a structured "
-        "deliberation quorum. Each role should represent a different perspective, "
-        "expertise, or stakeholder interest.\n\n"
-        "For EACH role you must ALSO author a complete persona — the system "
-        "prompt that role's AI agent will use at runtime. The persona must be "
-        "300-500 words, written in second person ('You are the X'), and must "
-        "establish:\n"
-        "  - the role's perspective and core priorities\n"
-        "  - the questions this role asks on every proposal\n"
-        "  - how this role behaves when other roles push back\n"
-        "  - tone (direct, warm, skeptical, etc.)\n"
-        "  - instructions to tag key points with [tags: ...] notation\n\n"
-        "You must also supply 8-15 short snake_case domain_tags (used for "
-        "affinity routing between agents) and a temperature in the range "
-        "0.2-0.7 that fits the role (lower = more analytical, higher = more "
-        "exploratory).\n\n"
+    user_content = (
+        f"Problem: {problem}\n\n"
+        "Return a RoleSuggestionList with 4-6 RoleSuggestion items, "
+        "each carrying a fully-authored persona."
+    )
+
+    # Detect legacy test doubles (MagicMock stubs of .respond / .chat only)
+    # and route them through the original free-text + JSON-parse path so old
+    # fixtures keep working without forcing every test to also stub
+    # .run_typed.
+    if _provider_supports_run_typed(llm_provider):
+        try:
+            output = await llm_provider.run_typed(
+                user_content,
+                tier=LLMTier.CONFLICT,
+                output_type=RoleSuggestionList,
+                instructions=_ROLE_GENERATION_INSTRUCTIONS,
+            )
+            return list(output.roles)
+        except ValueError:
+            logger.warning(
+                "Typed-agent path failed for generate_roles; falling back to "
+                "respond/chat + manual JSON parse for compatibility.",
+                exc_info=True,
+            )
+
+    return await _generate_roles_legacy(problem, llm_provider)
+
+
+def _provider_supports_run_typed(provider: LLMProvider) -> bool:
+    """Return True iff the provider overrides ``run_typed`` (item 9.3).
+
+    Mirrors the pipeline-side heuristic so both call sites treat MagicMock /
+    ABC-default providers the same way: the typed path is opt-in.
+    """
+    method = getattr(type(provider), "run_typed", None)
+    if method is None:
+        return False
+    abc_method = getattr(LLMProvider, "run_typed", None)
+    if abc_method is not None and method is abc_method:
+        return False
+    return True
+
+
+async def _generate_roles_legacy(
+    problem: str,
+    llm_provider: LLMProvider,
+) -> list[RoleSuggestion]:
+    """Pre-9.3 free-text JSON path, kept for test-double compatibility.
+
+    Identical to the old ``generate_roles`` body: tries ``respond()`` first,
+    falls back to ``chat()`` if the provider doesn't support the Responses
+    API, then strips fences + ``json.loads`` the result.  Validated via
+    Pydantic at the end so the public return type matches the typed path.
+    """
+    schema_hint = (
         "Return ONLY a valid JSON array (no markdown, no explanation) of "
         "objects with fields:\n"
         "  name (string),\n"
@@ -223,19 +310,15 @@ async def generate_roles(
         "  system_prompt (string, 300-500 words — the full persona),\n"
         "  domain_tags (array of 8-15 snake_case strings),\n"
         "  temperature (number in [0.2, 0.7]),\n"
-        f"  model (string, default '{DEFAULT_PERSONA_MODEL}').\n\n"
-        "Make ONE LLM call returning all roles at once — do not split into "
-        "multiple round-trips."
+        f"  model (string, default '{DEFAULT_PERSONA_MODEL}').\n"
     )
-
-    # Try respond() first (works with gpt-5-nano Responses API),
-    # fall back to chat() for older models (gpt-4o, gpt-4o-mini).
-    user_content = f"Problem: {problem}\n\nReturn the JSON array now."
+    system_prompt = _ROLE_GENERATION_INSTRUCTIONS + "\n\n" + schema_hint
+    legacy_user = f"Problem: {problem}\n\nReturn the JSON array now."
     raw = ""
     try:
         raw, _ = await llm_provider.respond(
             instructions=system_prompt,
-            input_text=user_content,
+            input_text=legacy_user,
             tier=LLMTier.CONFLICT,
         )
     except Exception:
@@ -244,32 +327,32 @@ async def generate_roles(
     if not raw or not raw.strip():
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
+            {"role": "user", "content": legacy_user},
         ]
         raw = await llm_provider.chat(messages, tier=LLMTier.CONFLICT)
 
     if not raw or not raw.strip():
         logger.warning("LLM returned empty response for role generation. raw=%r", raw)
-        raise ValueError(f"LLM returned empty response. Check your model deployment and API configuration.")
+        raise ValueError(
+            "LLM returned empty response. Check your model deployment and API configuration."
+        )
 
-    # Extract JSON array from response (handle markdown fences)
     text = raw.strip()
-    # Strip markdown code fences
     text = re.sub(r"^```[a-z]*\n?", "", text)
-    text = re.sub(r"\n?```$", "", text)
-    text = text.strip()
-
-    # Extract just the JSON array if there's surrounding text
+    text = re.sub(r"\n?```$", "", text).strip()
     match = re.search(r"\[.*\]", text, re.DOTALL)
     if match:
         text = match.group(0)
-
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError:
-        logger.error("Failed to parse LLM JSON response for role generation. Raw: %s", text[:200])
-        raise ValueError(f"LLM returned unparseable JSON for role generation: {text[:200]}")
-
+        logger.error(
+            "Failed to parse LLM JSON response for role generation. Raw: %s",
+            text[:200],
+        )
+        raise ValueError(
+            f"LLM returned unparseable JSON for role generation: {text[:200]}"
+        )
     return [RoleSuggestion(**item) for item in parsed]
 
 

@@ -176,7 +176,42 @@ def _install_quorum_llm_mock() -> None:
 
     # Also wire quorum_llm.providers as a package
     providers_pkg = types.ModuleType("quorum_llm.providers")
+    providers_pkg.__path__ = []  # mark as package so submodule imports work
     sys.modules["quorum_llm.providers"] = providers_pkg
+
+    # Stub quorum_llm.providers._pai_common for conversation_store
+    pai_common_stub = types.ModuleType("quorum_llm.providers._pai_common")
+
+    from dataclasses import dataclass
+
+    @dataclass(frozen=True)
+    class _StubChatResult:
+        text: str
+        new_messages: list
+
+    def _stub_serialise(msgs):
+        # Round-trip-safe stub: dump each ModelMessage-like via Pydantic's
+        # model_dump if available, else fall back to str().
+        out = []
+        for m in (msgs or []):
+            if hasattr(m, "model_dump"):
+                out.append(m.model_dump(mode="json"))
+            elif isinstance(m, dict):
+                out.append(m)
+            else:
+                out.append({"_repr": str(m)})
+        return out
+
+    def _stub_deserialise(raw):
+        # Tests don't actually replay messages, so returning them verbatim
+        # is sufficient — the conversation store treats the result as opaque.
+        return raw or []
+
+    pai_common_stub.ChatResult = _StubChatResult
+    pai_common_stub.serialise_messages = _stub_serialise
+    pai_common_stub.deserialise_messages = _stub_deserialise
+    sys.modules["quorum_llm.providers._pai_common"] = pai_common_stub
+    providers_pkg._pai_common = pai_common_stub
 
 
 def _install_supabase_mock() -> None:

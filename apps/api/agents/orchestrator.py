@@ -124,6 +124,17 @@ _PER_FIELD_TRUNCATE = 240
 async def next_turn(quorum_id: str, db, llm_provider) -> OrchestratorPlan | None:
     """Run one orchestrator decision and return a typed plan.
 
+    Note (checklist item 9.2 — MessageHistory wiring decision):
+    The orchestrator is a planning agent — each turn picks the NEXT speaker
+    based on the current state of the world (active roles, recent messages,
+    insights).  Threading Pydantic AI ``message_history`` between
+    orchestrator calls would actually HURT decision quality: the planner
+    would anchor on its prior "pick speaker X" choice instead of evaluating
+    the freshly-changed state.  We therefore deliberately do NOT load/save
+    history here.  The conversation-store is wired into the role-level
+    conversational agents in ``process_agent_turn`` / ``process_a2a_request``
+    where remembering the persona across turns is the actual win.
+
     Args:
         quorum_id: ID of the quorum we're orchestrating.
         db:        Supabase / SQLite client (used by the project's other modules).

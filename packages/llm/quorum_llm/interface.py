@@ -38,6 +38,8 @@ class LLMProvider(ABC):
         tier: LLMTier,
         temperature: float = 0.4,
         max_tokens: int = 1024,
+        *,
+        message_history: list | None = None,
     ) -> str:
         """Chat completion with conversation history.
 
@@ -57,6 +59,14 @@ class LLMProvider(ABC):
                          default flat-prompt fallback — passed through in
                          provider overrides.
             max_tokens: Upper bound on output tokens.  Same caveat as above.
+            message_history: Optional list of ``pydantic_ai.messages.ModelMessage``
+                             instances from a prior persisted conversation
+                             (loaded via the conversations table — see
+                             ``apps/api/conversation_store.py``).  The default
+                             fallback ignores this parameter because the
+                             flat-prompt path has no equivalent representation;
+                             every Pydantic-AI–backed provider override
+                             threads it through to ``Agent.run``.
 
         Returns:
             The assistant's response text.
@@ -65,6 +75,43 @@ class LLMProvider(ABC):
         # Format mirrors standard chat notation for readability in logs.
         flat = "\n".join(f"[{m['role']}]: {m['content']}" for m in messages)
         return await self.complete(flat, tier)
+
+    async def chat_with_history(
+        self,
+        messages: list[dict[str, str]],
+        tier: LLMTier,
+        temperature: float = 0.4,
+        max_tokens: int = 1024,
+        *,
+        message_history: list | None = None,
+    ):
+        """Multi-turn chat that returns text plus the new-message delta.
+
+        The return type is ``ChatResult`` for Pydantic-AI–backed providers
+        (``text`` + ``new_messages``).  The default fallback returns a
+        ``ChatResult`` with an empty ``new_messages`` list so callers can
+        treat every provider uniformly — they'll get text-only persistence
+        in that case, which is still correct.
+
+        Providers that override ``chat_with_history`` (Azure / OpenAI /
+        Anthropic / Local) thread ``message_history`` through Pydantic AI's
+        ``Agent.run(message_history=...)`` and return the run's
+        ``new_messages()`` so the conversation store can append to the
+        persisted history.
+        """
+        # Import here to avoid the providers package being a hard dep of the
+        # ABC at import time (the interface ships with the package; the shared
+        # helpers may be optional in some lightweight installs).
+        from quorum_llm.providers._pai_common import ChatResult
+
+        text = await self.chat(
+            messages,
+            tier,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            message_history=message_history,
+        )
+        return ChatResult(text=text, new_messages=[])
 
     async def respond(
         self,

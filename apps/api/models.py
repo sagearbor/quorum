@@ -324,6 +324,13 @@ class StationMessageResponse(BaseModel):
 class AskRequest(BaseModel):
     role_id: str
     content: str
+    # Optional participant attribution.  When set, the facilitator's Pydantic AI
+    # message history (see migration 20260513000001_conversations.sql) is
+    # bucketed per (quorum, role, participant) so the same person resuming a
+    # chat sees the agent remember their prior turns.  When omitted, the chat
+    # uses the anonymous "no participant" bucket which is shared across users
+    # at that role — fine for unauthenticated demo flows.
+    participant_id: str | None = None
 
 
 class AskResponse(BaseModel):

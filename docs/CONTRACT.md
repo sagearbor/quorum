@@ -89,8 +89,10 @@ GET /quorums/{quorum_id}/stations/{station_id}/messages:
   returns: StationMessage[]
 
 POST /quorums/{quorum_id}/stations/{station_id}/ask:
-  body: { role_id: uuid, content: string }
-  returns: { reply: string, message_id: uuid, tags: string[] }
+  body: { role_id: uuid, content: string, participant_id: uuid? }
+  returns: { reply: string, message_id: uuid, tags: string[], paused: bool?, reason: string? }
+  # participant_id buckets the conversations row used for Pydantic AI MessageHistory.
+  # When omitted, the chat shares the per-(quorum, role) anonymous bucket.
 
 GET /quorums/{quorum_id}/documents:
   query: { status: DocStatus = 'active', doc_type: string? }
@@ -426,6 +428,26 @@ agent_requests:
   claimed_at: timestamptz (nullable)   # set when autonomy loop CAS-claims a 'pending' row → 'processing'
   # A2AStatus enum: 'processing' value (re-asserted; defensively added by this migration if missing)
   # Index: idx_agent_requests_processing_claimed_at — partial, WHERE status = 'processing'
+
+# --- Conversations (migration: 20260513000001_conversations.sql) ---
+
+conversations:
+  id: uuid PK
+  quorum_id: uuid FK quorums.id ON DELETE CASCADE
+  role_id: uuid FK roles.id ON DELETE CASCADE
+  participant_id: uuid FK participants.id ON DELETE SET NULL (nullable)  # NULL = autonomous A2A bucket
+  messages: jsonb DEFAULT '[]'         # Pydantic AI ModelMessagesTypeAdapter serialised form
+  created_at: timestamptz DEFAULT now()
+  updated_at: timestamptz DEFAULT now()
+  unique:
+    - (quorum_id, role_id, participant_id) WHERE participant_id IS NOT NULL  # partial unique index
+    - (quorum_id, role_id)                 WHERE participant_id IS NULL      # partial unique index (NULL bucket)
+  indexes:
+    - (quorum_id, role_id)             # fast per-(quorum,role) lookup at turn start
+  realtime: true                       # ADDED to supabase_realtime publication
+  rls:
+    select: open                       # dashboards / live transcripts read freely
+    insert/update/delete: service_role only
 ```
 
 ## Health Score Metrics

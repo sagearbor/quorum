@@ -459,6 +459,7 @@ async def contribute(quorum_id: str, body: ContributeRequest):
                 user_message=body.content,
                 supabase_client=db,
                 llm_provider=llm_provider,
+                participant_id=body.participant_id,
             )
             if is_paused_reply(turn_reply, turn_tags):
                 # Facilitator paused (LLM unavailable). Do NOT broadcast a
@@ -1023,6 +1024,7 @@ async def ask_facilitator(quorum_id: str, station_id: str, body: AskRequest):
             user_message=body.content,
             supabase_client=db,
             llm_provider=llm_provider,
+            participant_id=body.participant_id,
         )
     except Exception:
         logger.error(

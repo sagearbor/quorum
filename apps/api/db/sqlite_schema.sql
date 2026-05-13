@@ -280,3 +280,28 @@ CREATE TABLE IF NOT EXISTS agent_endpoints (
 
 CREATE INDEX IF NOT EXISTS idx_agent_endpoints_last_seen
     ON agent_endpoints(last_seen_at DESC);
+
+-- =============================================================================
+-- CONVERSATIONS (Pydantic AI MessageHistory persistence)
+-- =============================================================================
+-- One row per (quorum_id, role_id, participant_id) triple.  Mirrors
+-- supabase/migrations/20260513000001_conversations.sql.  messages is the
+-- Pydantic AI serialised message list stored as JSON-as-TEXT for SQLite.
+CREATE TABLE IF NOT EXISTS conversations (
+    id              TEXT PRIMARY KEY,
+    quorum_id       TEXT NOT NULL REFERENCES quorums(id) ON DELETE CASCADE,
+    role_id         TEXT NOT NULL REFERENCES roles(id) ON DELETE CASCADE,
+    participant_id  TEXT REFERENCES participants(id) ON DELETE SET NULL,
+    messages        TEXT NOT NULL DEFAULT '[]',
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_conversations_quorum_role
+    ON conversations(quorum_id, role_id);
+
+-- SQLite treats NULLs as equal in UNIQUE constraints (opposite of Postgres),
+-- so a single unique index over the triple is sufficient — both NULL and
+-- non-NULL participant_id buckets are de-duplicated correctly.
+CREATE UNIQUE INDEX IF NOT EXISTS conversations_unique_triple
+    ON conversations(quorum_id, role_id, participant_id);

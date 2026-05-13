@@ -26,7 +26,9 @@ from quorum_llm.interface import LLMProvider
 from quorum_llm.models import BudgetExhaustedError, LLMTier
 from quorum_llm.providers._pai_common import (
     AgentCache,
+    ChatResult,
     run_chat,
+    run_chat_with_history,
     run_complete,
     run_respond,
     tier_settings,
@@ -94,6 +96,8 @@ class AnthropicProvider(LLMProvider):
         tier: LLMTier,
         temperature: float = 0.4,
         max_tokens: int = 1024,
+        *,
+        message_history=None,
     ) -> str:
         if tier == LLMTier.KEYWORD:
             flat = "\n".join(m["content"] for m in messages)
@@ -102,7 +106,37 @@ class AnthropicProvider(LLMProvider):
         agent = self._agents.get(tier)
         settings = tier_settings(tier, temperature=temperature, max_tokens=max_tokens)
         try:
-            return await run_chat(agent, messages, settings)
+            return await run_chat(
+                agent, messages, settings, message_history=message_history
+            )
+        except ModelHTTPError as exc:
+            _maybe_raise_budget(tier, exc)
+            raise
+        except anthropic.RateLimitError as exc:
+            raise BudgetExhaustedError(
+                provider="anthropic", tier=tier, detail=str(exc)
+            ) from exc
+
+    async def chat_with_history(
+        self,
+        messages: list[dict[str, str]],
+        tier: LLMTier,
+        temperature: float = 0.4,
+        max_tokens: int = 1024,
+        *,
+        message_history=None,
+    ) -> ChatResult:
+        """Chat returning (text, new_messages) for persistence — see Azure."""
+        if tier == LLMTier.KEYWORD:
+            flat = "\n".join(m["content"] for m in messages)
+            return ChatResult(text=", ".join(extract_keywords(flat)), new_messages=[])
+
+        agent = self._agents.get(tier)
+        settings = tier_settings(tier, temperature=temperature, max_tokens=max_tokens)
+        try:
+            return await run_chat_with_history(
+                agent, messages, settings, message_history=message_history
+            )
         except ModelHTTPError as exc:
             _maybe_raise_budget(tier, exc)
             raise

@@ -27,6 +27,7 @@ from typing import Iterable
 from pydantic_ai import Agent, ModelSettings
 from pydantic_ai.messages import (
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     SystemPromptPart,
@@ -37,6 +38,36 @@ from pydantic_ai.messages import (
 from quorum_llm.models import LLMTier
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# ChatResult — return type for chat()/respond() when MessageHistory is wanted
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class ChatResult:
+    """Bundle of (text, new_messages) returned from a multi-turn call.
+
+    ``text`` is the assistant's reply (already coerced to a string).
+
+    ``new_messages`` is the *delta* — only the messages produced during this
+    run, not the full history.  Callers persist this via the conversation
+    store so the next run can resume from where this one left off.
+
+    The conversation store serialises and deserialises these messages via
+    ``pydantic_ai.messages.ModelMessagesTypeAdapter`` — see
+    ``apps/api/conversation_store.py``.
+    """
+
+    text: str
+    new_messages: list[ModelMessage]
+
+    # Convenience accessors that mirror the Pydantic AI AgentRunResult shape
+    # so callers that already use ``result.new_messages()`` keep working when
+    # we hand them a ChatResult instead.
+    def new_messages_method(self) -> list[ModelMessage]:
+        return list(self.new_messages)
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +126,35 @@ def tier_settings(
         temperature=temperature if temperature is not None else defaults.temperature,
         max_tokens=max_tokens if max_tokens is not None else defaults.max_tokens,
     )
+
+
+# ---------------------------------------------------------------------------
+# JSON serialisation helpers for the conversations table
+# ---------------------------------------------------------------------------
+
+
+def serialise_messages(messages: list[ModelMessage]) -> list[dict]:
+    """Convert a list of ``ModelMessage`` into a JSON-safe Python list.
+
+    Uses ``ModelMessagesTypeAdapter.dump_python(messages, mode='json')`` so
+    the output is compatible with ``psycopg``'s default JSONB encoder and
+    can be round-tripped via ``deserialise_messages`` without information
+    loss (including tool-call records and timestamps).
+    """
+    if not messages:
+        return []
+    return ModelMessagesTypeAdapter.dump_python(messages, mode="json")
+
+
+def deserialise_messages(raw: list[dict] | None) -> list[ModelMessage]:
+    """Inverse of ``serialise_messages``.
+
+    Returns an empty list when ``raw`` is None / empty so callers can blindly
+    pass the result as ``message_history`` to ``Agent.run``.
+    """
+    if not raw:
+        return []
+    return ModelMessagesTypeAdapter.validate_python(raw)
 
 
 # ---------------------------------------------------------------------------
@@ -224,15 +284,67 @@ async def run_chat(
     agent: Agent,
     messages: list[dict[str, str]],
     settings: ModelSettings,
+    *,
+    message_history: list[ModelMessage] | None = None,
 ) -> str:
-    """Run a multi-turn chat through an Agent and return the assistant reply."""
-    instructions, history, user_prompt = split_history_and_prompt(messages)
-    kwargs: dict = {"message_history": history, "model_settings": settings}
+    """Run a multi-turn chat through an Agent and return the assistant reply.
+
+    The ``message_history`` keyword argument lets callers prepend a previously
+    persisted Pydantic AI history (as returned by ``ChatResult.new_messages``
+    on prior calls).  When supplied, it is concatenated with the in-prompt
+    history extracted from ``messages``.  The combined sequence is passed to
+    ``Agent.run(message_history=...)``.
+
+    Backward compatible: callers that don't pass ``message_history`` get the
+    same behaviour as before — only the dict-style messages are threaded.
+    """
+    instructions, in_prompt_history, user_prompt = split_history_and_prompt(messages)
+    combined_history: list[ModelMessage] = []
+    if message_history:
+        combined_history.extend(message_history)
+    combined_history.extend(in_prompt_history)
+
+    kwargs: dict = {"message_history": combined_history, "model_settings": settings}
     if instructions is not None:
         kwargs["instructions"] = instructions
     result = await agent.run(user_prompt, **kwargs)
     _log_usage(agent, result)
     return _coerce_output(result.output)
+
+
+async def run_chat_with_history(
+    agent: Agent,
+    messages: list[dict[str, str]],
+    settings: ModelSettings,
+    *,
+    message_history: list[ModelMessage] | None = None,
+) -> ChatResult:
+    """Like ``run_chat`` but returns a ``ChatResult`` bundling text + delta.
+
+    The ``new_messages`` field of the returned ChatResult contains ONLY the
+    messages produced during this run (the new user turn + the assistant
+    response, plus any tool exchanges).  This is the delta callers persist to
+    the ``conversations`` table — the on-disk row keeps growing turn-by-turn.
+
+    Why a separate helper instead of returning ChatResult from ``run_chat``:
+    the existing callers in every provider expect a bare ``str`` and we don't
+    want to touch their signatures.  The new helper exists alongside them.
+    """
+    instructions, in_prompt_history, user_prompt = split_history_and_prompt(messages)
+    combined_history: list[ModelMessage] = []
+    if message_history:
+        combined_history.extend(message_history)
+    combined_history.extend(in_prompt_history)
+
+    kwargs: dict = {"message_history": combined_history, "model_settings": settings}
+    if instructions is not None:
+        kwargs["instructions"] = instructions
+    result = await agent.run(user_prompt, **kwargs)
+    _log_usage(agent, result)
+    return ChatResult(
+        text=_coerce_output(result.output),
+        new_messages=list(result.new_messages()),
+    )
 
 
 async def run_respond(

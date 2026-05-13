@@ -45,6 +45,10 @@ from a2a.types.a2a_pb2 import (
     SendMessageResponse,
 )
 
+# 12.6: thread-pool wrapper. The DB lookup inside ``lookup_endpoint`` would
+# otherwise block the autonomy loop on every A2A dispatch.
+from db.aexec import aexec
+
 logger = logging.getLogger(__name__)
 
 # Process-local test-injection registry — kept ONLY for unit tests that call
@@ -222,7 +226,9 @@ class A2AClient:
             any transport failure — the caller is expected to fall back to
             the ``agent_requests`` Supabase journal.
         """
-        url = self.get_agent_url(target_role_id)
+        # 12.6: ``get_agent_url`` may hit Supabase via ``lookup_endpoint``.
+        # Bounce it to a thread so the autonomy loop keeps moving.
+        url = await aexec(lambda: self.get_agent_url(target_role_id))
         if not url:
             logger.debug(
                 "A2A send_message: no endpoint registered for role %s", target_role_id

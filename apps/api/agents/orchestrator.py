@@ -44,6 +44,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field, ValidationError
 
+# Item 12.6: wrap Supabase ``.execute()`` calls in ``aexec`` so the sync DB
+# hits run on the thread pool instead of stalling the autonomy loop.
+from db.aexec import aexec
+
 logger = logging.getLogger(__name__)
 
 
@@ -148,13 +152,13 @@ async def next_turn(quorum_id: str, db, llm_provider) -> OrchestratorPlan | None
     Never raises.
     """
     try:
-        active_roles = _load_active_roles(db, quorum_id)
+        active_roles = await _load_active_roles(db, quorum_id)
         if not active_roles:
             return None
 
-        quorum = _load_quorum(db, quorum_id)
-        recent_messages = _load_recent_messages(db, quorum_id)
-        recent_insights = _load_recent_insights(db, quorum_id)
+        quorum = await _load_quorum(db, quorum_id)
+        recent_messages = await _load_recent_messages(db, quorum_id)
+        recent_insights = await _load_recent_insights(db, quorum_id)
         turn_counts = _compute_turn_counts(recent_messages, active_roles)
 
         user_content = _build_user_content(
@@ -255,14 +259,13 @@ def _parse_plan(raw: str) -> OrchestratorPlan | None:
         return None
 
 
-def _load_active_roles(db, quorum_id: str) -> list[dict]:
+async def _load_active_roles(db, quorum_id: str) -> list[dict]:
     """Load active roles + their architect-authored domain_tags (if any)."""
     try:
-        result = (
+        result = await aexec(
             db.table("roles")
             .select("id, name, status, authority_rank")
             .eq("quorum_id", quorum_id)
-            .execute()
         )
         rows = [r for r in (result.data or []) if r.get("status") == "active"]
     except Exception:
@@ -273,11 +276,10 @@ def _load_active_roles(db, quorum_id: str) -> list[dict]:
     # match the current question to the right domain.
     by_role_id = {r["id"]: r for r in rows}
     try:
-        cfg = (
+        cfg = await aexec(
             db.table("agent_configs")
             .select("role_id, domain_tags")
             .eq("quorum_id", quorum_id)
-            .execute()
         )
         for row in cfg.data or []:
             role_id = row.get("role_id")
@@ -296,30 +298,28 @@ def _load_active_roles(db, quorum_id: str) -> list[dict]:
     return rows
 
 
-def _load_quorum(db, quorum_id: str) -> dict:
+async def _load_quorum(db, quorum_id: str) -> dict:
     try:
-        result = (
+        result = await aexec(
             db.table("quorums")
             .select("title, description")
             .eq("id", quorum_id)
             .maybe_single()
-            .execute()
         )
         return result.data or {}
     except Exception:
         return {}
 
 
-def _load_recent_messages(db, quorum_id: str) -> list[dict]:
+async def _load_recent_messages(db, quorum_id: str) -> list[dict]:
     """Most recent station_messages (assistant + user) for orchestrator context."""
     try:
-        result = (
+        result = await aexec(
             db.table("station_messages")
             .select("role_id, role, content, created_at")
             .eq("quorum_id", quorum_id)
             .order("created_at", desc=True)
             .limit(_MAX_RECENT_MESSAGES)
-            .execute()
         )
         rows = result.data or []
     except Exception:
@@ -329,15 +329,14 @@ def _load_recent_messages(db, quorum_id: str) -> list[dict]:
     return list(reversed(rows))
 
 
-def _load_recent_insights(db, quorum_id: str) -> list[dict]:
+async def _load_recent_insights(db, quorum_id: str) -> list[dict]:
     try:
-        result = (
+        result = await aexec(
             db.table("agent_insights")
             .select("source_role_id, content, tags")
             .eq("quorum_id", quorum_id)
             .order("created_at", desc=True)
             .limit(_MAX_RECENT_INSIGHTS)
-            .execute()
         )
         return result.data or []
     except Exception:

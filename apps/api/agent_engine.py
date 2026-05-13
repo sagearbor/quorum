@@ -39,6 +39,11 @@ from quorum_llm.conversation import (
 )
 from tag_vocabulary import get_vocabulary, update_vocabulary
 
+# Item 12.6: every Supabase ``.execute()`` is now wrapped via ``aexec`` so the
+# blocking sync call runs on the thread pool instead of stalling the event loop.
+from db.aexec import aexec
+
+# Logfire observability spans (no-op when LOGFIRE_TOKEN is unset).
 from _obs import span as _obs_span
 
 logger = logging.getLogger(__name__)
@@ -450,8 +455,12 @@ async def _process_agent_turn_impl(
     db = supabase_client
 
     # --- 1. Resolve role name and load agent definition ---
+    # 12.6: wrap Supabase calls in aexec so the sync DB hit runs on the
+    # thread pool instead of blocking the event loop.
     try:
-        role_row = db.table("roles").select("name, authority_rank").eq("id", role_id).maybe_single().execute()
+        role_row = await aexec(
+            db.table("roles").select("name, authority_rank").eq("id", role_id).maybe_single()
+        )
         role_name: str = role_row.data["name"] if role_row and role_row.data else "unknown"
         authority_rank: int = (role_row.data or {}).get("authority_rank", 0) if role_row and role_row.data else 0
     except Exception:
@@ -459,23 +468,26 @@ async def _process_agent_turn_impl(
         role_name = "unknown"
         authority_rank = 0
 
-    agent_def = _load_agent_definition(role_name, role_id=role_id, db=db)
+    # ``_load_agent_definition`` is a sync wrapper around a Supabase lookup
+    # in ``agent_configs``; push the whole call to a thread so the DB hit
+    # doesn't stall the loop.
+    agent_def = await aexec(lambda: _load_agent_definition(role_name, role_id=role_id, db=db))
 
     # --- 2. Load conversation history ---
-    history = _load_conversation_history(db, quorum_id, role_id, station_id)
+    history = await _load_conversation_history(db, quorum_id, role_id, station_id)
 
     # --- 3. Load quorum context ---
-    quorum_context = _load_quorum_context(db, quorum_id)
+    quorum_context = await _load_quorum_context(db, quorum_id)
 
     # --- 4. Load cross-station insights ---
     agent_tags: set[str] = set(agent_def.domain_tags) if agent_def else set()
-    insights = _load_relevant_insights(db, quorum_id, role_id, agent_tags)
+    insights = await _load_relevant_insights(db, quorum_id, role_id, agent_tags)
 
     # --- 5. Load relevant documents ---
-    documents = _load_relevant_documents(db, quorum_id, agent_tags)
+    documents = await _load_relevant_documents(db, quorum_id, agent_tags)
 
     # --- 6. Load pending A2A requests for this role ---
-    pending_requests = _load_pending_requests(db, quorum_id, role_id)
+    pending_requests = await _load_pending_requests(db, quorum_id, role_id)
 
     # --- 7. Build messages list ---
     messages = _build_prompt(
@@ -500,8 +512,12 @@ async def _process_agent_turn_impl(
     try:
         from conversation_store import load_history
 
-        persisted_history = load_history(
-            db, quorum_id, role_id, participant_id=participant_id
+        # 12.6: load_history is a sync helper that may hit Supabase; bounce
+        # through aexec so the call doesn't block the loop.
+        persisted_history = await aexec(
+            lambda: load_history(
+                db, quorum_id, role_id, participant_id=participant_id
+            )
         )
     except Exception:
         logger.warning(
@@ -541,7 +557,7 @@ async def _process_agent_turn_impl(
         # do NOT write an assistant row — the agent is paused, not replying.
         paused_user_msg_id = str(uuid.uuid4())
         try:
-            db.table("station_messages").insert({
+            await aexec(db.table("station_messages").insert({
                 "id": paused_user_msg_id,
                 "quorum_id": quorum_id,
                 "role_id": role_id,
@@ -551,7 +567,7 @@ async def _process_agent_turn_impl(
                 "tags": [],
                 "metadata": {"facilitator_paused": True, "reason": "llm_unavailable"},
                 "created_at": _now_iso(),
-            }).execute()
+            }))
         except Exception:
             logger.warning(
                 "agent_engine: failed to persist user message on paused turn",
@@ -562,7 +578,7 @@ async def _process_agent_turn_impl(
     # --- 9. Persist user message ---
     user_msg_id = str(uuid.uuid4())
     try:
-        db.table("station_messages").insert({
+        await aexec(db.table("station_messages").insert({
             "id": user_msg_id,
             "quorum_id": quorum_id,
             "role_id": role_id,
@@ -572,7 +588,7 @@ async def _process_agent_turn_impl(
             "tags": [],
             "metadata": None,
             "created_at": _now_iso(),
-        }).execute()
+        }))
     except Exception:
         logger.warning("agent_engine: failed to persist user message", exc_info=True)
 
@@ -585,7 +601,7 @@ async def _process_agent_turn_impl(
     # --- 11. Persist agent reply ---
     reply_msg_id = str(uuid.uuid4())
     try:
-        db.table("station_messages").insert({
+        await aexec(db.table("station_messages").insert({
             "id": reply_msg_id,
             "quorum_id": quorum_id,
             "role_id": role_id,
@@ -595,7 +611,7 @@ async def _process_agent_turn_impl(
             "tags": reply_tags,
             "metadata": None,
             "created_at": _now_iso(),
-        }).execute()
+        }))
     except Exception:
         logger.warning("agent_engine: failed to persist agent reply", exc_info=True)
 
@@ -607,12 +623,16 @@ async def _process_agent_turn_impl(
         try:
             from conversation_store import save_history
 
-            save_history(
-                db,
-                quorum_id,
-                role_id,
-                new_messages=new_pai_messages,
-                participant_id=participant_id,
+            # 12.6: bounce save_history through aexec — it's sync and writes
+            # to Supabase, so doing it inline would stall the loop.
+            await aexec(
+                lambda: save_history(
+                    db,
+                    quorum_id,
+                    role_id,
+                    new_messages=new_pai_messages,
+                    participant_id=participant_id,
+                )
             )
         except Exception:
             logger.warning(
@@ -623,7 +643,7 @@ async def _process_agent_turn_impl(
 
     # --- 12. Publish insight if reply is substantive (>50 chars) ---
     if len(reply.strip()) > 50:
-        _publish_insight(
+        await _publish_insight(
             db=db,
             quorum_id=quorum_id,
             role_id=role_id,
@@ -633,7 +653,7 @@ async def _process_agent_turn_impl(
         )
         # Notify any agents with high tag affinity to this insight so they can
         # incorporate it in their next turn without waiting for a human action.
-        _notify_relevant_agents(
+        await _notify_relevant_agents(
             db=db,
             quorum_id=quorum_id,
             from_role_id=role_id,
@@ -686,8 +706,11 @@ async def _process_a2a_request_impl(
     db = supabase_client
 
     # --- 1. Load request ---
+    # 12.6: wrap in aexec so the sync Supabase call runs off-loop.
     try:
-        req_result = db.table("agent_requests").select("*").eq("id", request_id).maybe_single().execute()
+        req_result = await aexec(
+            db.table("agent_requests").select("*").eq("id", request_id).maybe_single()
+        )
         if not req_result or not req_result.data:
             logger.warning("process_a2a_request: request %s not found", request_id)
             return "Request not found."
@@ -703,7 +726,9 @@ async def _process_a2a_request_impl(
 
     # --- 2. Load target role name + agent definition ---
     try:
-        role_row = db.table("roles").select("name, authority_rank").eq("id", to_role_id).maybe_single().execute()
+        role_row = await aexec(
+            db.table("roles").select("name, authority_rank").eq("id", to_role_id).maybe_single()
+        )
         target_role_name = role_row.data["name"] if role_row and role_row.data else "unknown"
         authority_rank = (role_row.data or {}).get("authority_rank", 0) if role_row and role_row.data else 0
     except Exception:
@@ -712,12 +737,18 @@ async def _process_a2a_request_impl(
 
     # Load sender name for context
     try:
-        sender_row = db.table("roles").select("name").eq("id", from_role_id).maybe_single().execute()
+        sender_row = await aexec(
+            db.table("roles").select("name").eq("id", from_role_id).maybe_single()
+        )
         sender_name = sender_row.data["name"] if sender_row and sender_row.data else "another agent"
     except Exception:
         sender_name = "another agent"
 
-    agent_def = _load_agent_definition(target_role_name, role_id=to_role_id, db=db)
+    # 12.6: bounce _load_agent_definition through aexec — it may hit
+    # agent_configs synchronously inside ``load_agent``.
+    agent_def = await aexec(
+        lambda: _load_agent_definition(target_role_name, role_id=to_role_id, db=db)
+    )
 
     # --- 3. Build minimal prompt for A2A response ---
     system_content = _build_system_prompt(
@@ -750,8 +781,11 @@ async def _process_a2a_request_impl(
         try:
             from conversation_store import load_history
 
-            persisted_history = load_history(
-                db, a2a_quorum_id_for_history, to_role_id, participant_id=None
+            # 12.6: bounce sync load_history through aexec.
+            persisted_history = await aexec(
+                lambda: load_history(
+                    db, a2a_quorum_id_for_history, to_role_id, participant_id=None
+                )
             )
         except Exception:
             logger.warning(
@@ -812,7 +846,7 @@ async def _process_a2a_request_impl(
         )
         if isinstance(req_version, int):
             update_chain = update_chain.eq("version", req_version)
-        update_chain.execute()
+        await aexec(update_chain)
     except Exception:
         logger.warning("process_a2a_request: failed to update request status", exc_info=True)
 
@@ -823,12 +857,15 @@ async def _process_a2a_request_impl(
         try:
             from conversation_store import save_history
 
-            save_history(
-                db,
-                a2a_quorum_id_for_history,
-                to_role_id,
-                new_messages=new_pai_messages,
-                participant_id=None,
+            # 12.6: bounce sync save_history through aexec.
+            await aexec(
+                lambda: save_history(
+                    db,
+                    a2a_quorum_id_for_history,
+                    to_role_id,
+                    new_messages=new_pai_messages,
+                    participant_id=None,
+                )
             )
         except Exception:
             logger.warning(
@@ -871,17 +908,19 @@ def _load_agent_definition(role_name: str, role_id: str | None = None, db=None):
         return None
 
 
-def _load_conversation_history(db, quorum_id: str, role_id: str, station_id: str) -> list[dict]:
-    """Load the last N messages for this station."""
+async def _load_conversation_history(db, quorum_id: str, role_id: str, station_id: str) -> list[dict]:
+    """Load the last N messages for this station.
+
+    12.6: async so callers can ``await`` the Supabase call via ``aexec``.
+    """
     try:
-        result = (
+        result = await aexec(
             db.table("station_messages")
             .select("role, content, tags")
             .eq("quorum_id", quorum_id)
             .eq("station_id", station_id)
             .order("created_at", desc=False)
             .limit(_MAX_HISTORY)
-            .execute()
         )
         return [{"role": r["role"], "content": r["content"]} for r in (result.data or [])]
     except Exception:
@@ -889,16 +928,18 @@ def _load_conversation_history(db, quorum_id: str, role_id: str, station_id: str
         return []
 
 
-def _load_quorum_context(db, quorum_id: str) -> dict | None:
+async def _load_quorum_context(db, quorum_id: str) -> dict | None:
     """Load basic quorum metadata for prompt context."""
     try:
-        result = db.table("quorums").select("title, description").eq("id", quorum_id).maybe_single().execute()
+        result = await aexec(
+            db.table("quorums").select("title, description").eq("id", quorum_id).maybe_single()
+        )
         return result.data if result else None
     except Exception:
         return None
 
 
-def _load_relevant_insights(
+async def _load_relevant_insights(
     db, quorum_id: str, role_id: str, agent_tags: set[str]
 ) -> list[dict]:
     """Load recent insights from other stations that share tag affinity.
@@ -909,14 +950,13 @@ def _load_relevant_insights(
     agent has no domain tags (new/unconfigured agents receive all insights).
     """
     try:
-        result = (
+        result = await aexec(
             db.table("agent_insights")
             .select("source_role_id, insight_type, content, tags, created_at")
             .eq("quorum_id", quorum_id)
             .neq("source_role_id", role_id)  # skip own insights
             .order("created_at", desc=True)
             .limit(20)
-            .execute()
         )
         rows = result.data or []
     except Exception:
@@ -946,21 +986,20 @@ def _load_relevant_insights(
     return selected
 
 
-def _load_relevant_documents(db, quorum_id: str, agent_tags: set[str]) -> list[dict]:
+async def _load_relevant_documents(db, quorum_id: str, agent_tags: set[str]) -> list[dict]:
     """Load active agent documents with tag affinity to this agent.
 
     Documents with no tags are given a small baseline score (0.1) so that
     untagged documents are still surfaced when no better matches exist.
     """
     try:
-        result = (
+        result = await aexec(
             db.table("agent_documents")
             .select("id, title, doc_type, content, tags, version")
             .eq("quorum_id", quorum_id)
             .eq("status", "active")
             .order("updated_at", desc=True)
             .limit(10)
-            .execute()
         )
         rows = result.data or []
     except Exception:
@@ -988,10 +1027,10 @@ def _load_relevant_documents(db, quorum_id: str, agent_tags: set[str]) -> list[d
     return [r for _, r in scored[:_MAX_DOCS]]
 
 
-def _load_pending_requests(db, quorum_id: str, role_id: str) -> list[dict]:
+async def _load_pending_requests(db, quorum_id: str, role_id: str) -> list[dict]:
     """Load pending A2A requests addressed to this role."""
     try:
-        result = (
+        result = await aexec(
             db.table("agent_requests")
             .select("id, from_role_id, request_type, content, priority, created_at")
             .eq("quorum_id", quorum_id)
@@ -999,7 +1038,6 @@ def _load_pending_requests(db, quorum_id: str, role_id: str) -> list[dict]:
             .eq("status", "pending")
             .order("priority", desc=True)
             .limit(5)
-            .execute()
         )
         return result.data or []
     except Exception:
@@ -1219,7 +1257,7 @@ def _build_prompt(
     )
 
 
-def _publish_insight(
+async def _publish_insight(
     db,
     quorum_id: str,
     role_id: str,
@@ -1229,7 +1267,7 @@ def _publish_insight(
 ) -> None:
     """Write a new agent insight row. Errors are swallowed to avoid breaking the turn."""
     try:
-        db.table("agent_insights").insert({
+        await aexec(db.table("agent_insights").insert({
             "id": str(uuid.uuid4()),
             "quorum_id": quorum_id,
             "source_role_id": role_id,
@@ -1239,12 +1277,12 @@ def _publish_insight(
             "self_relevance": 0.6,
             "version": 1,
             "created_at": _now_iso(),
-        }).execute()
+        }))
     except Exception:
         logger.warning("agent_engine: failed to publish insight", exc_info=True)
 
 
-def _notify_relevant_agents(
+async def _notify_relevant_agents(
     db,
     quorum_id: str,
     from_role_id: str,
@@ -1270,7 +1308,9 @@ def _notify_relevant_agents(
     """
     # Load quorum autonomy level to gate A2A notifications
     try:
-        q_result = db.table("quorums").select("autonomy_level").eq("id", quorum_id).maybe_single().execute()
+        q_result = await aexec(
+            db.table("quorums").select("autonomy_level").eq("id", quorum_id).maybe_single()
+        )
         autonomy = (q_result.data or {}).get("autonomy_level", 0.0)
     except Exception:
         autonomy = 0.0
@@ -1291,11 +1331,10 @@ def _notify_relevant_agents(
 
     try:
         # Load all roles in this quorum and their domain tags from agent_configs
-        result = (
+        result = await aexec(
             db.table("agent_configs")
             .select("role_id, domain_tags")
             .eq("quorum_id", quorum_id)
-            .execute()
         )
         role_configs: list[dict] = result.data or []
     except Exception:
@@ -1326,7 +1365,7 @@ def _notify_relevant_agents(
         target_role_id = agent["role_id"]
         score = agent["affinity_score"]
         try:
-            db.table("agent_requests").insert({
+            await aexec(db.table("agent_requests").insert({
                 "id": str(uuid.uuid4()),
                 "quorum_id": quorum_id,
                 "from_role_id": from_role_id,
@@ -1340,7 +1379,7 @@ def _notify_relevant_agents(
                 "priority": 1,  # Low priority per PRP section 6 table
                 "status": "pending",
                 "created_at": _now_iso(),
-            }).execute()
+            }))
             logger.debug(
                 "_notify_relevant_agents: notified role=%s (affinity=%.2f) in quorum=%s",
                 target_role_id,

@@ -164,7 +164,11 @@ def _install_quorum_llm_mock() -> None:
             elif sub == "affinity":
                 stub.compute_tag_affinity = lambda a, b: len(set(a) & set(b)) / max(len(set(a) | set(b)), 1)
                 stub.extract_tags_from_text = lambda text, existing_vocabulary=None, vocab=None: text.lower().split()[:5]
-                stub.find_relevant_agents = lambda tags, agents, threshold=0.2: agents
+                # Real signature: find_relevant_agents(source_tags, all_agents, threshold=0.2).
+                # agent_engine.py calls this with kwargs, so the stub must accept them.
+                def _stub_find_relevant_agents(source_tags=None, all_agents=None, threshold=0.2, *, tags=None, agents=None):
+                    return all_agents if all_agents is not None else (agents or [])
+                stub.find_relevant_agents = _stub_find_relevant_agents
                 stub.build_affinity_graph = lambda agents: {}
                 stub.canonicalize_tag = lambda t: t.lower().replace(" ", "_")[:30]
                 stub.merge_tag_vocabularies = lambda existing, new, max_size=500: existing | set(new)

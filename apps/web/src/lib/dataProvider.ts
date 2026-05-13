@@ -865,6 +865,111 @@ export function subscribeToFacilitator(
 }
 
 // ---------------------------------------------------------------------------
+// Participants (10.10 — presence dots)
+// ---------------------------------------------------------------------------
+
+/**
+ * One row of the ``participants`` table — minted on QR scan or laptop
+ * first-load and kept alive by ``POST /sessions/heartbeat`` every 30s.
+ *
+ * The presence-dots consumer (apps/web/src/hooks/usePresence.ts) buckets
+ * these by ``role_id`` and decays them client-side based on
+ * ``last_heartbeat_at`` (Supabase does not push UPDATEs as a row "ages out").
+ */
+export interface Participant {
+  id: string;
+  quorum_id: string;
+  role_id: string | null;
+  station_label: string | null;
+  display_name: string;
+  device_kind: "laptop" | "phone";
+  last_heartbeat_at: string | null;
+  created_at: string;
+}
+
+/**
+ * Fetch the current participants snapshot for a quorum.
+ * In demo mode returns an empty array — the demo engine doesn't simulate
+ * humans connecting via QR.
+ */
+export async function getParticipants(
+  quorumId: string,
+): Promise<Participant[]> {
+  if (isDemoMode()) return [];
+
+  const { supabase } = await import("./supabase");
+  const { data } = await supabase
+    .from("participants")
+    .select("*")
+    .eq("quorum_id", quorumId);
+
+  return (data ?? []) as Participant[];
+}
+
+/**
+ * Subscribe to participant INSERT / UPDATE / DELETE for a quorum.
+ *
+ * Handler receives the new row on INSERT/UPDATE and the deleted row's id on
+ * DELETE.  Returns an unsubscribe function.  In demo mode this is a no-op.
+ *
+ * NOTE: Supabase will not push events as rows "age out" (heartbeat goes
+ * stale).  The consumer (``usePresence``) MUST re-bucket on its own timer.
+ */
+export function subscribeToParticipants(
+  quorumId: string,
+  handler: (event: {
+    type: "INSERT" | "UPDATE" | "DELETE";
+    participant: Participant | null;
+    deletedId?: string;
+  }) => void,
+): () => void {
+  if (isDemoMode()) {
+    return () => {};
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let channel: any = null;
+
+  import("./supabase").then(({ supabase }) => {
+    channel = supabase
+      .channel(`participants:${quorumId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "participants",
+          filter: `quorum_id=eq.${quorumId}`,
+        },
+        (payload) => {
+          if (payload.eventType === "DELETE") {
+            const oldRow = payload.old as { id?: string } | null;
+            handler({
+              type: "DELETE",
+              participant: null,
+              deletedId: oldRow?.id,
+            });
+            return;
+          }
+          handler({
+            type: payload.eventType as "INSERT" | "UPDATE",
+            participant: payload.new as Participant,
+          });
+        },
+      )
+      .subscribe();
+  });
+
+  return () => {
+    if (channel) {
+      import("./supabase").then(({ supabase }) => {
+        supabase.removeChannel(channel!);
+      });
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Engine control (demo mode only)
 // ---------------------------------------------------------------------------
 

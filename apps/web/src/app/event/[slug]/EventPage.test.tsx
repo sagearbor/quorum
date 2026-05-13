@@ -62,6 +62,10 @@ vi.mock("@/lib/dataProvider", () => {
   return {
     isDemoMode: () => false,
     getQuorums: vi.fn().mockResolvedValue(mockQuorumsWithRoles),
+    // Presence (10.10) — return empty data + no-op subscribe so QuorumCard
+    // can mount usePresence without exploding.
+    getParticipants: vi.fn().mockResolvedValue([]),
+    subscribeToParticipants: vi.fn().mockReturnValue(() => {}),
   };
 });
 

@@ -180,6 +180,9 @@ vi.mock("@/lib/dataProvider", () => {
     subscribeToStationMessages: vi.fn().mockReturnValue(() => {}),
     getAgentDocuments: vi.fn().mockResolvedValue([]),
     subscribeToAgentDocuments: vi.fn().mockReturnValue(() => {}),
+    // Presence (10.10) — no-op so usePresence mounts cleanly.
+    getParticipants: vi.fn().mockResolvedValue([]),
+    subscribeToParticipants: vi.fn().mockReturnValue(() => {}),
   };
 });
 

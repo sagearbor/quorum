@@ -19,6 +19,8 @@ import { useAgentDocuments } from "@/hooks/useAgentDocuments";
 import { useA2ARequests } from "@/hooks/useA2ARequests";
 import type { StationMessage } from "@quorum/types";
 import { AgentActivityFeed } from "@/components/AgentActivityFeed";
+import { PresenceDots } from "@/components/PresenceDots";
+import { usePresence } from "@/hooks/usePresence";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -273,6 +275,9 @@ export default function QuorumPage() {
     stationId,
     currentRole?.id ?? ""
   );
+
+  // Presence (10.10) — one subscription per quorum, shared across all role buttons.
+  const presence = usePresence(quorumId);
 
   // Agent documents hook
   const { documents, loading: docsLoading } = useAgentDocuments(quorumId);
@@ -703,6 +708,7 @@ export default function QuorumPage() {
                     }}
                   >
                     <span>{role.name}</span>
+                    <PresenceDots roleId={role.id} presence={presence} />
                   </button>
                 );
               })}

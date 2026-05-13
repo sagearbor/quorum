@@ -221,8 +221,8 @@ class AzureOpenAIProvider(LLMProvider):
         self,
         messages: list[dict[str, str]],
         tier: LLMTier,
-        temperature: float = 0.4,
-        max_tokens: int = 1024,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
         *,
         message_history=None,
     ) -> str:
@@ -248,8 +248,8 @@ class AzureOpenAIProvider(LLMProvider):
         self,
         messages: list[dict[str, str]],
         tier: LLMTier,
-        temperature: float = 0.4,
-        max_tokens: int = 1024,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
         *,
         message_history=None,
     ) -> ChatResult:

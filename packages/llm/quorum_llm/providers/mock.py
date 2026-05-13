@@ -172,8 +172,8 @@ class MockLLMProvider(LLMProvider):
         self,
         messages: list[dict[str, str]],
         tier: LLMTier,
-        temperature: float = 0.4,
-        max_tokens: int = 1024,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
         *,
         message_history=None,
     ) -> str:
@@ -187,22 +187,30 @@ class MockLLMProvider(LLMProvider):
         the response itself — the mock stays deterministic and ignores prior
         state, which is the correct behaviour for unit tests that only care
         about the wiring.
+
+        ``temperature`` / ``max_tokens`` are accepted for parity with the real
+        providers and recorded on the call_log entry so tests can assert
+        per-agent overrides (item 11.9) were threaded through.  The mock
+        ignores them when computing the response.
         """
         flat = "\n".join(f"[{m['role']}]: {m['content']}" for m in messages)
         text = await self.complete(flat, tier)
-        # Annotate the last call_log entry with history info for test asserts.
+        # Annotate the last call_log entry with history + override info so
+        # callers can assert per-agent temperature/max_tokens propagated.
         if self.call_log:
             self.call_log[-1]["message_history_len"] = (
                 len(message_history) if message_history else 0
             )
+            self.call_log[-1]["temperature"] = temperature
+            self.call_log[-1]["max_tokens"] = max_tokens
         return text
 
     async def chat_with_history(
         self,
         messages: list[dict[str, str]],
         tier: LLMTier,
-        temperature: float = 0.4,
-        max_tokens: int = 1024,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
         *,
         message_history=None,
     ):

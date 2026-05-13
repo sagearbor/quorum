@@ -250,7 +250,31 @@ async def _run_autonomy_round(
             continue
 
         try:
-            await process_a2a_request(req["id"], db, llm_provider)
+            from agent_engine import PAUSED_SENTINEL
+
+            a2a_result = await process_a2a_request(req["id"], db, llm_provider)
+            if a2a_result == PAUSED_SENTINEL:
+                # LLM was unavailable for this turn. Do NOT persist a canned
+                # ack reply (mirrors the 10.6 fix on the A2A path). Flip the
+                # claim back to ``pending`` with ``claimed_at=NULL`` so the
+                # reaper-style behaviour is consistent and the next tick
+                # retries the same request.
+                try:
+                    db.table("agent_requests").update(
+                        {"status": "pending", "claimed_at": None}
+                    ).eq("id", req["id"]).execute()
+                except Exception:
+                    logger.warning(
+                        "Failed to revert paused A2A request %s back to pending",
+                        req["id"],
+                        exc_info=True,
+                    )
+                logger.info(
+                    "A2A request %s paused (LLM unavailable); reverted to pending for retry",
+                    req["id"],
+                )
+                continue
+
             logger.info(
                 "Auto-processed A2A request %s -> %s",
                 req["id"],

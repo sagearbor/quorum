@@ -367,6 +367,41 @@ async def run_respond(
     return _coerce_output(result.output)
 
 
+async def run_typed(
+    agent: Agent,
+    prompt: str,
+    settings: ModelSettings,
+    *,
+    output_type: type,
+    instructions: str | None = None,
+):
+    """Run an Agent with a typed ``output_type`` and return the validated object.
+
+    Pydantic AI's ``Agent.run(prompt, output_type=Model, ...)`` performs JSON
+    Schema generation, function-call/tool-mode dispatch, and validation —
+    including automatic retries on validation errors — so callers get a
+    fully-typed instance back (no manual ``json.loads`` glue).
+
+    Used by item 9.3 to swap three call sites off manual JSON parsing:
+    - ``apps/api/architect_agent.generate_roles`` (RoleSuggestionList)
+    - ``packages/llm/quorum_llm/pipeline.detect_conflicts`` (ConflictDetectionOutput)
+    - ``packages/llm/quorum_llm/pipeline.generate_artifact`` (ArtifactContentOutput)
+
+    ``instructions`` is optional and follows the same semantics as
+    ``run_respond`` / ``run_chat`` — Pydantic AI keeps it stable across runs
+    when ``message_history`` is threaded.
+    """
+    kwargs: dict = {
+        "output_type": output_type,
+        "model_settings": settings,
+    }
+    if instructions is not None:
+        kwargs["instructions"] = instructions
+    result = await agent.run(prompt, **kwargs)
+    _log_usage(agent, result)
+    return result.output
+
+
 # ---------------------------------------------------------------------------
 # Internal utilities
 # ---------------------------------------------------------------------------

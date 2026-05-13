@@ -49,6 +49,7 @@ from quorum_llm.providers._pai_common import (
     run_chat_with_history,
     run_complete,
     run_respond,
+    run_typed,
     tier_settings,
 )
 from quorum_llm.tier1 import extract_keywords
@@ -319,6 +320,35 @@ class AzureOpenAIProvider(LLMProvider):
             # shape stable while signalling "this came from a Responses model".
             return text, "pai-managed"
         return text, None
+
+    async def run_typed(
+        self,
+        prompt: str,
+        tier: LLMTier,
+        *,
+        output_type,
+        instructions: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ):
+        """Typed-output run via Pydantic AI's structured-output mode (item 9.3)."""
+        agent = self._agents.get(tier)
+        settings = tier_settings(tier, temperature=temperature, max_tokens=max_tokens)
+        try:
+            return await run_typed(
+                agent,
+                prompt,
+                settings,
+                output_type=output_type,
+                instructions=instructions,
+            )
+        except ModelHTTPError as exc:
+            _maybe_raise_budget("azure", tier, exc)
+            raise
+        except RateLimitError as exc:
+            raise BudgetExhaustedError(
+                provider="azure", tier=tier, detail=str(exc)
+            ) from exc
 
     async def embed(self, text: str) -> list[float]:
         """Embedding API — routed to a dedicated Azure embedding deployment.

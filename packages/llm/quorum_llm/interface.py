@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import json
+import logging
+import re
 from abc import ABC, abstractmethod
+from typing import TypeVar
+
+from pydantic import BaseModel, ValidationError
 
 from quorum_llm.models import LLMTier
+
+logger = logging.getLogger(__name__)
+
+_TypedOutputT = TypeVar("_TypedOutputT", bound=BaseModel)
 
 
 class LLMProvider(ABC):
@@ -112,6 +122,96 @@ class LLMProvider(ABC):
             message_history=message_history,
         )
         return ChatResult(text=text, new_messages=[])
+
+    async def run_typed(
+        self,
+        prompt: str,
+        tier: LLMTier,
+        *,
+        output_type: type[_TypedOutputT],
+        instructions: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ) -> _TypedOutputT:
+        """Run a typed-output LLM call and return a validated Pydantic instance.
+
+        Item 9.3 introduced this so the three Tier 2 / Tier 3 call sites
+        (architect role generation, conflict detection, artifact synthesis)
+        can hand a Pydantic ``BaseModel`` to the LLM and receive a validated
+        instance back — no manual ``json.loads`` glue, no regex strip-fences.
+
+        Default implementation:
+            * Flatten ``instructions`` + ``prompt`` into a single ``complete``
+              call.
+            * Strip markdown code fences from the response.
+            * Extract the leading JSON value (``{...}`` or ``[...]``).
+            * Validate via ``output_type.model_validate(...)``.
+
+        Providers backed by Pydantic AI (Azure / OpenAI / Anthropic / Local)
+        override this to call ``Agent.run(prompt, output_type=Model, ...)``
+        directly, which performs JSON-Schema-driven structured output with
+        automatic retries on validation failure.
+
+        Raises:
+            ValueError: If the LLM output cannot be parsed or validated.
+        """
+        schema_hint = json.dumps(output_type.model_json_schema(), indent=2)
+        composed_prompt = (
+            (f"{instructions}\n\n" if instructions else "")
+            + f"{prompt}\n\n"
+            + "Respond with a single JSON value matching this schema "
+            "(no markdown fences, no commentary):\n"
+            + schema_hint
+        )
+        raw = await self.complete(composed_prompt, tier)
+        return self._parse_typed_output(raw, output_type)
+
+    @staticmethod
+    def _parse_typed_output(
+        raw: str, output_type: type[_TypedOutputT]
+    ) -> _TypedOutputT:
+        """Best-effort parse of a JSON response into ``output_type``.
+
+        Strips markdown code fences, extracts the leading JSON value, and
+        validates via Pydantic.  Used by the ABC's default ``run_typed``
+        implementation for providers without native typed-output support.
+        """
+        text = (raw or "").strip()
+        if not text:
+            raise ValueError(
+                f"LLM returned empty response; cannot construct "
+                f"{output_type.__name__}"
+            )
+        text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+        text = re.sub(r"\n?```$", "", text).strip()
+
+        try:
+            schema = output_type.model_json_schema()
+            schema_type = schema.get("type")
+        except Exception:  # noqa: BLE001
+            schema_type = None
+
+        if schema_type == "array":
+            match = re.search(r"\[.*\]", text, re.DOTALL)
+        else:
+            match = re.search(r"\{.*\}", text, re.DOTALL)
+        if match:
+            text = match.group(0)
+
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                f"LLM returned unparseable JSON for {output_type.__name__}: "
+                f"{text[:200]}"
+            ) from exc
+
+        try:
+            return output_type.model_validate(data)
+        except ValidationError as exc:
+            raise ValueError(
+                f"LLM JSON did not validate against {output_type.__name__}: {exc}"
+            ) from exc
 
     async def respond(
         self,

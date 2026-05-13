@@ -31,6 +31,7 @@ from quorum_llm.providers._pai_common import (
     run_chat_with_history,
     run_complete,
     run_respond,
+    run_typed,
     tier_settings,
 )
 from quorum_llm.tier1 import extract_keywords
@@ -146,6 +147,37 @@ class LocalOllamaProvider(LLMProvider):
             _maybe_raise_budget(tier, exc)
             raise
         return text, None
+
+    async def run_typed(
+        self,
+        prompt: str,
+        tier: LLMTier,
+        *,
+        output_type,
+        instructions: str | None = None,
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+    ):
+        """Typed-output run via Pydantic AI's structured-output mode (item 9.3).
+
+        Ollama supports function-call / structured output for newer models
+        (Llama 3.1+, Qwen2.5+).  Pydantic AI handles the dispatch — if the
+        underlying model can't produce structured output, the run raises a
+        ``ModelHTTPError`` which the caller will surface.
+        """
+        agent = self._agents.get(tier)
+        settings = tier_settings(tier, temperature=temperature, max_tokens=max_tokens)
+        try:
+            return await run_typed(
+                agent,
+                prompt,
+                settings,
+                output_type=output_type,
+                instructions=instructions,
+            )
+        except ModelHTTPError as exc:
+            _maybe_raise_budget(tier, exc)
+            raise
 
     async def embed(self, text: str) -> list[float]:
         """Embedding via Ollama's OpenAI-compatible /v1/embeddings endpoint.

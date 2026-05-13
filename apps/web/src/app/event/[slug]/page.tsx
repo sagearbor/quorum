@@ -6,6 +6,8 @@ import Link from "next/link";
 import { getQuorums, isDemoMode } from "@/lib/dataProvider";
 import { QRCodeSVG } from "qrcode.react";
 import type { Quorum, Role } from "@quorum/types";
+import { PresenceDots } from "@/components/PresenceDots";
+import { usePresence } from "@/hooks/usePresence";
 
 interface EnrichedQuorum extends Quorum {
   roles: Role[];
@@ -123,6 +125,107 @@ function RoleDropdown({
                 {role.capacity === "unlimited" ? "open" : `1 seat`}
               </span>
             </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * QuorumCard — single quorum card.  Extracted so usePresence is called once
+ * per quorum (not per role) — avoids N realtime subscriptions per card.
+ */
+function QuorumCard({
+  quorum,
+  slug,
+  station,
+  router,
+}: {
+  quorum: EnrichedQuorum;
+  slug: string;
+  station: string | null;
+  router: ReturnType<typeof useRouter>;
+}) {
+  const presence = usePresence(quorum.id);
+  const roles = quorum.roles ?? [];
+
+  return (
+    <div
+      data-testid={`quorum-card-${quorum.id}`}
+      className="text-left border border-gray-200 dark:border-gray-700 rounded-xl p-4 bg-white dark:bg-gray-800 hover:border-indigo-300 hover:shadow-md transition-all"
+    >
+      <button
+        type="button"
+        onClick={() =>
+          router.push(
+            `/event/${slug}/quorum/${quorum.id}${station ? `?station=${station}` : ""}`
+          )
+        }
+        className="w-full text-left focus:outline-none"
+        data-testid={`quorum-card-link-${quorum.id}`}
+      >
+        <div className="flex items-start justify-between mb-2">
+          <h3 className="font-semibold text-sm leading-tight pr-2">
+            {quorum.title}
+          </h3>
+          <HeatBadge score={quorum.heat_score} />
+        </div>
+
+        <p className="text-xs text-gray-600 dark:text-gray-300 mb-3 line-clamp-2">
+          {quorum.description}
+        </p>
+
+        <div className="flex items-center gap-1.5 mb-1">
+          <StatusDot status={quorum.status} />
+          <span className="text-xs text-gray-600 dark:text-gray-300 capitalize">
+            {quorum.status}
+          </span>
+        </div>
+      </button>
+
+      {roles.length > 0 && (
+        <div className="flex flex-wrap gap-1.5 mt-3">
+          {roles.map((role) => (
+            <span
+              key={role.id}
+              data-testid={`role-pill-${role.id}`}
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium"
+              style={{
+                backgroundColor: `${role.color ?? "#6b7280"}18`,
+                color: role.color ?? "#6b7280",
+              }}
+            >
+              {role.name}
+              <PresenceDots
+                roleId={role.id}
+                presence={presence}
+                className="ml-1"
+              />
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* Role selection dropdown */}
+      <RoleDropdown
+        roles={roles}
+        slug={slug}
+        quorumId={quorum.id}
+        router={router}
+      />
+
+      {/* Direct station links */}
+      {roles.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1">
+          {roles.map((_, i) => (
+            <Link
+              key={i}
+              href={`/event/${slug}/quorum/${quorum.id}?station=${i + 1}`}
+              className="text-[10px] px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
+            >
+              Station {i + 1}
+            </Link>
           ))}
         </div>
       )}
@@ -297,87 +400,15 @@ export default function EventPage() {
       ) : (
         <section>
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-            {quorums.map((quorum) => {
-              const roles = quorum.roles ?? [];
-
-              return (
-                <div
-                  key={quorum.id}
-                  data-testid={`quorum-card-${quorum.id}`}
-                  className="text-left border border-gray-200 dark:border-gray-700 rounded-xl p-4 bg-white dark:bg-gray-800 hover:border-indigo-300 hover:shadow-md transition-all"
-                >
-                  <button
-                    type="button"
-                    onClick={() =>
-                      router.push(
-                        `/event/${slug}/quorum/${quorum.id}${station ? `?station=${station}` : ""}`
-                      )
-                    }
-                    className="w-full text-left focus:outline-none"
-                    data-testid={`quorum-card-link-${quorum.id}`}
-                  >
-                    <div className="flex items-start justify-between mb-2">
-                      <h3 className="font-semibold text-sm leading-tight pr-2">
-                        {quorum.title}
-                      </h3>
-                      <HeatBadge score={quorum.heat_score} />
-                    </div>
-
-                    <p className="text-xs text-gray-600 dark:text-gray-300 mb-3 line-clamp-2">
-                      {quorum.description}
-                    </p>
-
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <StatusDot status={quorum.status} />
-                      <span className="text-xs text-gray-600 dark:text-gray-300 capitalize">
-                        {quorum.status}
-                      </span>
-                    </div>
-                  </button>
-
-                  {roles.length > 0 && (
-                    <div className="flex flex-wrap gap-1.5 mt-3">
-                      {roles.map((role) => (
-                        <span
-                          key={role.id}
-                          data-testid={`role-pill-${role.id}`}
-                          className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium"
-                          style={{
-                            backgroundColor: `${role.color ?? "#6b7280"}18`,
-                            color: role.color ?? "#6b7280",
-                          }}
-                        >
-                          {role.name}
-                        </span>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Role selection dropdown */}
-                  <RoleDropdown
-                    roles={roles}
-                    slug={slug}
-                    quorumId={quorum.id}
-                    router={router}
-                  />
-
-                  {/* Direct station links */}
-                  {roles.length > 0 && (
-                    <div className="mt-2 flex flex-wrap gap-1">
-                      {roles.map((_, i) => (
-                        <Link
-                          key={i}
-                          href={`/event/${slug}/quorum/${quorum.id}?station=${i + 1}`}
-                          className="text-[10px] px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
-                        >
-                          Station {i + 1}
-                        </Link>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+            {quorums.map((quorum) => (
+              <QuorumCard
+                key={quorum.id}
+                quorum={quorum}
+                slug={slug}
+                station={station}
+                router={router}
+              />
+            ))}
           </div>
         </section>
       )}

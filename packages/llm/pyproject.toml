@@ -17,6 +17,12 @@ dependencies = [
     # `pydantic-ai-slim` ships only the core; the openai/anthropic extras pull
     # in the per-provider SDK shims (we already depend on those directly).
     "pydantic-ai-slim[openai,anthropic]>=1.94.0,<2.0",
+    # Pydantic Logfire — Pydantic AI's native observability layer.  Imported
+    # but only emits spans when LOGFIRE_TOKEN is set (send_to_logfire=
+    # 'if-token-present' is configured at FastAPI startup).  Bare logfire
+    # package here (no [fastapi] extra) since this package doesn't run the
+    # web framework — apps/api carries that extra.
+    "logfire>=4.0,<5",
 ]
 
 [project.optional-dependencies]

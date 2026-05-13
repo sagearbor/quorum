@@ -31,6 +31,8 @@ from quorum_llm.affinity import (
 )
 from tag_vocabulary import get_vocabulary, update_vocabulary
 
+from _obs import span as _obs_span
+
 logger = logging.getLogger(__name__)
 
 # Maximum conversation messages to load per station turn.
@@ -240,6 +242,41 @@ async def process_agent_turn(
     ``(PAUSED_SENTINEL, user_message_id, [PAUSED_TAG])`` — callers must check
     via ``is_paused_reply`` and surface a structured paused response instead
     of treating the value as a normal chat string.
+    """
+    # Logfire span — wraps the full agent turn (history load, prompt build,
+    # LLM call, persistence, tag extraction) so Sophie can trace one click
+    # end-to-end.  Exits automatically on the inner ``return``.
+    with _obs_span(
+        "process_agent_turn",
+        quorum_id=quorum_id,
+        role_id=role_id,
+        station_id=station_id,
+        participant_id=participant_id,
+    ):
+        return await _process_agent_turn_impl(
+            quorum_id=quorum_id,
+            role_id=role_id,
+            station_id=station_id,
+            user_message=user_message,
+            supabase_client=supabase_client,
+            llm_provider=llm_provider,
+            participant_id=participant_id,
+        )
+
+
+async def _process_agent_turn_impl(
+    quorum_id: str,
+    role_id: str,
+    station_id: str,
+    user_message: str,
+    supabase_client,
+    llm_provider,
+    *,
+    participant_id: str | None = None,
+) -> tuple[str, str, list[str]]:
+    """Internal: actual body of ``process_agent_turn``.  See the public
+    wrapper for behavioural contract — split out only so the Logfire span
+    can wrap the whole thing without re-indenting ~220 lines.
     """
     db = supabase_client
 
@@ -454,6 +491,26 @@ async def process_a2a_request(
     Never raises. On LLM failure returns the ``PAUSED_SENTINEL`` string —
     callers MUST check for this and avoid persisting a canned reply
     (mirrors the ``process_agent_turn`` 10.6 fix on the A2A path).
+    """
+    # Logfire span — wraps the full A2A dispatch (request lookup, target-agent
+    # resolution, LLM call, status update).  Sophie can see paused/error/ok
+    # outcomes per request_id in the trace timeline.
+    with _obs_span("process_a2a_request", request_id=request_id):
+        return await _process_a2a_request_impl(
+            request_id=request_id,
+            supabase_client=supabase_client,
+            llm_provider=llm_provider,
+        )
+
+
+async def _process_a2a_request_impl(
+    request_id: str,
+    supabase_client,
+    llm_provider,
+) -> str:
+    """Internal: actual body of ``process_a2a_request``.  See public wrapper
+    for behavioural contract — split out only so the Logfire span can wrap
+    the whole thing without re-indenting ~180 lines.
     """
     db = supabase_client
 

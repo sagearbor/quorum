@@ -521,4 +521,17 @@ AUTONOMY_AUTO_CONTRIBUTE_MODE=  # 'off' (default) | 'concat' | 'synthesize'
                                 # when humans are silent. KEEP DEFAULT 'off' for expo —
                                 # 'concat' produces fragment-salad artifacts;
                                 # 'synthesize' adds one LLM call per turn.
+
+# --- Logfire observability (optional) ---
+# All vars below are OPTIONAL. Without LOGFIRE_TOKEN the SDK is a no-op
+# (send_to_logfire='if-token-present' is hard-coded at FastAPI startup),
+# so omitting them keeps Quorum running with zero observability cost.
+LOGFIRE_TOKEN=                  # write token from https://logfire.pydantic.dev project settings.
+                                # When set, every FastAPI route, Pydantic AI Agent.run(),
+                                # autonomy round, agent turn, and A2A dispatch ships
+                                # spans to Logfire. Free Personal tier: 10M spans/month.
+QUORUM_VERSION=                 # default 'dev'. Surfaced as service_version in Logfire spans —
+                                # set to git SHA / release tag in production deploys.
+LOGFIRE_SERVICE_NAME=           # default 'quorum-api'. Override only when running multiple
+                                # Quorum instances against one Logfire project.
 ```

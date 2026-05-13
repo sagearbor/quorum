@@ -85,8 +85,12 @@ describe("EventPage", () => {
 
   it("shows station badge from URL param", async () => {
     render(<EventPage />);
+    // The per-quorum role cards also render "Station N" buttons, so we
+    // target the URL-derived header badge by data-testid for accuracy.
     await waitFor(() => {
-      expect(screen.getByText("Station 1")).toBeInTheDocument();
+      const badge = screen.getByTestId("station-badge");
+      expect(badge).toBeInTheDocument();
+      expect(badge).toHaveTextContent("Station 1");
     });
   });
 

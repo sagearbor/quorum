@@ -452,15 +452,29 @@ interface LLMProvider {
 
 ```
 AZURE_OPENAI_ENDPOINT=
-AZURE_OPENAI_KEY=
-AZURE_OPENAI_DEPLOYMENT_T2=    # cheap model (gpt-4o-mini) — conflict detection
-AZURE_OPENAI_DEPLOYMENT_T3=    # expensive model (gpt-4o) — artifact synthesis
-AZURE_OPENAI_DEPLOYMENT_T5=    # embedding model (text-embedding-ada-002 or text-embedding-3-small)
-                                # Used for semantic similarity in tag affinity engine.
-                                # Falls back to tag-only Jaccard similarity if unset.
+AZURE_OPENAI_KEY=                       # optional — omit to use Managed Identity (DefaultAzureCredential)
+AZURE_OPENAI_DEPLOYMENT_T2=             # cheap model (gpt-4o-mini) — conflict detection / agent chat
+AZURE_OPENAI_DEPLOYMENT_T3=             # expensive model (gpt-4o) — artifact synthesis / deep reasoning
+AZURE_OPENAI_DEPLOYMENT_T5=             # gpt-5-nano deployment via Responses API (optional — falls back to T2)
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=      # embedding deployment (text-embedding-3-small → 1536 dims,
+                                        # text-embedding-3-large → 3072 dims).
+                                        # REQUIRED for embed() on Azure; chat deployments do NOT serve embeddings.
+                                        # Unset → AzureOpenAIProvider.embed() raises ValueError.
+AZURE_OPENAI_API_VERSION=               # default: 2025-03-01-preview (required for Responses API on gpt-5)
+AZURE_OPENAI_REASONING_DEPLOYMENTS=     # optional comma list of deployment names that should use Responses API
+
+OPENAI_API_KEY=                         # required for plain OpenAIProvider
+OPENAI_MODEL_T2=                        # default: gpt-4o-mini
+OPENAI_MODEL_T3=                        # default: gpt-4o
+OPENAI_EMBEDDING_MODEL=                 # default: text-embedding-3-small (1536 dims)
+
+ANTHROPIC_API_KEY=                      # AnthropicProvider — embed() raises NotImplementedError
+ANTHROPIC_MODEL_T2=                     # default: claude-haiku-4-5-20251001
+ANTHROPIC_MODEL_T3=                     # default: claude-sonnet-4-6
+
 SUPABASE_URL=
 SUPABASE_ANON_KEY=
-SUPABASE_SERVICE_KEY=           # required for seed-agent-documents.py (bypasses RLS)
+SUPABASE_SERVICE_KEY=                   # required for seed-agent-documents.py (bypasses RLS)
 NEXTAUTH_SECRET=
 
 # --- LLM provider envs (Pydantic AI provider implementations) ---

@@ -1,0 +1,279 @@
+{
+  "event": {
+    "id": "00000000-0000-0000-0000-000000000003",
+    "name": "Duke Med/Pratt Joint Faculty Search — AI in Medicine Chair",
+    "slug": "duke-joint-faculty-2026",
+    "access_code": "FACULTY2026",
+    "max_active_quorums": 3,
+    "created_by": "seed-architect",
+    "created_at": "2026-05-13T08:00:00Z"
+  },
+  "quorums": [
+    {
+      "id": "00000000-0000-0000-0000-000000003010",
+      "event_id": "00000000-0000-0000-0000-000000000003",
+      "title": "Joint Med/Pratt Endowed Chair Search: AI in Medicine — Final Candidate Deliberation",
+      "description": "Search committee final deliberation for the inaugural Mary Duke Biddle Foundation Endowed Chair in AI & Clinical Medicine, a joint appointment between the School of Medicine (Department of Biostatistics & Bioinformatics, 60% effort) and the Pratt School of Engineering (Department of ECE, 40% effort). Three finalists after a 14-month search and 47 applications: (A) Dr. Amara Okonkwo, currently Associate Professor at Johns Hopkins (computational biology background, NEJM-cited multimodal foundation model, 2 R01s, mid-career, would require department-level retention package); (B) Dr. Liam Petersen, Full Professor at Stanford (ML systems background, K Award-trained physician-scientist, dual MD/PhD, 5 R01s + 1 P30, expensive, possible flight risk); (C) Dr. Priya Rangarajan, Assistant Professor at MIT CSAIL (pure CS background, no clinical training, MacArthur fellow, would create a new cross-school collaboration model). Budget envelope: $3.8M startup over 5 years, jointly funded. Open question: which candidate, what counter-offer, and how to structure the joint appointment governance.",
+      "status": "active",
+      "heat_score": 58,
+      "dashboard_types": ["authority_cascade_tree", "decision_waterfall"],
+      "carousel_mode": "multi-view",
+      "roles": [
+        {
+          "id": "00000000-0000-0000-0000-000000003101",
+          "name": "Dean of the School of Medicine",
+          "capacity": 1,
+          "authority_rank": 5,
+          "prompt_template": [
+            { "field_name": "strategic_priorities", "prompt": "How does this hire advance the School of Medicine's strategic priorities for the next 5 years?" },
+            { "field_name": "budget_authority", "prompt": "What is the maximum budget envelope the school can commit to startup and protected time?" },
+            { "field_name": "appointment_terms", "prompt": "What are the non-negotiable terms for the SoM portion of the joint appointment?" }
+          ],
+          "fallback_chain": [],
+          "color": "#2563EB"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000003102",
+          "name": "Dean of the Pratt School of Engineering",
+          "capacity": 1,
+          "authority_rank": 5,
+          "prompt_template": [
+            { "field_name": "pratt_priorities", "prompt": "How does this hire fit Pratt's strategic plan and existing strengths?" },
+            { "field_name": "engineering_culture_fit", "prompt": "Which candidate best integrates with the ECE department culture and graduate program needs?" },
+            { "field_name": "joint_governance", "prompt": "How should the joint appointment be governed — split P&T, single P&T, or sequential review?" }
+          ],
+          "fallback_chain": [],
+          "color": "#DC2626"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000003103",
+          "name": "Chair, Biostatistics & Bioinformatics (SoM)",
+          "capacity": 1,
+          "authority_rank": 4,
+          "prompt_template": [
+            { "field_name": "department_fit", "prompt": "Which candidate strengthens Biostat/Bioinfo most as a primary departmental home?" },
+            { "field_name": "mentoring_capacity", "prompt": "What faculty mentoring and PhD student supervision capacity does each candidate bring?" },
+            { "field_name": "clinical_collaboration", "prompt": "How will the candidate build collaborations with clinical departments (cardiology, oncology, radiology, neurology)?" }
+          ],
+          "fallback_chain": [],
+          "color": "#0891B2"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000003104",
+          "name": "Chair, ECE (Pratt)",
+          "capacity": 1,
+          "authority_rank": 4,
+          "prompt_template": [
+            { "field_name": "ece_research_fit", "prompt": "Which candidate strengthens ECE's research portfolio and which sub-area?" },
+            { "field_name": "teaching_load", "prompt": "What is the realistic teaching load and graduate program contribution from a 40% ECE candidate?" },
+            { "field_name": "ece_governance", "prompt": "What does the ECE faculty want for the joint appointment terms?" }
+          ],
+          "fallback_chain": [],
+          "color": "#A855F7"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000003105",
+          "name": "Search Committee Chair",
+          "capacity": 1,
+          "authority_rank": 3,
+          "prompt_template": [
+            { "field_name": "committee_consensus", "prompt": "What is the search committee's ranked preference and where is the dissent?" },
+            { "field_name": "candidate_strengths_weaknesses", "prompt": "Summarize each candidate's strengths and weaknesses as seen by the committee." },
+            { "field_name": "process_concerns", "prompt": "Are there any process concerns or candidates who should be re-engaged?" }
+          ],
+          "fallback_chain": [],
+          "color": "#D97706"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000003106",
+          "name": "Office for Institutional Equity",
+          "capacity": 1,
+          "authority_rank": 3,
+          "prompt_template": [
+            { "field_name": "search_compliance", "prompt": "Has the search complied with Duke's diversity, equity and inclusion process requirements?" },
+            { "field_name": "candidate_pool_assessment", "prompt": "How does the final shortlist compare to the initial pool from an equity standpoint?" },
+            { "field_name": "retention_environment", "prompt": "What institutional supports affect retention for each candidate?" }
+          ],
+          "fallback_chain": [],
+          "color": "#EC4899"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000003107",
+          "name": "Vice Provost for Faculty Affairs (Finance)",
+          "capacity": 1,
+          "authority_rank": 4,
+          "prompt_template": [
+            { "field_name": "budget_constraints", "prompt": "What is the central university's budget constraint and what are the cost-share options between the schools?" },
+            { "field_name": "package_competitiveness", "prompt": "How does each candidate's expected package compare to peer offers in the market?" },
+            { "field_name": "endowment_alignment", "prompt": "Are the endowment terms (Biddle Foundation) compatible with each candidate's profile?" }
+          ],
+          "fallback_chain": [],
+          "color": "#059669"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000003108",
+          "name": "Faculty External Advisor",
+          "capacity": "unlimited",
+          "authority_rank": 2,
+          "prompt_template": [
+            { "field_name": "external_perspective", "prompt": "What does the external field think of each candidate's trajectory and impact?" },
+            { "field_name": "competing_offers", "prompt": "Are any of these candidates known to have competing offers and from where?" }
+          ],
+          "fallback_chain": [],
+          "color": "#7C3AED"
+        }
+      ],
+      "contributions": [
+        {
+          "id": "c0000000-0000-0000-0000-000000003001",
+          "role_id": "00000000-0000-0000-0000-000000003105",
+          "user_token": "seed-search-chair-001",
+          "content": "After three rounds of interviews and the campus visits in March, the committee's ranked preference (by vote count of 9 committee members): #1 Petersen (5 votes), #2 Okonkwo (3 votes), #3 Rangarajan (1 vote). Petersen's strengths: established physician-scientist, immediate clinical translation, 5 R01s already, can hit the ground running. Concerns: most expensive, possible flight risk back to Stanford if our package can't match, somewhat senior (full prof, less mentoring runway). Okonkwo's strengths: mid-career sweet spot, foundational multimodal model that's getting cited everywhere, demonstrated mentoring of underrepresented PhD students. Concerns: would require us to negotiate against Hopkins' retention package which they ARE preparing. Rangarajan's strengths: brilliant pure-CS researcher who would bring entirely new methods; MacArthur lends prestige. Concerns: no clinical training, no NIH funding history, may not survive med-school tenure process if joint home is biostat.",
+          "structured_fields": {
+            "committee_consensus": "Committee leans Petersen 5/9, Okonkwo 3/9, Rangarajan 1/9. Petersen is the safe high-prestige choice; Okonkwo is the high-upside mid-career choice; Rangarajan is the high-variance, transformative-if-it-works choice.",
+            "candidate_strengths_weaknesses": "Petersen: 5 R01s, P30, MD/PhD, established. WEAK: cost, flight risk, less mentoring runway. Okonkwo: 2 R01s, foundational paper, mid-career, strong mentor. WEAK: Hopkins counter-offer. Rangarajan: MacArthur, pure CS innovator. WEAK: no clinical, no NIH, P&T risk.",
+            "process_concerns": "Search was extended by 4 months to expand the pool — generated 12 additional applications, of which 4 made round 2. Final pool met OIE process requirements. No candidates have been formally withdrawn or rejected; one withdrew during round 2 citing competing offer from CMU."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:00:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000003002",
+          "role_id": "00000000-0000-0000-0000-000000003106",
+          "user_token": "seed-oie-001",
+          "content": "Search process complied with all OIE requirements: diverse search committee (4 women, 3 underrepresented minorities of 9), advertising in 11 venues including 4 affinity organizations, structured interviews with standardized rubric, implicit bias training completed by all committee members in Q3 2025. Initial pool: 47 applications, 35% women, 28% underrepresented minorities. Final shortlist (3 candidates) is one woman (Okonkwo), one man (Petersen), one woman (Rangarajan) — 2/3 women, 1/3 underrepresented minority (Okonkwo). The retention environment for an underrepresented mid-career hire requires careful attention to mentoring network and seed funding for trainees — strongly support including a dedicated trainee diversity supplement in any offer.",
+          "structured_fields": {
+            "search_compliance": "Full compliance with OIE process. Diverse committee, multi-venue advertising, structured rubric, implicit bias training. Process documentation complete and reviewable.",
+            "candidate_pool_assessment": "Initial pool 47 (35% women, 28% URM). Shortlist 3 (2 women, 1 URM). Shortlist composition exceeds pool composition on both dimensions — a healthy outcome.",
+            "retention_environment": "Okonkwo retention requires dedicated peer mentoring (mid-career, joint appointment, URM). Recommend $250K trainee diversity supplement and explicit P&T pathway commitment. Petersen retention is purely package competition. Rangarajan retention requires building a clinical collaboration network we'd need to engineer."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:05:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000003003",
+          "role_id": "00000000-0000-0000-0000-000000003103",
+          "user_token": "seed-biostat-chair-001",
+          "content": "From the Biostat/Bioinfo perspective (primary 60% home for this hire), Okonkwo is the strongest fit. Her multimodal foundation model work intersects directly with our current strength in EHR analytics and biomarker discovery. She would mentor 4-6 PhD students immediately, anchor our new Center for Computational Medicine, and collaborate with Cardiology (Mehta's group) and Oncology (Liu's group) — both have expressed enthusiasm. Petersen is more senior but his work has drifted toward pure ML systems and away from biology — culturally he'd live more in ECE than Biostat. Rangarajan would be exciting but my department cannot be her primary tenure home — she has no NIH track record and our P&T expectations are NIH-funded research; this would set her up to fail.",
+          "structured_fields": {
+            "department_fit": "Okonkwo is the strongest Biostat fit (multimodal models, EHR, biomarker work). Petersen is drifting toward ECE-flavored research. Rangarajan is pure CS — wrong primary home for tenure.",
+            "mentoring_capacity": "Okonkwo would immediately mentor 4-6 PhDs; she has a record of mentoring URM students through to faculty positions. Petersen brings his existing 8 students and 3 postdocs but at full prof level mentoring is more strategic than hands-on. Rangarajan has only 2 students currently.",
+            "clinical_collaboration": "Okonkwo has letters of intent from Cardiology (Mehta) and Oncology (Liu) for joint work. Petersen has lined up Radiology and Neurosurgery. Rangarajan would need to build all clinical bridges from scratch — feasible but 18-24 months to first joint grant."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:10:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000003004",
+          "role_id": "00000000-0000-0000-0000-000000003104",
+          "user_token": "seed-ece-chair-001",
+          "content": "From ECE's perspective (40% home), Rangarajan is the most exciting candidate — she would transform our AI/ML research portfolio and the MacArthur is a recruiting magnet. Petersen is solid but at 40% effort his ECE contribution will be diluted; we already have strong ML-systems faculty. Okonkwo is excellent but her work is more 'applied to medicine' than 'fundamental methods' — important but not where ECE most needs strengthening. ECE faculty in the search subcommittee voted 4-3 for Rangarajan over Petersen. We're prepared to be flexible on tenure home — if Biostat won't take Rangarajan, ECE will be her primary with joint courtesy in Biostat, provided the SoM is on board with that inversion.",
+          "structured_fields": {
+            "ece_research_fit": "Rangarajan strongest (transformative pure ML methods + MacArthur). Petersen solid but redundant with existing ML systems strength. Okonkwo is applied — important but not strategic for ECE.",
+            "teaching_load": "40% appointment at ECE = 1 graduate course per year + 2-3 PhD students. All three candidates can deliver. Rangarajan would teach a new graduate seminar in foundation models that fills a clear ECE curriculum gap.",
+            "ece_governance": "ECE prefers split P&T with each school evaluating in its own tradition, weighted 60/40. Willing to invert primary home for Rangarajan (ECE primary, Biostat courtesy) if SoM and central agree. Will not accept a single-school P&T process."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:15:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000003005",
+          "role_id": "00000000-0000-0000-0000-000000003107",
+          "user_token": "seed-vpfa-001",
+          "content": "Budget envelope is $3.8M startup over 5 years, jointly funded 60/40 between SoM and Pratt. Expected package costs based on market data: Okonkwo ~$3.2M (within envelope, room for retention supplement). Petersen ~$4.5-5M (over envelope by $700K-$1.2M; SoM would need to cover the gap from discretionary or central provost funds). Rangarajan ~$2.8M (under envelope; but she'd need a separate clinical-collaboration seed fund of ~$500K to build the bridges). The Biddle endowment terms specify 'AI and Clinical Medicine' — Rangarajan's profile is a stretch for the endowment language; legal review would likely require we add explicit language about cross-school collaboration to the appointment letter. Central provost has indicated willingness to add $500K-$1M one-time supplement if the candidate is exceptional and the case is documented.",
+          "structured_fields": {
+            "budget_constraints": "Envelope $3.8M jointly. Petersen exceeds by $700K-$1.2M. Okonkwo fits with room. Rangarajan is under but needs $500K clinical-collaboration seed. Central provost has $500K-$1M discretionary supplement available for exceptional case.",
+            "package_competitiveness": "Petersen package would be competitive but Stanford retention will likely match (they have deeper pockets). Okonkwo package would beat Hopkins' likely counter ($2.4-2.7M) decisively. Rangarajan package would beat MIT comfortably as MIT does not match outside offers for assistant profs.",
+            "endowment_alignment": "Biddle endowment language ('AI and Clinical Medicine') fits Petersen perfectly and Okonkwo strongly. Rangarajan is a stretch — legal review needed and appointment letter language must add cross-school collaboration framing to be compliant."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:20:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000003006",
+          "role_id": "00000000-0000-0000-0000-000000003108",
+          "user_token": "seed-advisor-001",
+          "content": "External perspective from peers in the field: Petersen is well known and respected, considered a top-5 physician-scientist in his cohort, but the rumor mill says Stanford is preparing a major retention package including an additional R&D center directorship — if true, our offer would have to top $5M plus a center to win. Okonkwo is widely regarded as the next major figure in computational medicine, with her foundation model paper getting cited in every major AI-in-medicine review; multiple institutions (UCSF, UPenn, Hopkins itself) are watching her. Rangarajan has had three industry offers (Anthropic, OpenAI, Google) in the past year, all declined — she's clearly committed to academia. Real talk: Okonkwo is the candidate the field would most expect us to land, and landing her would be the cleanest signal that Duke is serious in this space.",
+          "structured_fields": {
+            "external_perspective": "Petersen: senior establishment figure, well-known, top-5 in cohort. Okonkwo: rising star, next major figure, field is watching closely. Rangarajan: brilliant outsider, MacArthur-blessed, committed to academia despite industry offers.",
+            "competing_offers": "Petersen: Stanford retention being prepared, likely includes center directorship and $5M+. Okonkwo: Hopkins WILL counter; UCSF and UPenn are watching. Rangarajan: industry offers declined; MIT happy to keep her on standard track but no exceptional retention expected."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:25:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000003007",
+          "role_id": "00000000-0000-0000-0000-000000003101",
+          "user_token": "seed-dean-som-001",
+          "content": "From the School of Medicine, my strategic priorities for the next 5 years are: (1) become a top-3 institution for AI in medicine, (2) launch the Center for Computational Medicine with a major external partnership announcement, (3) grow our NIH portfolio by 25% in computational sciences. All three goals point most cleanly toward Okonkwo. Petersen would be a coup but the budget gap and flight risk worry me — we have lost two senior recruits to Stanford retention plays in the last 4 years. Rangarajan is too high-variance for an endowed chair launch. Non-negotiable terms for the SoM portion: (a) primary tenure home in Biostat, (b) NIH R01 expectation within 24 months for any non-funded candidate, (c) commitment to teach the new Foundations of Computational Medicine course annually, (d) center director role activated within 18 months. I am willing to commit up to $2.6M of the SoM portion of the package and lobby the provost for $500K supplement to land Okonkwo.",
+          "structured_fields": {
+            "strategic_priorities": "Top-3 AI-in-medicine, Center for Computational Medicine launch, +25% NIH computational portfolio. All three goals favor Okonkwo most cleanly.",
+            "budget_authority": "SoM willing to commit $2.6M (of 60% share = $2.28M required for envelope; we'll go $300K over for the right candidate). Will lobby provost for $500K supplement. No SoM contribution beyond $3.1M total including supplement.",
+            "appointment_terms": "Non-negotiable: (a) primary tenure home Biostat, (b) R01 within 24 months, (c) teach Foundations of Computational Medicine, (d) center director by month 18."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:30:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000003008",
+          "role_id": "00000000-0000-0000-0000-000000003102",
+          "user_token": "seed-dean-pratt-001",
+          "content": "Pratt's view differs. We have ML systems already; we don't need another Petersen-style hire. What ECE genuinely lacks is a foundation-model-era pure methods leader, which is Rangarajan. The MacArthur and the ability to recruit top PhD students at the Anthropic/OpenAI tier would be transformative for Pratt. However, I recognize the joint appointment constraints — if the SoM cannot accommodate Rangarajan as primary, then Okonkwo is a strong second choice and Pratt can support that. I will NOT support Petersen at this price point — the flight risk and budget impact are not justified versus available alternatives. Pratt commits up to $1.5M of the 40% share, which lands Okonkwo within envelope or Rangarajan well under. Pratt cannot exceed $1.5M.",
+          "structured_fields": {
+            "pratt_priorities": "Foundation-model methods leadership is the strategic gap. Existing strength in ML systems. Pratt's #1 preference is Rangarajan; strong #2 is Okonkwo.",
+            "engineering_culture_fit": "Rangarajan would integrate cleanly with ECE — pure methods researcher, MacArthur prestige. Okonkwo would integrate well as the bridge faculty. Petersen would be redundant.",
+            "joint_governance": "Pratt supports split P&T with 60/40 evaluation weighting. Willing to be primary home for Rangarajan only. Will not support Petersen at proposed price."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:35:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000003009",
+          "role_id": "00000000-0000-0000-0000-000000003101",
+          "user_token": "seed-dean-som-001",
+          "content": "Reflecting on Pratt's input: there is real convergence on Okonkwo as the best-of-both-worlds outcome. Both schools support, budget fits within envelope ($3.2M + $250K diversity supplement = $3.45M, within $3.8M), tenure home in Biostat aligns with NIH expectation, and the OIE recommendation for trainee diversity supplement is achievable. Hopkins will counter but we can decisively beat their likely $2.4-2.7M offer. Joint governance via split P&T weighted 60/40 is acceptable. Recommend the committee move to formal offer recommendation for Okonkwo with the following package: $3.2M startup over 5 years (60/40 split), $250K trainee diversity supplement (central provost), $500K central provost discretionary toward space and renovation, center director role formally appointed at month 18 contingent on R01 progress. Petersen and Rangarajan to be sent professional declines with appreciation.",
+          "structured_fields": {
+            "strategic_priorities": "Okonkwo recommendation aligns top-3 AI-in-med strategy, supports Center for Computational Medicine launch, and accelerates NIH portfolio growth.",
+            "budget_authority": "Total commit: $3.45M ($3.2M envelope + $250K supplement). Central provost contribution: $500K space/renovation. Total package $3.95M with overhead. Within envelope with discretionary supplement applied.",
+            "appointment_terms": "All non-negotiables met. Primary tenure home Biostat, R01 within 24mo, teach Foundations of Computational Medicine, center director at month 18 contingent on R01 progress. Split P&T 60/40."
+          },
+          "tier_processed": 2,
+          "created_at": "2026-05-13T09:45:00Z"
+        }
+      ],
+      "artifact": {
+        "id": "00000000-0000-0000-0000-000000003201",
+        "version": 1,
+        "content_hash": "sha256:seed-faculty-hiring-v1",
+        "sections": [
+          {
+            "title": "Recommendation",
+            "content": "Offer the Mary Duke Biddle Foundation Endowed Chair in AI & Clinical Medicine to Dr. Amara Okonkwo (currently Associate Professor, Johns Hopkins).",
+            "source_roles": ["Dean of the School of Medicine", "Dean of the Pratt School of Engineering", "Search Committee Chair"],
+            "status": "approved"
+          },
+          {
+            "title": "Package",
+            "content": "Total commitment $3.95M:\n- $3.2M startup over 5 years (SoM 60% = $1.92M, Pratt 40% = $1.28M, within envelope)\n- $250K trainee diversity supplement (central provost, per OIE recommendation)\n- $500K space and renovation (central provost discretionary)\n- Full lab and admin assistant support per Biostat departmental norms\n- Defined-benefit retirement match per Duke standard\n\nTotal exceeds $3.8M joint envelope by $150K, covered by central provost discretionary supplement.",
+            "source_roles": ["Vice Provost for Faculty Affairs (Finance)", "Dean of the School of Medicine", "Dean of the Pratt School of Engineering"],
+            "status": "approved"
+          },
+          {
+            "title": "Appointment Terms",
+            "content": "1. Primary tenure home: Biostatistics & Bioinformatics (60%)\n2. Joint courtesy appointment: ECE / Pratt (40%)\n3. Split P&T review weighted 60/40 between schools\n4. Director, Center for Computational Medicine, by month 18 (contingent on R01 award progress)\n5. R01 expectation within 24 months (existing 2 R01s transferable)\n6. Annual teaching: Foundations of Computational Medicine (SoM, required) + graduate ML in medicine seminar (Pratt)\n7. Endowment income from the Biddle Foundation Chair: per Duke endowed chair conventions",
+            "source_roles": ["Dean of the School of Medicine", "Chair, Biostatistics & Bioinformatics (SoM)", "Chair, ECE (Pratt)"],
+            "status": "approved"
+          },
+          {
+            "title": "Process & Next Steps",
+            "content": "1. Search Committee Chair drafts formal offer letter by Friday\n2. Vice Provost confirms central provost $500K + $250K supplements in writing\n3. Dean SoM and Dean Pratt co-sign offer\n4. Initial verbal offer to Dr. Okonkwo by Monday\n5. Decline letters to Dr. Petersen and Dr. Rangarajan, both with personal note from SoM Dean (keep doors open for future joint appointments)\n6. Begin announcement and onboarding planning conditional on acceptance\n7. Hopkins counter is expected — be prepared to enhance by an additional $200K from central reserves if needed within 14 days",
+            "source_roles": ["Search Committee Chair", "Vice Provost for Faculty Affairs (Finance)", "Dean of the School of Medicine", "Dean of the Pratt School of Engineering"],
+            "status": "pending_action"
+          }
+        ],
+        "status": "approved",
+        "created_at": "2026-05-13T10:00:00Z"
+      }
+    }
+  ]
+}

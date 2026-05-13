@@ -14,6 +14,7 @@ vi.mock("three", () => {
     position: { set: vi.fn() },
     lookAt: vi.fn(),
     aspect: 1,
+    fov: 35,
     updateProjectionMatrix: vi.fn(),
   }));
   const WebGLRenderer = vi.fn(() => ({
@@ -115,6 +116,52 @@ describe("IdleScene", () => {
     it("should accept a glbUrl prop without throwing", () => {
       expect(() => {
         render(<IdleScene glbUrl="/avatars/test.glb" />);
+      }).not.toThrow();
+    });
+  });
+
+  // ─────────────────────────────────────────────────────────────────
+  // Camera framing — "torso" mode when speaking
+  //
+  // Sophie's UX note: a static full-body mannequin standing still while
+  // the avatar talks is off-putting. When `cameraMode="torso"` is passed,
+  // the scene should initialize with a tighter FOV and a closer camera
+  // position so the framing reads as a talking head.
+  //
+  // We only smoke-mount here: the Three.js scene boots inside an async IIFE
+  // and unit-asserting camera params requires either real WebGL or a much
+  // heavier mock setup. The flip-and-lerp behavior is exercised end-to-end
+  // by AvatarPanel.test.tsx (which asserts the prop wiring) plus visual QA.
+  // ─────────────────────────────────────────────────────────────────
+  describe("cameraMode", () => {
+    it("mounts cleanly when cameraMode is omitted (defaults to full_body)", () => {
+      expect(() => {
+        render(<IdleScene />);
+      }).not.toThrow();
+      expect(screen.getByTestId("idle-scene-three")).toBeInTheDocument();
+    });
+
+    it("mounts cleanly with cameraMode='torso'", () => {
+      expect(() => {
+        render(<IdleScene cameraMode="torso" />);
+      }).not.toThrow();
+      expect(screen.getByTestId("idle-scene-three")).toBeInTheDocument();
+    });
+
+    it("mounts cleanly with cameraMode='full_body'", () => {
+      expect(() => {
+        render(<IdleScene cameraMode="full_body" />);
+      }).not.toThrow();
+      expect(screen.getByTestId("idle-scene-three")).toBeInTheDocument();
+    });
+
+    it("does not throw when cameraMode prop changes after mount", () => {
+      const { rerender } = render(<IdleScene cameraMode="full_body" />);
+      expect(() => {
+        rerender(<IdleScene cameraMode="torso" />);
+      }).not.toThrow();
+      expect(() => {
+        rerender(<IdleScene cameraMode="full_body" />);
       }).not.toThrow();
     });
   });

@@ -31,7 +31,10 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from google.protobuf.json_format import MessageToDict, ParseDict
 from google.protobuf.timestamp_pb2 import Timestamp
-from pydantic import BaseModel
+
+# Canonical GuidanceRequest lives in apps.api.models — import & re-export so
+# legacy callers (and tests) that imported it from a2a_server keep working.
+from models import GuidanceRequest  # noqa: F401  (re-export)
 
 # SDK imports — use the real a2a-sdk types, not bespoke dicts.
 from a2a.types.a2a_pb2 import (
@@ -152,16 +155,21 @@ async def a2a_root() -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 # Architect Guidance (Quorum-specific, kept from v0)
 # ---------------------------------------------------------------------------
-
-class GuidanceRequest(BaseModel):
-    quorum_id: str
-    message: str
-    target_role_id: str | None = None
+# GuidanceRequest is the canonical model from apps.api.models — re-exported
+# at the top of this module so the v0 import path
+# (`from quorum_a2a.a2a_server import GuidanceRequest`) keeps working.
+# On THIS route, `body.quorum_id` MUST be populated since the A2A endpoint
+# has no URL path parameter; we validate that explicitly below.
 
 
 @a2a_router.post("/guidance")
 async def post_guidance(body: GuidanceRequest) -> dict[str, Any]:
     """Send architect guidance — via A2A if target agent known, else Supabase fallback."""
+    if not body.quorum_id:
+        raise HTTPException(
+            status_code=422,
+            detail="quorum_id is required for /a2a/guidance (no URL path param)",
+        )
     client = A2AClient()
 
     if body.target_role_id:

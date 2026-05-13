@@ -129,6 +129,11 @@ def build_agent_prompt(
     history: list[dict[str, str]],
     pending_requests: list[AgentRequestContext] | None = None,
     latest_message: str = "",
+    *,
+    include_context_ack: bool = False,
+    context_ack_text: str = (
+        "Understood. I've reviewed the current documents and insights."
+    ),
 ) -> list[dict[str, str]]:
     """Build the full messages array for a facilitator agent turn.
 
@@ -136,13 +141,15 @@ def build_agent_prompt(
 
         [0] SYSTEM   — stable identity + instructions (cached after first call)
         [1] USER     — context block (documents, insights, requests) — changes slowly
-        [2..N-1]     — conversation history (alternating user/assistant)
+        [2] ASSISTANT — (optional) synthetic ack so the next turn opens with USER
+        [3..N-1]     — conversation history (alternating user/assistant)
         [N]  USER    — the latest incoming message
 
     The context block is assembled in priority order:
       1. Pending A2A requests (always included, ~200 tokens each)
       2. Relevant documents (high-overlap tags first, truncated to budget)
       3. Cross-station insights (top by relevance, newest first)
+      4. Recent human contributions at this station
 
     Args:
         agent_instructions: The agent's static system prompt / instructions
@@ -159,6 +166,17 @@ def build_agent_prompt(
         pending_requests:   A2A requests pending response from this agent.
         latest_message:     The new human input or A2A request content triggering
                             this turn.  Appended as the final USER message.
+        include_context_ack: When True and a context block is emitted, insert a
+                            synthetic assistant acknowledgement immediately
+                            after the context USER message so the message
+                            stream stays in user/assistant alternation before
+                            the history block.  Off by default — most callers
+                            don't need it because the LLM tolerates two USER
+                            messages in a row.  ``agent_engine._build_prompt``
+                            sets this to True to preserve historical behavior
+                            (see item 11.8 consolidation notes).
+        context_ack_text:   Body of the synthetic ack when
+                            ``include_context_ack`` is True.
 
     Returns:
         List of ``{"role": ..., "content": ...}`` dicts ready for the LLM API.
@@ -182,6 +200,10 @@ def build_agent_prompt(
 
     if context_content.strip():
         messages.append({"role": "user", "content": context_content})
+        if include_context_ack:
+            # Synthetic assistant ack to keep user/assistant alternation across
+            # the context block.  Only emitted when explicitly requested.
+            messages.append({"role": "assistant", "content": context_ack_text})
 
     # --- [2..N-1] Conversation history ---
     messages.extend(history)
@@ -191,6 +213,21 @@ def build_agent_prompt(
         messages.append({"role": "user", "content": latest_message.strip()})
 
     return messages
+
+
+def build_system_message(
+    agent_instructions: str,
+    role: RoleContext,
+    quorum: QuorumContext,
+) -> str:
+    """Public wrapper around the stable system-message builder.
+
+    Exposed so callers (notably ``agent_engine.process_a2a_request``) can
+    assemble a system prompt without going through the full
+    ``build_agent_prompt`` flow.  The content is identical to the system
+    message produced by ``build_agent_prompt``.
+    """
+    return _build_system_message(agent_instructions, role, quorum)
 
 
 def extract_tags_from_response(

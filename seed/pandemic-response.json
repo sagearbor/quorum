@@ -1,0 +1,319 @@
+{
+  "event": {
+    "id": "00000000-0000-0000-0000-000000000004",
+    "name": "Duke University — Pandemic Response Committee",
+    "slug": "duke-pandemic-response-2026",
+    "access_code": "RESPONSE2026",
+    "max_active_quorums": 3,
+    "created_by": "seed-architect",
+    "created_at": "2026-05-13T08:00:00Z"
+  },
+  "quorums": [
+    {
+      "id": "00000000-0000-0000-0000-000000004010",
+      "event_id": "00000000-0000-0000-0000-000000000004",
+      "title": "H7N2 Outbreak Response — Resource Allocation and Campus Operations Decision (72-hour horizon)",
+      "description": "A novel H7N2 avian influenza strain has reached community spread in Wake and Durham counties, with confirmed human-to-human transmission. North Carolina DHHS issued an emergency designation 36 hours ago. Duke Hospital ICU census reached 92% as of 06:00 today. Duke University has 14,200 undergraduates on campus, 8,400 graduate students, 18,000 employees. Finals begin in 9 days. Three vaccine doses have been promised by CDC for tomorrow morning — 4,500 doses, prioritization plan required. Open decisions: (1) campus operations posture (open / modified / shutdown), (2) ICU and bed allocation between H7N2 surge and ongoing oncology/transplant/trauma census, (3) vaccine allocation across hospital staff / first responders / vulnerable populations / campus community, (4) public communication strategy. Decision window: 72 hours to next NC DHHS coordination call.",
+      "status": "active",
+      "heat_score": 95,
+      "dashboard_types": ["authority_cascade_tree", "decision_waterfall", "quorum_health_chart"],
+      "carousel_mode": "multi-view",
+      "roles": [
+        {
+          "id": "00000000-0000-0000-0000-000000004101",
+          "name": "Duke Public Health Officer",
+          "capacity": 1,
+          "authority_rank": 5,
+          "prompt_template": [
+            { "field_name": "epi_assessment", "prompt": "What is the current epidemiologic picture and 7-day projection?" },
+            { "field_name": "containment_actions", "prompt": "What public health containment actions are recommended at this severity?" },
+            { "field_name": "vaccine_prioritization", "prompt": "What is the recommended prioritization framework for the 4,500 doses?" }
+          ],
+          "fallback_chain": [],
+          "color": "#DC2626"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000004102",
+          "name": "ICU Medical Director",
+          "capacity": 1,
+          "authority_rank": 4,
+          "prompt_template": [
+            { "field_name": "current_capacity", "prompt": "What is current ICU capacity, staffing, and ventilator availability?" },
+            { "field_name": "surge_plan", "prompt": "What is the activated surge plan and how many additional beds can come online in 48 hours?" },
+            { "field_name": "tradeoff_decisions", "prompt": "What scheduled care must defer to accommodate the surge?" }
+          ],
+          "fallback_chain": [],
+          "color": "#A855F7"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000004103",
+          "name": "University President's Office",
+          "capacity": 1,
+          "authority_rank": 5,
+          "prompt_template": [
+            { "field_name": "operational_posture", "prompt": "What campus operational posture decisions are being weighed?" },
+            { "field_name": "academic_continuity", "prompt": "How are finals and degree timelines protected under each scenario?" },
+            { "field_name": "external_coordination", "prompt": "What coordination is happening with peer institutions and state government?" }
+          ],
+          "fallback_chain": [],
+          "color": "#2563EB"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000004104",
+          "name": "Communications Director",
+          "capacity": 1,
+          "authority_rank": 3,
+          "prompt_template": [
+            { "field_name": "messaging_strategy", "prompt": "What is the communications cadence and primary messaging for the next 72 hours?" },
+            { "field_name": "audience_segmentation", "prompt": "How are different audiences (students, parents, employees, media, alumni) being addressed?" },
+            { "field_name": "misinformation_response", "prompt": "What plans are in place to counter misinformation on social media?" }
+          ],
+          "fallback_chain": [],
+          "color": "#D97706"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000004105",
+          "name": "Student Affairs",
+          "capacity": 1,
+          "authority_rank": 3,
+          "prompt_template": [
+            { "field_name": "housing_capacity", "prompt": "What student housing isolation and quarantine capacity exists?" },
+            { "field_name": "mental_health_support", "prompt": "What mental health support is being scaled up for distressed students?" },
+            { "field_name": "international_students", "prompt": "What specific concerns affect international students (visa, travel, isolation)?" }
+          ],
+          "fallback_chain": [],
+          "color": "#EC4899"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000004106",
+          "name": "Faculty Senate Representative",
+          "capacity": "unlimited",
+          "authority_rank": 2,
+          "prompt_template": [
+            { "field_name": "faculty_concerns", "prompt": "What concerns is the faculty raising about teaching modality, exams, and grading?" },
+            { "field_name": "research_continuity", "prompt": "How are research operations and laboratory safety being addressed?" },
+            { "field_name": "academic_flexibility", "prompt": "What flexibility do faculty need from administration to support student outcomes?" }
+          ],
+          "fallback_chain": [],
+          "color": "#7C3AED"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000004107",
+          "name": "Equity & Inclusion Officer",
+          "capacity": 1,
+          "authority_rank": 3,
+          "prompt_template": [
+            { "field_name": "equity_impact", "prompt": "Which response options have disparate impact on vulnerable student or employee populations?" },
+            { "field_name": "vaccine_equity", "prompt": "Does the vaccine allocation framework address equity considerations (race, class, disability, immigration status)?" },
+            { "field_name": "remote_disparity", "prompt": "How are students without adequate home environments protected if campus closes?" }
+          ],
+          "fallback_chain": [],
+          "color": "#0891B2"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000004108",
+          "name": "Chief Financial Officer",
+          "capacity": 1,
+          "authority_rank": 4,
+          "prompt_template": [
+            { "field_name": "financial_impact", "prompt": "What is the financial impact of each operational posture option?" },
+            { "field_name": "reserves_position", "prompt": "What emergency reserves are available and at what authorization threshold?" },
+            { "field_name": "insurance_coverage", "prompt": "What is covered by the university's pandemic and business interruption insurance?" }
+          ],
+          "fallback_chain": [],
+          "color": "#059669"
+        },
+        {
+          "id": "00000000-0000-0000-0000-000000004109",
+          "name": "ICU Nurse Manager",
+          "capacity": "unlimited",
+          "authority_rank": 2,
+          "prompt_template": [
+            { "field_name": "staffing_reality", "prompt": "What is the actual ICU staffing picture — call-outs, fatigue, willingness to extend?" },
+            { "field_name": "ppe_status", "prompt": "What is the current PPE inventory and resupply timeline?" },
+            { "field_name": "ratios_safety", "prompt": "At what nurse-to-patient ratios does the unit become unsafe?" }
+          ],
+          "fallback_chain": [],
+          "color": "#FB923C"
+        }
+      ],
+      "contributions": [
+        {
+          "id": "c0000000-0000-0000-0000-000000004001",
+          "role_id": "00000000-0000-0000-0000-000000004101",
+          "user_token": "seed-pho-001",
+          "content": "H7N2 epi update: 247 confirmed cases across Wake/Durham as of 06:00, up from 89 cases 72 hours ago — doubling time approximately 36 hours. R0 estimated 1.8-2.4 based on early contact tracing. Case-fatality ratio so far 2.1% (5 deaths in 247 cases, all >65 yo or immunocompromised). Strain shows partial cross-reactivity with seasonal H1N1 vaccine in immunology lab work — uncertain real-world protection. CDC anticipates first H7N2-specific vaccine doses in 2-3 weeks, but the 4,500 partial-cross-reactive H1N1 doses arriving tomorrow are the only immediate option. Recommend tiered allocation: Tier 1 (hospital ICU/ED/floor staff actively treating H7N2): ~1,200 doses; Tier 2 (first responders + nursing home staff in catchment): ~1,500 doses; Tier 3 (campus vulnerable populations — pregnant, immunocompromised, age >75): ~1,800 doses. Do NOT allocate to general undergraduate population — supply is insufficient and they are not high-risk.",
+          "structured_fields": {
+            "epi_assessment": "247 confirmed cases, 36-hour doubling, R0 1.8-2.4, CFR 2.1% concentrated in elderly and immunocompromised. Trajectory: ~700 cases by tomorrow, ~2,000 by Saturday under current trajectory if no intervention escalation. Hospitalization rate approximately 8% of cases.",
+            "containment_actions": "Recommend: (1) move large gatherings >100 people indoors to virtual where feasible, (2) require masking in healthcare settings and high-density indoor spaces, (3) test-to-stay for symptomatic students/employees, (4) isolation guidance 5 days from symptom onset, (5) preserve in-person finals only if test-to-stay infrastructure scales.",
+            "vaccine_prioritization": "Tier 1: 1,200 doses healthcare workers actively treating H7N2 (priority order: ICU > ED > floor > clinic). Tier 2: 1,500 doses first responders + skilled nursing facility staff. Tier 3: 1,800 doses campus vulnerable (pregnant, immunocompromised, age >75 employees). Do NOT vaccinate general undergrad population."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:00:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000004002",
+          "role_id": "00000000-0000-0000-0000-000000004102",
+          "user_token": "seed-icu-md-001",
+          "content": "ICU current state: 92% census, 78 of 85 funded beds occupied. H7N2 admissions over last 72 hours: 14 patients, 8 on ventilators. Ongoing baseline census of post-surgical, oncology, transplant, and trauma patients cannot be deferred indefinitely. Surge plan can bring 16 additional ICU-capable beds online within 48 hours by converting PACU and stepdown units; this requires 24 additional ICU-trained nurses from medsurg cross-training and 6 hospitalists rotating to ICU coverage. Ventilator availability: 92 in inventory, 64 currently in use, 28 reserve — adequate for now but tight if surge doubles. Hard tradeoffs in next 72 hours: defer elective oncology surgery (~12 cases this week), pause non-urgent solid organ transplant listings (3 patients deferred to next available window), delay scheduled bariatric and orthopedic surgeries. Trauma and emergency oncology continue unaffected.",
+          "structured_fields": {
+            "current_capacity": "ICU 92% census (78/85). 14 H7N2 patients admitted last 72hr, 8 on vents. Ventilator inventory 92 with 28 in reserve. Staff baseline adequate but no slack.",
+            "surge_plan": "16 additional ICU beds via PACU/stepdown conversion in 48 hours. Requires 24 cross-trained medsurg nurses + 6 hospitalists. Brings total ICU capacity to 101 beds. Phase 2 (if needed): 12 additional via OR PACU conversion, adds 72 hours.",
+            "tradeoff_decisions": "Defer: 12 elective oncology surgeries (1 week), 3 non-urgent transplant listings (2 weeks), elective bariatric and orthopedic. Continue: trauma, emergency oncology, urgent transplant for clinical deterioration."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:05:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000004003",
+          "role_id": "00000000-0000-0000-0000-000000004109",
+          "user_token": "seed-icu-nurse-mgr-001",
+          "content": "Real-world staffing picture: ICU has 4 call-outs today (1 confirmed H7N2 positive, 3 symptomatic awaiting tests), down from 0 yesterday. Cross-trained medsurg nurses available: 18 willing to extend tonight, but 6 of those are themselves pregnant or have young children at home and have expressed serious hesitation given the limited PPE situation. Current PPE: N95s adequate for 5 days at standard use, but if we move to extended use we have 11 days. Surgical masks unlimited. PAPRs only 14 available system-wide — should be reserved for highest-risk procedures. Resupply ETA on N95s: 7 days for federal stockpile draw. Safe ratios: 1:1 for ventilated H7N2 patients, 1:2 if observation. Below 1:2 we are not safe. Bottom line: we can hold 95 beds with current staff if no further call-outs and PPE holds; 101 is achievable only if vaccine doses arrive tomorrow and Tier 1 staff are immunized within 24 hours.",
+          "structured_fields": {
+            "staffing_reality": "4 call-outs today (1 confirmed H7N2+). 18 medsurg cross-trained willing to extend, but 6 hesitant due to pregnancy/young children + PPE. Without vaccine to Tier 1 staff, expect 6-8 additional call-outs daily as exposure rises.",
+            "ppe_status": "N95: 5 days standard use, 11 days extended use. PAPRs: 14 system-wide. Resupply ETA: 7 days for federal stockpile draw. Surgical masks unlimited. Gown/gloves adequate.",
+            "ratios_safety": "Safe ratios: 1:1 ventilated H7N2, 1:2 observation. Cannot go below 1:2 — patient safety AND nurse retention at stake. If forced below by surge, will trigger formal patient safety event reporting."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:10:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000004004",
+          "role_id": "00000000-0000-0000-0000-000000004103",
+          "user_token": "seed-prez-001",
+          "content": "From the President's perspective, three operational posture options are on the table: (A) Full open with enhanced precautions — finals in person with masking and test-to-stay, large events virtual; (B) Modified posture — finals in person only for classes >100 students moved virtual, no large gatherings, residence halls remain open; (C) Effective shutdown — all classes virtual, finals deferred 1 week, students encouraged but not required to depart. UNC has just gone Option C. NC State is at Option A. We are coordinating with both via the state DHHS coordinator. Academic continuity must be preserved — finals matter for international student visas, graduation timelines, and scholarship eligibility. My instinct is Option B with daily reassessment; we can escalate to C if epi worsens but cannot easily de-escalate from C. Final decision pending the public health and CFO inputs.",
+          "structured_fields": {
+            "operational_posture": "Option A (full open + precautions), Option B (modified, large classes virtual), Option C (shutdown). UNC at C, NCSU at A. Lean Option B with daily reassessment escalating to C if epi worsens.",
+            "academic_continuity": "Finals critical for: international student visa compliance, May graduation timeline, scholarship/financial aid eligibility, residency match for med students. Option B preserves all four. Option C requires explicit accommodation plans.",
+            "external_coordination": "Daily call with NC DHHS Coordinator (4pm). Weekly call with UNC + NCSU + ECU + Wake Forest leadership. Direct line to NC Governor's emergency office activated."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:15:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000004005",
+          "role_id": "00000000-0000-0000-0000-000000004105",
+          "user_token": "seed-student-affairs-001",
+          "content": "Housing and student welfare picture: We have 320 isolation beds in modified residence hall capacity, currently 11% occupied with non-H7N2 isolation needs (rotavirus outbreak in two halls 10 days ago). Estimated 7-10% of our 14,200 undergrads will need isolation/quarantine during a 14-day surge under Option B = 1,000-1,400 students requiring space; we have 1,100 beds total with reconfiguration. INSUFFICIENT under worst case. Mental health utilization is already at peak with finals stress; CAPS waitlist is 4 weeks for non-crisis. We need surge tele-health support — partnership with Talkspace and Lyra can scale within 48 hours. International students: 1,847 enrolled, of whom approximately 280 cannot easily return home (visa restrictions or country travel limits); these students MUST have on-campus housing maintained under any scenario. Vulnerable students: 312 with documented disabilities, 89 currently in active medical treatment, 134 from food-insecure backgrounds who rely on dining services.",
+          "structured_fields": {
+            "housing_capacity": "320 isolation beds, currently 11% occupied. Need 1,000-1,400 under Option B worst case = INSUFFICIENT. Can reconfigure to 1,100 with 48hr lead. May need off-campus hotel partnership for surge beyond.",
+            "mental_health_support": "CAPS waitlist 4 weeks for non-crisis. Surge plan: Talkspace + Lyra partnerships activate in 48hr. Walk-in crisis hours extended. Peer support groups (RA-trained) deployed in residence halls.",
+            "international_students": "1,847 enrolled. 280 cannot easily depart (visa/country issues). Must maintain on-campus housing for these students under all scenarios. Visa office on standby for I-20 modifications."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:20:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000004006",
+          "role_id": "00000000-0000-0000-0000-000000004107",
+          "user_token": "seed-equity-001",
+          "content": "Equity considerations across the response options: Option C (shutdown) disproportionately harms students without adequate home environments — food-insecure students, those in unstable housing, students estranged from families, international students who cannot return home, and students whose home environments are unsafe for any reason (LGBTQ+ students from non-affirming families, students with abusive home situations). These populations together number approximately 600-800 students — they MUST be accommodated on campus under any scenario. On the vaccine allocation: the proposed Tier 3 (campus vulnerable) is correctly framed by medical risk, but should explicitly include staff in dining, housekeeping, and grounds — these are often lower-paid employees with higher community exposure risk and historically deprioritized in vaccine allocation. Recommend reserving 200 of the Tier 3 doses for these employee groups specifically.",
+          "structured_fields": {
+            "equity_impact": "Option C disproportionately harms 600-800 students who lack adequate home environment (food-insecure, LGBTQ+ from non-affirming families, abusive homes, international with travel barriers). These students must be accommodated on campus regardless of option chosen.",
+            "vaccine_equity": "Tier 3 allocation correctly framed by medical risk but must explicitly include dining/housekeeping/grounds employees (200 reserved doses). These workers are higher-exposure and historically deprioritized.",
+            "remote_disparity": "Under any virtual instruction: ensure laptop/wifi lending program scales (current capacity 350 laptops, need 600+); maintain accessible accommodations under remote modality; dining services for retained students must include all dietary restrictions and remain open."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:25:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000004007",
+          "role_id": "00000000-0000-0000-0000-000000004106",
+          "user_token": "seed-faculty-001",
+          "content": "Faculty Senate input gathered overnight via 4-hour Slack discussion (134 faculty participated). Headline: 78% support some virtualization of large classes for finals; 64% oppose full shutdown. Strong concerns from STEM faculty about hands-on lab finals — proposing alternative practical assessments where possible. Research operations: PI consensus is that mission-critical experiments must continue with staff rotation and PPE, but routine work can pause. International collaborators concerned about specimen shipment delays. Academic flexibility requested: (1) extended grade submission deadline by 2 weeks regardless of option, (2) liberal incomplete grade policy, (3) automatic excused absence from finals for medical reasons without documentation requirement, (4) faculty discretion on alternative assessment formats. Faculty unanimous on one item: communication must be earlier and clearer than 2020. Stop pretending we know things we don't.",
+          "structured_fields": {
+            "faculty_concerns": "78% support some virtualization, 64% oppose full shutdown. STEM concerns about lab finals (alternative practicals proposed). Communication clarity demanded — no overconfidence as in 2020.",
+            "research_continuity": "Mission-critical experiments continue with staff rotation and PPE. Routine work can pause. International specimen shipments delayed — IRB and customs coordination needed.",
+            "academic_flexibility": "Request: (1) +2wk grade submission deadline, (2) liberal incompletes, (3) automatic medical-excuse from finals without documentation, (4) faculty discretion on alternative assessments. All four within existing emergency authority of Provost."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:30:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000004008",
+          "role_id": "00000000-0000-0000-0000-000000004108",
+          "user_token": "seed-cfo-001",
+          "content": "Financial impact assessment by scenario: Option A (full open + precautions) = $1.2M-$2M in incremental costs (PPE, testing, communications, increased medical surge support). Option B (modified) = $3.5M-$5M in additional costs (above + classroom tech surge, reconfigured residence halls, hotel partnership for isolation overflow). Option C (shutdown) = $18M-$28M direct (housing/dining refunds for students who depart, international student support, mental health surge), plus indirect reputational and recruiting impact. Pandemic insurance carrier confirmed coverage extends to this event up to $40M with $2M deductible, but only if WHO or CDC formally declares — both have moved to emergency designation but not formal pandemic designation. Emergency reserves: $85M available with Board approval, $25M available with President approval, $5M available with CFO approval. Recommend authorizing $5M CFO discretionary now for Tier 1 surge expenses, escalating as needed.",
+          "structured_fields": {
+            "financial_impact": "Option A: $1.2-2M. Option B: $3.5-5M. Option C: $18-28M direct + reputational. Pandemic insurance covers up to $40M with $2M deductible if WHO/CDC formal pandemic declared (currently emergency designation only).",
+            "reserves_position": "Emergency reserves: $85M Board, $25M President, $5M CFO. Recommend CFO authorize $5M now for Tier 1 surge. Escalate to Board if Option C scenario activated.",
+            "insurance_coverage": "Pandemic insurance $40M ceiling, $2M deductible. Triggered by formal WHO/CDC pandemic declaration only — current emergency designation does NOT trigger. Business interruption rider may apply for shutdown scenarios."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:35:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000004009",
+          "role_id": "00000000-0000-0000-0000-000000004104",
+          "user_token": "seed-comms-001",
+          "content": "Communications strategy proposal: (1) President's letter to community by 5pm today — acknowledges severity, names Option B decision, commits to daily updates, includes clear action items for students/employees; (2) parent webinar tomorrow 8pm — President + VP Student Affairs + Public Health Officer answer questions; (3) media briefing for local press at 2pm tomorrow with same panel; (4) dedicated H7N2 microsite live by 2pm today with FAQs, dashboard, vaccine info, contact lines; (5) daily 7am operations update via email + push notification; (6) social media: 4 posts per day on Twitter/Instagram, monitor and respond within 1 hour during business hours. Misinformation: established 24/7 monitoring partnership with Stanford Internet Observatory; will issue point-by-point corrections on persistent false claims. Spokesperson protocol: Only President, Public Health Officer, and Communications Director may speak on-record about the outbreak; all media inquiries routed centrally.",
+          "structured_fields": {
+            "messaging_strategy": "Cadence: President letter today 5pm, daily 7am updates, parent webinar tomorrow 8pm, media briefing tomorrow 2pm, microsite live 2pm today. Key tone: acknowledging severity, clear decisions, daily action items, no overconfidence.",
+            "audience_segmentation": "Students/Parents: webinar + email + push. Employees: HR email + manager toolkit. Faculty: separate faculty senate channel + research operations memo. Media: scheduled briefings, central spokesperson protocol. Alumni: weekly digest only unless decisions affect campus visibly.",
+            "misinformation_response": "24/7 monitoring with Stanford Internet Observatory. Point-by-point public corrections of persistent false claims. Trusted spokesperson protocol — only President, PHO, Comms Director on-record."
+          },
+          "tier_processed": 1,
+          "created_at": "2026-05-13T09:40:00Z"
+        },
+        {
+          "id": "c0000000-0000-0000-0000-000000004010",
+          "role_id": "00000000-0000-0000-0000-000000004103",
+          "user_token": "seed-prez-001",
+          "content": "Decision: Adopt Option B (modified posture) effective tomorrow 8am, with daily 7am reassessment. Specific elements: (a) classes >100 students move virtual for finals; (b) classes ≤100 remain in person with masking, test-to-stay, and 6ft spacing; (c) residence halls remain open with enhanced isolation capacity (reconfigure to 1,100 beds + hotel partnership for overflow); (d) large events >50 people cancelled or virtual; (e) dining services continue with mask-while-not-eating requirement and grab-and-go option expanded. Vaccine allocation accepts the Public Health Officer framework as proposed AND the Equity Officer amendment reserving 200 Tier 3 doses for dining/housekeeping/grounds staff. Faculty academic flexibility requests #1-4 all approved. CFO authorize $5M now; will return to Board for additional authorization if Option C becomes necessary. Comms plan as proposed. Trigger to escalate to Option C: ICU census >100% sustained 24 hours OR weekly case doubling time falls below 24 hours OR formal CDC pandemic declaration.",
+          "structured_fields": {
+            "operational_posture": "Option B effective 8am tomorrow. Daily 7am reassessment. Triggers to escalate to Option C: ICU >100% 24hr sustained, OR case doubling <24hr, OR CDC pandemic declaration.",
+            "academic_continuity": "Classes >100 virtual for finals. Classes ≤100 in-person with masking, test-to-stay, 6ft spacing. Faculty flexibility (1) +2wk grade deadline (2) liberal incompletes (3) auto medical-excuse (4) alt assessments — all approved.",
+            "external_coordination": "Position differs from UNC (Option C) and NCSU (Option A) — Duke at B. Daily DHHS coordination call. President signs joint letter with peer institutions if joint guidance becomes needed."
+          },
+          "tier_processed": 2,
+          "created_at": "2026-05-13T10:00:00Z"
+        }
+      ],
+      "artifact": {
+        "id": "00000000-0000-0000-0000-000000004201",
+        "version": 1,
+        "content_hash": "sha256:seed-pandemic-response-v1",
+        "sections": [
+          {
+            "title": "Operational Posture Decision",
+            "content": "ADOPT Option B (modified posture) effective tomorrow 08:00, daily 07:00 reassessment.\n\n- Classes >100 students: virtual for finals\n- Classes ≤100 students: in-person with masking, test-to-stay, 6ft spacing\n- Residence halls: open, isolation capacity expanded to 1,100 + hotel partnership for overflow\n- Large events >50 people: cancelled or virtualized\n- Dining: continue with mask-while-not-eating and expanded grab-and-go\n\nEscalation triggers to Option C (shutdown): ICU census >100% sustained 24 hr OR doubling time <24 hr OR CDC formal pandemic declaration.",
+            "source_roles": ["University President's Office", "Duke Public Health Officer", "ICU Medical Director"],
+            "status": "approved"
+          },
+          {
+            "title": "Vaccine Allocation (4,500 doses)",
+            "content": "Tier 1 — Hospital staff actively treating H7N2: 1,200 doses (ICU > ED > floor > clinic priority order)\nTier 2 — First responders + nursing home staff in catchment: 1,500 doses\nTier 3 — Campus vulnerable populations: 1,800 doses\n  - Of which 200 reserved for dining, housekeeping, and grounds employees (equity amendment)\n  - Remaining 1,600: pregnant, immunocompromised, age >75 employees\n\nDo NOT allocate doses to general undergraduate population — supply insufficient and not high medical risk.",
+            "source_roles": ["Duke Public Health Officer", "Equity & Inclusion Officer", "ICU Medical Director"],
+            "status": "approved"
+          },
+          {
+            "title": "ICU and Bed Management",
+            "content": "1. Activate Phase 1 surge plan: 16 additional ICU-capable beds in 48hr via PACU/stepdown conversion (total capacity 101)\n2. Defer: 12 elective oncology surgeries (1 wk), 3 non-urgent transplant listings (2 wk), elective bariatric/orthopedic\n3. Continue: trauma, emergency oncology, urgent transplant for clinical deterioration\n4. Cross-train: 24 medsurg nurses + 6 hospitalists to ICU coverage\n5. PPE: extended-use N95 protocol activated to extend supply from 5d to 11d; PAPR reserved for highest-risk procedures\n6. Tier 1 vaccination doses to ICU/ED first thing tomorrow morning — protects retention",
+            "source_roles": ["ICU Medical Director", "ICU Nurse Manager", "Duke Public Health Officer"],
+            "status": "approved"
+          },
+          {
+            "title": "Student Welfare & Equity Protections",
+            "content": "1. Isolation housing: 1,100 reconfigured beds + hotel partnership for overflow beyond\n2. International students (1,847, of whom 280 cannot depart): on-campus housing maintained regardless of operational posture\n3. Vulnerable students (~600-800 lacking adequate home environment): on-campus housing maintained regardless\n4. Mental health: Talkspace + Lyra surge partnerships activated within 48hr; CAPS walk-in crisis hours extended\n5. Laptop/wifi lending scaled from 350 to 600+\n6. Dining services remain open with all dietary restriction support",
+            "source_roles": ["Student Affairs", "Equity & Inclusion Officer"],
+            "status": "approved"
+          },
+          {
+            "title": "Academic Flexibility (Faculty Senate Requests)",
+            "content": "All four faculty senate requests approved by Provost emergency authority:\n1. Grade submission deadline extended +2 weeks\n2. Liberal incomplete grade policy\n3. Automatic medical-excuse from finals without documentation\n4. Faculty discretion on alternative assessment formats for impacted classes",
+            "source_roles": ["Faculty Senate Representative", "University President's Office"],
+            "status": "approved"
+          },
+          {
+            "title": "Financial Authorization & Communications",
+            "content": "Financial: CFO authorizes $5M discretionary for Tier 1 surge expenses immediately. Pandemic insurance does NOT trigger under current emergency designation (would need formal CDC/WHO pandemic declaration for $40M coverage with $2M deductible). Board re-engagement scheduled if Option C becomes necessary ($85M reserves available with Board approval).\n\nCommunications: President letter today 17:00; microsite live 14:00; daily 07:00 updates; parent webinar tomorrow 20:00; media briefing tomorrow 14:00. Stanford Internet Observatory partnership for misinformation monitoring. Spokesperson protocol: only President, Public Health Officer, Communications Director on-record.",
+            "source_roles": ["Chief Financial Officer", "Communications Director", "University President's Office"],
+            "status": "approved"
+          }
+        ],
+        "status": "approved",
+        "created_at": "2026-05-13T10:15:00Z"
+      }
+    }
+  ]
+}

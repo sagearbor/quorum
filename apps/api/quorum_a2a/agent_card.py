@@ -7,8 +7,10 @@ spec (the schema differs significantly from earlier 0.3 cards — `url` is now
 inside `supported_interfaces`, capabilities use `push_notifications` not
 `pushNotifications`, etc.).
 
-Skills are derived from the role's `agent_configs` row when one exists
-(post-10.1) and fall back to a generic "contribute" skill when not.
+Skill tags are derived from the role's `agent_configs.domain_tags` when one
+exists (post-10.1) and fall back to a slug derived from the role name when
+not. The architect-authored `system_prompt` is intentionally NOT exposed
+through this card — see security audit notes inside `build_agent_card`.
 
 This module is intentionally thin: it returns the typed `AgentCard` so the
 FastAPI route can serialize it via `agent_card_to_dict` from the SDK helpers,
@@ -54,36 +56,43 @@ def build_agent_card(
         role: Roles row (id, name, authority_rank, capacity, quorum_id).
         base_url: Base URL of this quorum API.  The card's url interface points
             to ``{base_url}/a2a/agents/{role_id}`` — the per-role A2A endpoint.
-        agent_config: Optional ``agent_configs`` row supplying
-            ``system_prompt`` and ``domain_tags`` used to enrich the card's
-            description + skill tags.  Cards still validate when this is None.
+        agent_config: Optional ``agent_configs`` row.  Only ``domain_tags`` is
+            consumed (it populates the skill's ``tags`` field).  The
+            ``system_prompt`` field is intentionally ignored — exposing any
+            slice of the architect-authored persona via this unauthenticated
+            public endpoint is a leak (audit PR #14).  Cards still validate
+            when this is None.
 
     Returns:
         The typed ``AgentCard`` proto object.  Use ``card_to_dict`` to serialize.
     """
     role_id = str(role.get("id") or "unknown")
     role_name = str(role.get("name") or "agent")
-    authority_rank = int(role.get("authority_rank") or 0)
-    capacity = role.get("capacity") or "unlimited"
-    quorum_id = role.get("quorum_id")
+    # NOTE: authority_rank is intentionally NOT included in the public card
+    # (description, skill text, or x-quorum extension). The architect-authored
+    # rank is sensitive metadata about the deliberation's authority hierarchy
+    # and is only exposed via the access-gated authority MCP server
+    # (`get_role_authority(role_id)`). See security audit fix in this PR.
+    quorum_id = role.get("quorum_id")  # noqa: F841 — kept for future spec extensions
 
     # Domain tags drive the skill's `tags` field — they're how other agents
-    # discover what this role specializes in.
+    # discover what this role specializes in.  We do NOT derive tags from the
+    # architect-authored system prompt to avoid leaking persona context to
+    # unauthenticated consumers of the .well-known/agent-card.json endpoint.
     domain_tags: list[str] = []
+    # Generic description — gives no insight into the persona's behavior, the
+    # architect's prompt, or the role's position in the authority hierarchy.
     description = (
-        f"Quorum role: {role_name} (authority rank {authority_rank}, capacity {capacity})"
+        f"Role-specialized agent for {role_name} in a multi-stakeholder deliberation"
     )
     if agent_config:
         config_tags = agent_config.get("domain_tags") or []
         if isinstance(config_tags, list):
             domain_tags = [str(t) for t in config_tags if t]
-        sys_prompt = agent_config.get("system_prompt")
-        if sys_prompt:
-            # First sentence of the persona becomes the human-readable
-            # description — useful for discovery UIs.  Cap at 280 chars.
-            first_line = str(sys_prompt).strip().split("\n", 1)[0]
-            if first_line:
-                description = first_line[:280]
+        # NOTE: `agent_config["system_prompt"]` is intentionally NOT read here.
+        # The architect-authored persona prompt is private deliberation context;
+        # exposing even its first 280 chars via the unauthenticated AgentCard
+        # endpoint leaks both behavior and substantive hints. Audit: PR #14.
 
     # Build the AgentCard proto.  Note: in v1.0 the top-level URL lives inside
     # `supported_interfaces` (one per transport binding), not at the root.
@@ -110,8 +119,10 @@ def build_agent_card(
                 id=_CONTRIBUTE_SKILL_ID,
                 name="Submit Contribution",
                 description=(
-                    f"Submit a contribution as the {role_name} role within a quorum. "
-                    f"Authority rank {authority_rank} overrides lower-ranked agents on conflicts."
+                    # Generic skill description — no authority_rank, no
+                    # persona text. The role name is already public (it
+                    # appears on the card name and in routing URLs).
+                    f"Submit a contribution as the {role_name} role within a quorum."
                 ),
                 tags=domain_tags or [role_name.lower().replace(" ", "_")],
                 input_modes=["text/plain"],
@@ -144,10 +155,13 @@ def build_agent_card_dict(
     card_dict = agent_card_to_dict(card)
     # Attach quorum-specific metadata under a non-conflicting key.  The A2A
     # spec doesn't reserve top-level extension keys, so we namespace ours.
+    # x-quorum extension — deliberately excludes `authority_rank`.
+    # Other agents that need rank for internal arbitration must fetch it via
+    # the access-gated authority MCP server (`get_role_authority(role_id)`),
+    # not via this unauthenticated public card.  Audit: PR #14.
     card_dict["x-quorum"] = {
         "role_id": str(role.get("id") or ""),
         "quorum_id": str(role.get("quorum_id") or "") if role.get("quorum_id") else None,
-        "authority_rank": int(role.get("authority_rank") or 0),
         "capacity": role.get("capacity") or "unlimited",
     }
     return card_dict

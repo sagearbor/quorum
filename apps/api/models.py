@@ -213,6 +213,13 @@ class RoleSuggestionResponse(BaseModel):
     authority_rank: int
     capacity: str | int = "unlimited"
     suggested_prompt_focus: str
+    # Persona fields — populated inline by architect_agent.generate_roles in
+    # a single LLM call so that every role can get an agent_configs row
+    # without a separate N+1 round-trip.
+    system_prompt: str = ""
+    domain_tags: list[str] = []
+    temperature: float = 0.4
+    model: str = "gpt-4o-mini"
 
 
 class GenerateRolesResponse(BaseModel):

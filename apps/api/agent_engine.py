@@ -174,7 +174,7 @@ async def process_agent_turn(
         role_name = "unknown"
         authority_rank = 0
 
-    agent_def = _load_agent_definition(role_name)
+    agent_def = _load_agent_definition(role_name, role_id=role_id, db=db)
 
     # --- 2. Load conversation history ---
     history = _load_conversation_history(db, quorum_id, role_id, station_id)
@@ -329,7 +329,7 @@ async def process_a2a_request(
     except Exception:
         sender_name = "another agent"
 
-    agent_def = _load_agent_definition(target_role_name)
+    agent_def = _load_agent_definition(target_role_name, role_id=to_role_id, db=db)
 
     # --- 3. Build minimal prompt for A2A response ---
     system_content = _build_system_prompt(
@@ -386,12 +386,17 @@ async def process_a2a_request(
 # Private helpers
 # ---------------------------------------------------------------------------
 
-def _load_agent_definition(role_name: str):
-    """Load agent definition; return None if not found (graceful degradation)."""
+def _load_agent_definition(role_name: str, role_id: str | None = None, db=None):
+    """Load agent definition; return None if not found (graceful degradation).
+
+    Prefers an ``agent_configs`` row (architect-authored persona) when
+    ``role_id`` and ``db`` are supplied. Falls through to the YAML definition
+    or a generic auto-generated definition otherwise.
+    """
     try:
         from agents import load_agent
         slug = _slugify(role_name)
-        return load_agent(slug)
+        return load_agent(slug, role_id=role_id, db=db)
     except FileNotFoundError:
         logger.debug("agent_engine: no definition found for role '%s' (slug '%s')", role_name, _slugify(role_name))
         return None

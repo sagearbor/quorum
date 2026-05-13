@@ -8,12 +8,13 @@
 
 "use client";
 
-import { useRef, useEffect, useMemo } from "react";
+import { useRef, useEffect, useMemo, useState } from "react";
 import { useAvatarController } from "./useAvatarController";
 import { useQuorumLive } from "@/hooks/useQuorumLive";
 import { IdleScene, type IdleSceneHandle } from "./IdleScene";
 import { resolveArchetype } from "./archetypes/resolveArchetype";
 import { ARCHETYPES, resolveGlbUrl } from "./archetypes/archetypes";
+import { subscribeToFacilitator } from "@/lib/dataProvider";
 
 interface AvatarPanelProps {
   quorumId: string;
@@ -69,9 +70,31 @@ export function AvatarPanel({
     return resolveGlbUrl(archetype);
   }, [effectiveRoleName]);
 
-  // Synthesis text: only speak LLM-generated output, never parrot user contributions.
-  // TODO: wire to Tier 3 artifact synthesis or a dedicated facilitator response channel
-  const latestSynthesis = staticSynthesisText ?? undefined;
+  // Synthesis text: the avatar speaks the orchestrator's per-round narration
+  // (checklist 11.3). The narration comes in as a WebSocket frame
+  // (``type: "facilitator_narration"``) emitted at the START of each autonomy
+  // round, BEFORE the role-agent dispatch fires. The avatar narrates the
+  // turn while the role-agent thinks. ``staticSynthesisText`` (test-only)
+  // overrides the live narration so unit tests don't need a WS server.
+  //
+  // ``paused`` is honored by the controller — the narration state still
+  // updates on paused turns (so the next non-paused turn picks up the latest
+  // narration), but the TTS short-circuits on paused. See 10.6.
+  const [orchestratorNarration, setOrchestratorNarration] = useState<string | undefined>(
+    undefined
+  );
+
+  useEffect(() => {
+    if (!quorumId) return;
+    const unsubscribe = subscribeToFacilitator(quorumId, (frame) => {
+      if (frame.narration) {
+        setOrchestratorNarration(frame.narration);
+      }
+    });
+    return unsubscribe;
+  }, [quorumId]);
+
+  const latestSynthesis = staticSynthesisText ?? orchestratorNarration ?? undefined;
 
   // useAvatarController manages gaze (VisionTracker + StereoAnalyzer), emotion
   // (EmotionDetector + health score), and optional TTS when a provider is configured.

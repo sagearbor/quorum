@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, act } from "@testing-library/react";
 import { AvatarPanel } from "../AvatarPanel";
 
 // Mock useQuorumLive
@@ -19,6 +19,27 @@ vi.mock("@/hooks/useQuorumLive", () => ({
     connected: true,
     error: null,
   }),
+}));
+
+// Mock subscribeToFacilitator — capture the handler so tests can drive
+// orchestrator narrations directly without spinning up a WebSocket server.
+let lastFacilitatorHandler:
+  | ((frame: { narration: string; next_role_id: string; next_role_name?: string | null; reason?: string | null }) => void)
+  | null = null;
+const mockUnsubscribe = vi.fn();
+vi.mock("@/lib/dataProvider", () => ({
+  subscribeToFacilitator: (
+    _quorumId: string,
+    handler: (frame: {
+      narration: string;
+      next_role_id: string;
+      next_role_name?: string | null;
+      reason?: string | null;
+    }) => void
+  ) => {
+    lastFacilitatorHandler = handler;
+    return mockUnsubscribe;
+  },
 }));
 
 // Track what the avatar controller is invoked with so tests can assert that
@@ -102,6 +123,8 @@ vi.mock("../archetypes/archetypes", () => ({
 beforeEach(() => {
   mockSpeak.mockClear();
   mockBrowserSpeak.mockClear();
+  mockUnsubscribe.mockClear();
+  lastFacilitatorHandler = null;
   mockControllerState = {
     direction: "center",
     yaw: 0,
@@ -221,5 +244,88 @@ describe("AvatarPanel when paused", () => {
 
     rerender(<AvatarPanel quorumId="test-quorum" paused={false} />);
     expect(screen.queryByTestId("avatar-paused-pill")).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 11.3 — Orchestrator narration
+//
+// AvatarPanel subscribes to facilitator_narration WS frames and forwards the
+// narration text into useAvatarController as synthesisText. This is the
+// "avatar finally gets a voice" piece the spec asks for.
+// ---------------------------------------------------------------------------
+
+describe("AvatarPanel orchestrator narration", () => {
+  it("subscribes to facilitator narration on mount and unsubscribes on unmount", () => {
+    const { unmount } = render(<AvatarPanel quorumId="q-1" />);
+    expect(lastFacilitatorHandler).not.toBeNull();
+    expect(mockUnsubscribe).not.toHaveBeenCalled();
+
+    unmount();
+    expect(mockUnsubscribe).toHaveBeenCalled();
+  });
+
+  it("passes the latest orchestrator narration to the controller as synthesisText", () => {
+    render(<AvatarPanel quorumId="q-2" />);
+    expect(lastFacilitatorHandler).not.toBeNull();
+
+    act(() => {
+      lastFacilitatorHandler!({
+        narration: "Asking the biostatistician to validate the sample size.",
+        next_role_id: "role-bio",
+        next_role_name: "Biostatistician",
+        reason: "open question about power",
+      });
+    });
+
+    // The mock controller forwards synthesisText through mockBrowserSpeak.
+    expect(mockBrowserSpeak).toHaveBeenCalledWith(
+      "Asking the biostatistician to validate the sample size."
+    );
+  });
+
+  it("does NOT speak the orchestrator narration when paused", () => {
+    render(
+      <AvatarPanel
+        quorumId="q-3"
+        paused
+        pausedReason="llm_unavailable"
+      />
+    );
+    expect(lastFacilitatorHandler).not.toBeNull();
+
+    act(() => {
+      lastFacilitatorHandler!({
+        narration: "Asking the ethicist to weigh in on consent.",
+        next_role_id: "role-eth",
+      });
+    });
+
+    // CRITICAL: paused must short-circuit TTS even if a fresh narration arrives.
+    expect(mockSpeak).not.toHaveBeenCalled();
+    expect(mockBrowserSpeak).not.toHaveBeenCalled();
+  });
+
+  it("staticSynthesisText overrides live orchestrator narration (test-only)", () => {
+    render(
+      <AvatarPanel
+        quorumId="q-4"
+        staticSynthesisText="STATIC override for tests"
+      />
+    );
+
+    // Even when a live narration arrives, the static prop wins so unit tests
+    // are deterministic.
+    act(() => {
+      lastFacilitatorHandler!({
+        narration: "Live narration that should NOT win.",
+        next_role_id: "role-x",
+      });
+    });
+
+    expect(mockBrowserSpeak).toHaveBeenCalledWith("STATIC override for tests");
+    expect(mockBrowserSpeak).not.toHaveBeenCalledWith(
+      "Live narration that should NOT win."
+    );
   });
 });

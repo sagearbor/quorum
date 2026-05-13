@@ -777,6 +777,94 @@ export function subscribeToA2ARequests(
 }
 
 // ---------------------------------------------------------------------------
+// Facilitator narration (orchestrator-emitted WebSocket frame)
+// ---------------------------------------------------------------------------
+
+/**
+ * Payload emitted by the backend orchestrator (checklist 11.3) at the start
+ * of each autonomy round, BEFORE the chosen role-agent dispatch fires.
+ *
+ * The avatar consumes this as its ``synthesisText`` so the facilitator
+ * narrates the turn ("Asking the biostatistician to weigh in on sample
+ * size assumptions.") while the role-agent does its thinking.
+ */
+export interface FacilitatorNarration {
+  /** One-sentence narration the avatar will speak. */
+  narration: string;
+  /** Role that is about to take the turn. */
+  next_role_id: string;
+  /** Role display name (optional — backend may omit on legacy paths). */
+  next_role_name?: string | null;
+  /** Orchestrator rationale (for debugging — not surfaced to the audience). */
+  reason?: string | null;
+}
+
+/**
+ * Subscribe to orchestrator-emitted ``facilitator_narration`` frames over the
+ * existing per-quorum WebSocket channel.
+ *
+ * Returns an unsubscribe function. In demo mode this is a no-op (the demo
+ * engine does not run a WebSocket server).
+ *
+ * Implementation note: this mirrors the WS-frame consumer in
+ * ``apps/web/src/app/display/[slug]/page.tsx`` rather than going through
+ * Supabase Realtime — narrations are emitted by the FastAPI WS manager, not
+ * persisted to a table.
+ */
+export function subscribeToFacilitator(
+  quorumId: string,
+  handler: (frame: FacilitatorNarration) => void
+): () => void {
+  if (isDemoMode()) {
+    return () => {};
+  }
+  // Server-side rendering: no window, no WebSocket. Bail gracefully.
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+
+  let ws: WebSocket | null = null;
+  let closed = false;
+
+  try {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(
+      `${protocol}//${window.location.host}/quorums/${quorumId}/live`
+    );
+
+    ws.onmessage = (event) => {
+      if (closed) return;
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg && msg.type === "facilitator_narration") {
+          handler({
+            narration: msg.narration,
+            next_role_id: msg.next_role_id,
+            next_role_name: msg.next_role_name ?? null,
+            reason: msg.reason ?? null,
+          });
+        }
+      } catch {
+        // Ignore non-JSON or malformed frames
+      }
+    };
+  } catch {
+    // WebSocket failed to construct — fall back to no-op
+  }
+
+  return () => {
+    closed = true;
+    if (ws) {
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+    }
+  };
+}
+
+// ---------------------------------------------------------------------------
 // Engine control (demo mode only)
 // ---------------------------------------------------------------------------
 

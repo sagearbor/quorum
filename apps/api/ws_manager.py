@@ -1,4 +1,29 @@
-"""WebSocket connection manager with per-quorum 1s debounce."""
+"""WebSocket connection manager with per-quorum 1s debounce.
+
+Frame types broadcast via ``manager.broadcast(quorum_id, frame)``:
+
+- ``a2a_activity``           — emitted after an A2A request is auto-processed
+                                by the autonomy loop. (10.x)
+- ``role_unblocked``         — emitted when a role transitions blocked→active.
+- ``autonomous_activity``    — emitted after a proactive agent turn completes,
+                                carries the role_id, role_name, round number,
+                                and the top tags from the reply.
+- ``facilitator_narration``  — NEW (11.3). Emitted at the START of an
+                                orchestrator round, BEFORE the chosen role-
+                                agent dispatch. Carries:
+                                    * narration  (str)  — one-sentence text
+                                                            the avatar speaks
+                                    * next_role_id  (str)
+                                    * next_role_name (str | None)
+                                    * reason     (str | None) — orchestrator
+                                                                rationale for
+                                                                debugging
+                                Frontend hook: dataProvider.subscribeToFacilitator
+                                Avatar hook: AvatarPanel feeds narration into
+                                useAvatarController as synthesisText so the TTS
+                                provider speaks it.
+- ``role_paused``            — (10.6) facilitator-paused signal.
+"""
 
 import asyncio
 import json

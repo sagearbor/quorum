@@ -20,6 +20,11 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
+
+def _now_iso() -> str:
+    """ISO-8601 UTC timestamp matching the DB default format."""
+    return datetime.now(timezone.utc).isoformat()
+
 # Loop is managed by these module-level vars
 _active_loops: dict[str, asyncio.Task] = {}  # quorum_id -> task
 
@@ -147,6 +152,35 @@ async def _run_autonomy_round(
     )
 
     for req in pending.data or []:
+        # CAS-claim: atomically flip status pending -> processing. The
+        # .eq("status", "pending") clause is the compare-and-swap guard: if
+        # another tick (or another worker) already claimed this row, the
+        # update affects 0 rows and we skip without calling the LLM. This is
+        # the core fix for the duplicate-dispatch race at autonomy_level=1.0
+        # where base_interval can drop to ~1.5s with jitter.
+        try:
+            claim = (
+                db.table("agent_requests")
+                .update({"status": "processing", "claimed_at": _now_iso()})
+                .eq("id", req["id"])
+                .eq("status", "pending")
+                .execute()
+            )
+        except Exception:
+            logger.warning(
+                "CAS-claim of A2A request %s raised; skipping",
+                req["id"],
+                exc_info=True,
+            )
+            continue
+
+        if not getattr(claim, "data", None):
+            # Another worker won the race — leave it alone.
+            logger.debug(
+                "A2A request %s already claimed by another tick", req["id"]
+            )
+            continue
+
         try:
             await process_a2a_request(req["id"], db, llm_provider)
             logger.info(

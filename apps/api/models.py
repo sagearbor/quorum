@@ -214,6 +214,23 @@ class QuorumStateResponse(BaseModel):
     active_roles: list[ActiveRole]
 
 
+# GET /quorums/{quorum_id}/blackboard — orchestrator's shared state surface
+# (checklist item 11.6).  Each list holds dicts whose sub-shapes are
+# documented in apps/api/quorum_state.py and docs/CONTRACT.md.  We keep the
+# response untyped at the field-level (dict[str, Any]) to avoid duplicating
+# the inline sub-schema across two places — the blackboard module is the
+# source of truth.
+class QuorumBlackboardResponse(BaseModel):
+    quorum_id: str
+    open_questions: list[dict[str, Any]]
+    proposals: list[dict[str, Any]]
+    decisions: list[dict[str, Any]]
+    conflicts: list[dict[str, Any]]
+    dissents: list[dict[str, Any]]
+    version: int
+    updated_at: str | None = None
+
+
 # POST /quorums/{quorum_id}/resolve
 class ResolveRequest(BaseModel):
     sign_off_token: str

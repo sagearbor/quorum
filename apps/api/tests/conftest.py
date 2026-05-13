@@ -35,6 +35,7 @@ def _alias_bare_modules() -> None:
     _bare_names = [
         "routes", "seed_loader", "database", "health", "models",
         "agent_engine", "document_engine", "llm", "tag_vocabulary",
+        "quorum_state",
         # quorum_a2a submodules — bare import path is used by main.py / routes.py
         # so we MUST alias these so unittest.mock.patch("apps.api.quorum_a2a...")
         # targets the same module object that the running app calls into.

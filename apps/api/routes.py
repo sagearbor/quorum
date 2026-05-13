@@ -57,11 +57,13 @@ from models import (
     GuidanceRequest,
     GuidanceResponse,
     InsightResponse,
+    QuorumBlackboardResponse,
     QuorumStateResponse,
     ResolveRequest,
     ResolveResponse,
     StationMessageResponse,
 )
+import quorum_state as quorum_state_module
 from agent_engine import (
     is_paused_reply,
     process_a2a_request,
@@ -589,6 +591,25 @@ async def get_quorum_state(quorum_id: str):
         health_score=health_score,
         active_roles=active_roles,
     )
+
+
+# ---------------------------------------------------------------------------
+# GET /quorums/{quorum_id}/blackboard
+# ---------------------------------------------------------------------------
+# Orchestrator blackboard surface (checklist item 11.6).  Read-only here —
+# agents mutate the blackboard via apps/api/quorum_state.py helpers, not via
+# HTTP, so this route exists solely to power the projector dashboard and
+# realtime subscriptions.  Returns the canonical default snapshot (all empty
+# lists, version=1) when no row exists yet so the projector can render a
+# brand-new quorum without a separate "no data" branch.
+@router.get(
+    "/quorums/{quorum_id}/blackboard",
+    response_model=QuorumBlackboardResponse,
+)
+async def get_quorum_blackboard(quorum_id: str):
+    db = get_supabase()
+    state = await quorum_state_module.get_state(db, quorum_id)
+    return QuorumBlackboardResponse(**state)
 
 
 # ---------------------------------------------------------------------------

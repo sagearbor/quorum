@@ -142,6 +142,18 @@ GET /quorums/{quorum_id}/state:
     health_score: float  # 0-100, good = high
     active_roles: { role_id: uuid, participant_count: integer }[]
 
+GET /quorums/{quorum_id}/blackboard:
+  description: Orchestrator's shared state surface (checklist 11.6). Read-only. Returns default empty snapshot when no row exists.
+  returns:
+    quorum_id: uuid
+    open_questions: { id: uuid, text: string, raised_by_role_id: uuid, raised_at: timestamptz, tags: string[] }[]
+    proposals: { id: uuid, field: string, content: string, proposed_by_role_id: uuid, proposed_at: timestamptz, supporters: uuid[], blockers: uuid[] }[]
+    decisions: { id: uuid, field: string, content: string, decided_by_role_id: uuid, decided_at: timestamptz, authority_rank: integer, source_proposal_id: uuid }[]
+    conflicts: { id: uuid, field: string, proposals: uuid[], raised_at: timestamptz }[]
+    dissents: { id: uuid, decision_id: uuid, dissenting_role_id: uuid, reason: string, dissented_at: timestamptz }[]
+    version: integer
+    updated_at: timestamptz
+
 POST /quorums/{quorum_id}/resolve:
   body: { sign_off_token: string }
   returns: { artifact_id: uuid, download_url: string }
@@ -449,6 +461,24 @@ conversations:
     select: open                       # dashboards / live transcripts read freely
     insert/update/delete: service_role only
 
+# --- Quorum state blackboard (migration: 20260513000003_quorum_state.sql) ---
+# One row per quorum.  Orchestrator's shared "what the quorum believes right now"
+# surface — unlocks authority arbitration (11.7).  All mutations use CAS on
+# `version`: read row, mutate jsonb in app code, UPDATE WHERE version=v and
+# bump to v+1.  Helper functions live in apps/api/quorum_state.py.
+
+quorum_state:
+  quorum_id: uuid PK FK quorums.id ON DELETE CASCADE
+  open_questions: jsonb DEFAULT '[]'   # [{ id, text, raised_by_role_id, raised_at, tags[] }]
+  proposals: jsonb DEFAULT '[]'        # [{ id, field, content, proposed_by_role_id, proposed_at, supporters[role_id], blockers[role_id] }]
+  decisions: jsonb DEFAULT '[]'        # [{ id, field, content, decided_by_role_id, decided_at, authority_rank, source_proposal_id }]
+  conflicts: jsonb DEFAULT '[]'        # [{ id, field, proposals[proposal_id], raised_at }]
+  dissents: jsonb DEFAULT '[]'         # [{ id, decision_id, dissenting_role_id, reason, dissented_at }]
+  version: int DEFAULT 1               # CAS token — bumped on every mutation
+  updated_at: timestamptz DEFAULT now()
+  realtime: true                       # ADDED to supabase_realtime publication
+  rls:
+    select: open                       # projector / dashboards read freely
 # --- Autonomy loop state (migration: 20260513000004_autonomy_loops.sql) ---
 
 autonomy_loop_state:

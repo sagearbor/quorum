@@ -316,7 +316,10 @@ export default function EventPage() {
         <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">
           {quorums.length} quorum{quorums.length !== 1 ? "s" : ""}
           {station && (
-            <span className="ml-2 inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-indigo-700 text-xs font-medium">
+            <span
+              data-testid="station-badge"
+              className="ml-2 inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-indigo-700 text-xs font-medium"
+            >
               Station {station}
             </span>
           )}

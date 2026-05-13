@@ -13,8 +13,13 @@ class CoordinationBackend(ABC):
     async def submit_contribution(
         self, quorum_id: str, role_id: str, user_token: str,
         content: str, structured_fields: dict[str, str],
+        participant_id: str | None = None,
     ) -> dict[str, Any]:
-        """Submit a contribution and return the created row."""
+        """Submit a contribution and return the created row.
+
+        ``participant_id`` is optional for backward compatibility with callers
+        that pre-date the participants table (10.4).
+        """
 
     @abstractmethod
     async def get_contributions(self, quorum_id: str) -> list[dict[str, Any]]:

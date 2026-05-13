@@ -38,8 +38,11 @@ from models import (
     ContributeResponse,
     CreateEventRequest,
     CreateEventResponse,
+    CreateParticipantRequest,
+    CreateParticipantResponse,
     CreateQuorumRequest,
     CreateQuorumResponse,
+    HeartbeatRequest,
     DocumentCreateRequest,
     DocumentResponse,
     DocumentUpdateRequest,
@@ -329,6 +332,7 @@ async def contribute(quorum_id: str, body: ContributeRequest):
         user_token=body.user_token,
         content=body.content,
         structured_fields=body.structured_fields,
+        participant_id=body.participant_id,
     )
     contribution_id = contrib_row["id"]
 
@@ -1323,6 +1327,96 @@ async def update_autonomy(quorum_id: str, body: dict):
         await stop_autonomy_loop(quorum_id)
 
     return {"quorum_id": quorum_id, "autonomy_level": autonomy_level}
+
+
+# ---------------------------------------------------------------------------
+# POST /sessions/participant — mint a participant on QR scan / laptop load
+# ---------------------------------------------------------------------------
+@router.post(
+    "/sessions/participant",
+    response_model=CreateParticipantResponse,
+    status_code=201,
+)
+async def create_participant(body: CreateParticipantRequest):
+    """Mint a participant row for a QR scan or station first-load.
+
+    No JWT, no token exchange — just a UUID.  The caller stores the returned
+    ``participant_id`` in sessionStorage and includes it on every subsequent
+    contribute/heartbeat call so the system knows WHICH human said what.
+
+    ``display_name`` is auto-assigned by counting existing rows for the same
+    (quorum_id, station_label) and incrementing: "Visitor 1", "Visitor 2", ...
+    """
+    if body.device_kind not in ("laptop", "phone"):
+        raise HTTPException(
+            status_code=422,
+            detail="device_kind must be 'laptop' or 'phone'",
+        )
+
+    db = get_supabase()
+
+    # Verify quorum exists — 404 if not.
+    _fetch_single(db, "quorums", "id", body.quorum_id, select="id", label="Quorum")
+
+    # Verify role exists when provided.
+    if body.role_id is not None:
+        _fetch_single(db, "roles", "id", body.role_id, select="id", label="Role")
+
+    # Count existing visitors at this station to assign the next display_name.
+    existing_query = (
+        db.table("participants")
+        .select("id")
+        .eq("quorum_id", body.quorum_id)
+    )
+    if body.station_label is not None:
+        existing_query = existing_query.eq("station_label", body.station_label)
+    existing = existing_query.execute()
+    visitor_number = len(existing.data or []) + 1
+    display_name = f"Visitor {visitor_number}"
+
+    participant_id = str(uuid.uuid4())
+    row = {
+        "id": participant_id,
+        "quorum_id": body.quorum_id,
+        "role_id": body.role_id,
+        "station_label": body.station_label,
+        "display_name": display_name,
+        "device_kind": body.device_kind,
+    }
+    db.table("participants").insert(row).execute()
+
+    return CreateParticipantResponse(
+        participant_id=participant_id,
+        display_name=display_name,
+    )
+
+
+# ---------------------------------------------------------------------------
+# POST /sessions/heartbeat — refresh last_heartbeat_at for presence
+# ---------------------------------------------------------------------------
+@router.post("/sessions/heartbeat", status_code=204)
+async def heartbeat(body: HeartbeatRequest):
+    """Refresh the participant's last_heartbeat_at timestamp.
+
+    Used by the station page to advertise presence (every 30s).  Returns
+    204 No Content on success, 404 when the participant_id is unknown.
+    """
+    db = get_supabase()
+
+    # Verify participant exists — 404 if not.
+    _fetch_single(
+        db, "participants", "id", body.participant_id,
+        select="id", label="Participant",
+    )
+
+    from datetime import datetime, timezone
+    now = datetime.now(timezone.utc).isoformat()
+    db.table("participants").update(
+        {"last_heartbeat_at": now}
+    ).eq("id", body.participant_id).execute()
+
+    # FastAPI infers 204 from the route decorator; returning None is correct.
+    return None
 
 
 # ---------------------------------------------------------------------------

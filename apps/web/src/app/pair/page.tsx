@@ -152,7 +152,11 @@ export default function PairPage() {
     return () => {
       cancelled = true;
     };
-  }, [quorumId, stationLabel, router]);
+    // router is stable across renders in Next.js 14 — omit from deps to avoid
+    // refiring the mint on each render in tests where the mock returns a new
+    // object identity.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quorumId, stationLabel]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900 p-6">

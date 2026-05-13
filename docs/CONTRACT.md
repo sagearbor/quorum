@@ -448,6 +448,25 @@ conversations:
   rls:
     select: open                       # dashboards / live transcripts read freely
     insert/update/delete: service_role only
+
+# --- Autonomy loop state (migration: 20260513000004_autonomy_loops.sql) ---
+
+autonomy_loop_state:
+  quorum_id: uuid PK FK quorums.id ON DELETE CASCADE
+  autonomy_level: numeric                 # mirrors quorums.autonomy_level at start time
+  status: text CHECK ('running' | 'stopped' | 'orphaned')
+  worker_id: text (nullable)              # ${HOSTNAME}:${PID} of the owning uvicorn worker; NULL when stopped
+  heartbeat_at: timestamptz DEFAULT now() # bumped every loop iteration; > 60s stale = orphaned
+  next_tick_at: timestamptz (nullable)    # best-effort hint for dashboards
+  round_num: int DEFAULT 0
+  started_at: timestamptz DEFAULT now()
+  updated_at: timestamptz DEFAULT now()
+  indexes:
+    - (heartbeat_at) WHERE status = 'running'   # fast reaper-scan partial index
+  realtime: true                       # ADDED to supabase_realtime publication
+  rls:
+    select: open                       # dashboards can show which quorums are ticking
+    insert/update/delete: service_role only
 ```
 
 ## Health Score Metrics
@@ -514,6 +533,9 @@ OLLAMA_MODEL=                   # local model tag
 # --- A2A protocol ---
 QUORUM_A2A_BASE_URL=            # overrides the host advertised in AgentCard urls
                                 # falls back to the incoming request origin if unset
+QUORUM_A2A_ENDPOINT_TTL_S=60    # per-process TTL for the agent_endpoints lookup cache (seconds)
+                                # short enough that re-registering an endpoint takes effect quickly;
+                                # long enough that autonomy loops dispatching every 3s aren't all DB hits.
 
 # --- Coordination backend (apps/api/coordination/factory.py) ---
 COORDINATION_BACKEND=supabase   # default: 'supabase'
@@ -540,4 +562,10 @@ AUTONOMY_AUTO_CONTRIBUTE_MODE=  # 'off' (default) | 'concat' | 'synthesize'
                                 # when humans are silent. KEEP DEFAULT 'off' for expo —
                                 # 'concat' produces fragment-salad artifacts;
                                 # 'synthesize' adds one LLM call per turn.
+AUTONOMY_LOOP_RECLAIM_ORPHANS=  # 'false' (default) | 'true'
+                                # When true, on FastAPI startup, any autonomy_loop_state row
+                                # with status='running' AND heartbeat_at older than 60s is
+                                # reclaimed by this worker (loop restarted with its persisted
+                                # autonomy_level). Disable in multi-worker deployments where
+                                # the loss-of-heartbeat could be transient on a healthy worker.
 ```

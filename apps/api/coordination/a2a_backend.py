@@ -23,7 +23,7 @@ class A2ABackend(SupabaseBackend):
     def __init__(self) -> None:
         super().__init__()
         # Lazy import to avoid circular deps
-        from ..a2a.a2a_client import A2AClient
+        from ..quorum_a2a.a2a_client import A2AClient
         self._a2a_client = A2AClient()
 
     async def submit_contribution(

@@ -264,3 +264,19 @@ CREATE TABLE IF NOT EXISTS synthesis_snapshots (
     quorum_id   TEXT NOT NULL REFERENCES quorums(id) ON DELETE CASCADE,
     created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+
+-- =============================================================================
+-- A2A AGENT ENDPOINTS (per-role registry)
+-- =============================================================================
+-- One row per role.  Mirrors supabase/migrations/20260512000004_agent_endpoints.sql.
+-- capabilities is JSON-as-TEXT in SQLite (parsed/serialized at the Python boundary).
+CREATE TABLE IF NOT EXISTS agent_endpoints (
+    role_id        TEXT PRIMARY KEY REFERENCES roles(id) ON DELETE CASCADE,
+    url            TEXT NOT NULL,
+    capabilities   TEXT NOT NULL DEFAULT '{}',
+    registered_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    last_seen_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_endpoints_last_seen
+    ON agent_endpoints(last_seen_at DESC);

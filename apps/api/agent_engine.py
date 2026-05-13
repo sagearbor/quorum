@@ -9,8 +9,10 @@ Design notes:
 - Uses `llm_provider.chat()` when available (Track A adds it to LLMProvider).
   Falls back to `llm_provider.complete()` with flattened messages so the code
   runs correctly even before Track A ships.
-- Never raises — on error it returns a graceful fallback string and logs the
-  exception.  The caller (routes.py) decides whether to surface it.
+- Never raises — on LLM error it returns the ``PAUSED_SENTINEL`` 3-tuple
+  ``("__PAUSED__", message_id, ["__paused__"])`` and the route layer turns
+  that into an HTTP 200 paused response (no chat-string fallback that would
+  be spoken by the avatar). See ``is_paused_reply``.
 - Agent definitions are loaded from agents/definitions/ by matching the role
   name (case-insensitive, spaces → underscores).
 """
@@ -39,6 +41,25 @@ _MAX_INSIGHTS = 5
 _MAX_DOCS = 3
 # Relevance threshold (Jaccard on tags) above which an insight is included.
 _INSIGHT_RELEVANCE_THRESHOLD = 0.2
+
+# Sentinel returned by process_agent_turn when the LLM call fails. Routes must
+# detect this and respond with a structured paused response — they MUST NOT
+# treat it as a chat string (it would be spoken by the avatar on the projector).
+PAUSED_SENTINEL = "__PAUSED__"
+PAUSED_TAG = "__paused__"
+
+
+def is_paused_reply(reply_text: str, reply_tags: list[str] | None = None) -> bool:
+    """Return True if a process_agent_turn return value is the paused sentinel.
+
+    Callers use this to detect that the LLM call failed and the facilitator
+    should remain silent for this turn (no TTS, no fake assistant message).
+    """
+    if reply_text == PAUSED_SENTINEL:
+        return True
+    if reply_tags and PAUSED_TAG in reply_tags:
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +181,11 @@ async def process_agent_turn(
     9. Return (agent_reply, message_id, tags).
 
     Returns a 3-tuple: (reply_text, reply_message_id, reply_tags).
-    Never raises — returns a fallback string on error.
+
+    Never raises. On LLM failure returns the paused sentinel tuple
+    ``(PAUSED_SENTINEL, user_message_id, [PAUSED_TAG])`` — callers must check
+    via ``is_paused_reply`` and surface a structured paused response instead
+    of treating the value as a normal chat string.
     """
     db = supabase_client
 
@@ -206,14 +231,48 @@ async def process_agent_turn(
     )
 
     # --- 8. Call LLM (routing: gpt-5 → Responses API, others → chat()) ---
+    # On LLM failure we return a structured paused sentinel instead of a
+    # chat-string error fallback. Returning a string like "I encountered an
+    # issue…" causes the avatar to speak the error on the projector — a hard
+    # demo failure. The route layer translates the sentinel into HTTP 200 with
+    # {"paused": true, "reason": "llm_unavailable"} and the conversation looks
+    # as if the agent simply didn't reply this turn (no row in station_messages
+    # for the assistant side).
     try:
         reply = await _call_llm(llm_provider, messages, agent_def=agent_def)
-    except Exception:
-        logger.error(
-            "agent_engine: LLM call failed for role=%s station=%s",
-            role_id, station_id, exc_info=True,
+    except Exception as exc:
+        logger.warning(
+            "facilitator_paused",
+            extra={
+                "quorum_id": quorum_id,
+                "role_id": role_id,
+                "station_id": station_id,
+                "reason": "llm_unavailable",
+                "exception": repr(exc),
+            },
+            exc_info=True,
         )
-        reply = "I encountered an issue processing your message. Please try again."
+        # Persist the user message so we don't lose what the human said, but
+        # do NOT write an assistant row — the agent is paused, not replying.
+        paused_user_msg_id = str(uuid.uuid4())
+        try:
+            db.table("station_messages").insert({
+                "id": paused_user_msg_id,
+                "quorum_id": quorum_id,
+                "role_id": role_id,
+                "station_id": station_id,
+                "role": "user",
+                "content": user_message,
+                "tags": [],
+                "metadata": {"facilitator_paused": True, "reason": "llm_unavailable"},
+                "created_at": _now_iso(),
+            }).execute()
+        except Exception:
+            logger.warning(
+                "agent_engine: failed to persist user message on paused turn",
+                exc_info=True,
+            )
+        return PAUSED_SENTINEL, paused_user_msg_id, [PAUSED_TAG]
 
     # --- 9. Persist user message ---
     user_msg_id = str(uuid.uuid4())

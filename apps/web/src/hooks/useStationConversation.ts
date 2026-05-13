@@ -109,19 +109,26 @@ export function useStationConversation(
       try {
         const reply = await askFacilitator(quorumId, stationId, roleId, content);
 
-        // Append the assistant reply to the thread
-        const assistantMsg: StationMessage = {
-          id: reply.message_id,
-          quorum_id: quorumId,
-          role_id: roleId,
-          station_id: stationId,
-          role: "assistant",
-          content: reply.reply,
-          tags: reply.tags,
-          created_at: new Date().toISOString(),
-        };
-        setMessages((prev) => [...prev, assistantMsg]);
-        setFacilitatorReply(reply);
+        if (reply.paused || !reply.reply || !reply.message_id) {
+          // Facilitator paused — do NOT append an assistant message, do NOT
+          // trigger TTS. Surface the paused state so AvatarPanel renders the
+          // "reconnecting" pill. The user message stays in the thread.
+          setFacilitatorReply(reply);
+        } else {
+          // Append the assistant reply to the thread
+          const assistantMsg: StationMessage = {
+            id: reply.message_id,
+            quorum_id: quorumId,
+            role_id: roleId,
+            station_id: stationId,
+            role: "assistant",
+            content: reply.reply,
+            tags: reply.tags,
+            created_at: new Date().toISOString(),
+          };
+          setMessages((prev) => [...prev, assistantMsg]);
+          setFacilitatorReply(reply);
+        }
       } catch {
         // Remove the optimistic message on failure and re-throw so the
         // component can surface an error state to the user
@@ -141,6 +148,13 @@ export function useStationConversation(
    */
   const ingestFacilitatorReply = useCallback((reply: FacilitatorReply) => {
     setFacilitatorReply(reply);
+
+    // Paused replies (LLM unavailable) MUST NOT be appended to the thread.
+    // The avatar component will read the paused flag from facilitatorReply
+    // and render a recovery pill instead of speaking.
+    if (reply.paused || !reply.reply || !reply.message_id) {
+      return;
+    }
 
     // Also append the assistant message to the visible thread
     const assistantMsg: StationMessage = {

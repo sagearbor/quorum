@@ -54,7 +54,11 @@ from models import (
     ResolveResponse,
     StationMessageResponse,
 )
-from agent_engine import process_a2a_request, process_agent_turn
+from agent_engine import (
+    is_paused_reply,
+    process_a2a_request,
+    process_agent_turn,
+)
 from document_engine import create_document, detect_oscillation, update_document
 from ws_manager import manager
 
@@ -397,31 +401,58 @@ async def contribute(quorum_id: str, body: ContributeRequest):
     facilitator_reply: str | None = None
     facilitator_message_id: str | None = None
     facilitator_tags: list[str] | None = None
+    facilitator_paused = False
+    facilitator_paused_reason: str | None = None
 
     if body.station_id:
         try:
-            facilitator_reply, facilitator_message_id, facilitator_tags = (
-                await process_agent_turn(
-                    quorum_id=quorum_id,
-                    role_id=body.role_id,
-                    station_id=body.station_id,
-                    user_message=body.content,
-                    supabase_client=db,
-                    llm_provider=llm_provider,
-                )
+            turn_reply, turn_msg_id, turn_tags = await process_agent_turn(
+                quorum_id=quorum_id,
+                role_id=body.role_id,
+                station_id=body.station_id,
+                user_message=body.content,
+                supabase_client=db,
+                llm_provider=llm_provider,
             )
-            # Broadcast facilitator reply over WebSocket so the frontend can
-            # update the conversation thread in real time.
-            await manager.broadcast(quorum_id, {
-                "type": "facilitator_reply",
-                "data": {
-                    "station_id": body.station_id,
-                    "role_id": body.role_id,
-                    "content": facilitator_reply,
-                    "tags": facilitator_tags or [],
-                    "message_id": facilitator_message_id,
-                },
-            })
+            if is_paused_reply(turn_reply, turn_tags):
+                # Facilitator paused (LLM unavailable). Do NOT broadcast a
+                # reply — the avatar must stay silent — but signal the paused
+                # state to listeners so the UI can show the pill.
+                facilitator_paused = True
+                facilitator_paused_reason = "llm_unavailable"
+                logger.warning(
+                    "contribute: facilitator paused",
+                    extra={
+                        "quorum_id": quorum_id,
+                        "role_id": body.role_id,
+                        "station_id": body.station_id,
+                        "reason": "llm_unavailable",
+                    },
+                )
+                await manager.broadcast(quorum_id, {
+                    "type": "facilitator_paused",
+                    "data": {
+                        "station_id": body.station_id,
+                        "role_id": body.role_id,
+                        "reason": "llm_unavailable",
+                    },
+                })
+            else:
+                facilitator_reply = turn_reply
+                facilitator_message_id = turn_msg_id
+                facilitator_tags = turn_tags
+                # Broadcast facilitator reply over WebSocket so the frontend
+                # can update the conversation thread in real time.
+                await manager.broadcast(quorum_id, {
+                    "type": "facilitator_reply",
+                    "data": {
+                        "station_id": body.station_id,
+                        "role_id": body.role_id,
+                        "content": facilitator_reply,
+                        "tags": facilitator_tags or [],
+                        "message_id": facilitator_message_id,
+                    },
+                })
         except Exception:
             logger.warning(
                 "contribute: agent turn failed for quorum=%s role=%s station=%s",
@@ -436,6 +467,8 @@ async def contribute(quorum_id: str, body: ContributeRequest):
         facilitator_reply=facilitator_reply,
         facilitator_message_id=facilitator_message_id,
         facilitator_tags=facilitator_tags,
+        facilitator_paused=facilitator_paused,
+        facilitator_paused_reason=facilitator_paused_reason,
     )
 
 
@@ -902,6 +935,36 @@ async def ask_facilitator(quorum_id: str, station_id: str, body: AskRequest):
             quorum_id, station_id, exc_info=True,
         )
         raise HTTPException(status_code=500, detail="Agent turn failed")
+
+    # Paused sentinel: the LLM call failed inside process_agent_turn. Do NOT
+    # broadcast a reply (it would be spoken on the projector) and do NOT
+    # write an assistant message — return a structured paused response so the
+    # frontend can render a quiet "reconnecting" pill.
+    if is_paused_reply(reply, tags):
+        logger.warning(
+            "ask_facilitator: facilitator paused",
+            extra={
+                "quorum_id": quorum_id,
+                "station_id": station_id,
+                "role_id": body.role_id,
+                "reason": "llm_unavailable",
+            },
+        )
+        await manager.broadcast(quorum_id, {
+            "type": "facilitator_paused",
+            "data": {
+                "station_id": station_id,
+                "role_id": body.role_id,
+                "reason": "llm_unavailable",
+            },
+        })
+        return AskResponse(
+            reply=None,
+            message_id=None,
+            tags=[],
+            paused=True,
+            reason="llm_unavailable",
+        )
 
     # Broadcast so other listeners see the exchange
     await manager.broadcast(quorum_id, {

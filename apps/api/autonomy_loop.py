@@ -8,6 +8,28 @@ When autonomy_level > 0, agents proactively:
 
 The loop runs as a FastAPI background task, polling at intervals
 inversely proportional to autonomy_level.
+
+State management (checklist item 11.5)
+--------------------------------------
+
+The legacy implementation tracked active loops in a module-level dict
+(``_active_loops: dict[quorum_id, asyncio.Task]``). That dict could not be
+the source of truth: it disappeared on every uvicorn restart and was per-
+worker, so two uvicorn workers would each happily run the same loop and
+double-dispatch every round.
+
+The source of truth is now the ``autonomy_loop_state`` Supabase table
+(see migration ``20260513000004_autonomy_loops.sql``). Each row carries a
+``worker_id`` lease (``${HOSTNAME}:${PID}``), a ``status``, and a
+``heartbeat_at`` timestamp. A worker that wants to start a loop UPSERTs
+its lease; every iteration bumps ``heartbeat_at``; on stop the row goes to
+``status='stopped'`` with a NULL worker_id; on crash the row goes stale
+(heartbeat older than ``_HEARTBEAT_STALE_S``) and another worker can pick
+it up at startup when ``AUTONOMY_LOOP_RECLAIM_ORPHANS=true``.
+
+The in-process dict is kept ONLY as a handle map so the same worker can
+``.cancel()`` its own task — it is never the authority on whether a loop
+is running. That answer lives in the DB.
 """
 
 from __future__ import annotations
@@ -16,8 +38,10 @@ import asyncio
 import logging
 import os
 import random
+import socket
 import uuid
 from datetime import datetime, timedelta, timezone
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +51,27 @@ logger = logging.getLogger(__name__)
 # a crashed worker's claims don't permanently block a request.
 _STALE_PROCESSING_TIMEOUT_S = 60
 
+# How long an autonomy_loop_state row may sit without a heartbeat before
+# another worker may reclaim it. Loop iterations are at most ~30s apart
+# (autonomy_level=0.1), so 60s gives one full iteration of slack before the
+# row is considered orphaned.
+_HEARTBEAT_STALE_S = 60
+
 
 def _now_iso() -> str:
     """ISO-8601 UTC timestamp matching the DB default format."""
     return datetime.now(timezone.utc).isoformat()
+
+
+def _worker_id() -> str:
+    """Identify the current worker — ``${HOSTNAME}:${PID}``.
+
+    Falls back to ``socket.gethostname()`` when $HOSTNAME is unset (containers
+    typically set it; bare-metal dev environments do not). The PID disambiguates
+    when multiple uvicorn workers run on the same host.
+    """
+    host = os.environ.get("HOSTNAME") or socket.gethostname() or "unknown"
+    return f"{host}:{os.getpid()}"
 
 
 def _extract_a2a_reply(a2a_response: dict) -> str | None:
@@ -60,29 +101,266 @@ def _extract_a2a_reply(a2a_response: dict) -> str | None:
                 return text
     return None
 
-# Loop is managed by these module-level vars
-_active_loops: dict[str, asyncio.Task] = {}  # quorum_id -> task
+
+# In-process handle map. NOT the source of truth — see module docstring.
+# Used only so ``stop_autonomy_loop()`` can cancel the asyncio.Task running
+# in THIS worker. Other workers' tasks are cancelled cooperatively by
+# observing ``status != 'running'`` or a foreign ``worker_id`` on the row.
+_active_loops: dict[str, asyncio.Task] = {}  # quorum_id -> task (per-worker only)
 
 
-async def start_autonomy_loop(quorum_id: str, autonomy_level: float):
-    """Start the autonomy loop for a quorum. Called when quorum is created or autonomy changes."""
+# ---------------------------------------------------------------------------
+# DB helpers — interact with the autonomy_loop_state table
+# ---------------------------------------------------------------------------
+
+
+def _upsert_loop_state(
+    db: Any,
+    *,
+    quorum_id: str,
+    autonomy_level: float,
+    status: str,
+    worker_id: str | None,
+    round_num: int = 0,
+) -> None:
+    """Create or replace the autonomy_loop_state row for a quorum.
+
+    Best-effort: callers MUST not let DB unavailability stop the in-process
+    task from being created (the loop still runs, it just won't be visible
+    to other workers / restarts). Log and continue.
+    """
+    now = _now_iso()
+    row = {
+        "quorum_id": quorum_id,
+        "autonomy_level": autonomy_level,
+        "status": status,
+        "worker_id": worker_id,
+        "heartbeat_at": now,
+        "round_num": round_num,
+        "updated_at": now,
+    }
+    try:
+        # Upsert keyed on quorum_id (the PK). started_at falls back to the DB
+        # default on first insert and is preserved by upsert on re-claim.
+        db.table("autonomy_loop_state").upsert(row, on_conflict="quorum_id").execute()
+    except Exception:
+        logger.warning(
+            "autonomy_loop_state upsert failed for quorum %s (loop will run "
+            "but won't be visible across workers)",
+            quorum_id,
+            exc_info=True,
+        )
+
+
+def _heartbeat_loop_state(db: Any, quorum_id: str, round_num: int) -> None:
+    """Bump heartbeat_at + round_num on this worker's row.
+
+    Best-effort. If another worker has taken over the lease (worker_id changed
+    out from under us), we DO NOT clobber — the .eq("worker_id", _worker_id())
+    guard is the CAS.
+    """
+    now = _now_iso()
+    try:
+        db.table("autonomy_loop_state").update(
+            {
+                "heartbeat_at": now,
+                "round_num": round_num,
+                "updated_at": now,
+            }
+        ).eq("quorum_id", quorum_id).eq("worker_id", _worker_id()).execute()
+    except Exception:
+        logger.debug(
+            "autonomy_loop_state heartbeat failed for quorum %s (non-fatal)",
+            quorum_id,
+            exc_info=True,
+        )
+
+
+def _mark_stopped(db: Any, quorum_id: str) -> None:
+    """Mark this worker's loop row as stopped and clear the lease."""
+    now = _now_iso()
+    try:
+        db.table("autonomy_loop_state").update(
+            {
+                "status": "stopped",
+                "worker_id": None,
+                "heartbeat_at": now,
+                "updated_at": now,
+            }
+        ).eq("quorum_id", quorum_id).execute()
+    except Exception:
+        logger.debug(
+            "autonomy_loop_state stop-mark failed for quorum %s (non-fatal)",
+            quorum_id,
+            exc_info=True,
+        )
+
+
+async def reclaim_orphaned_autonomy_loops(db: Any | None = None) -> list[str]:
+    """Reclaim autonomy loops whose owning worker has died.
+
+    Two-phase:
+        1. SELECT rows with status='running' AND heartbeat_at older than
+           ``_HEARTBEAT_STALE_S``. Mark them ``status='orphaned'``.
+        2. If ``AUTONOMY_LOOP_RECLAIM_ORPHANS=true``, restart the loop in
+           THIS worker (it now owns the lease).
+
+    Returns the list of quorum_ids whose loops were reclaimed (or marked
+    orphaned, if reclaim is disabled). Safe to call multiple times — concurrent
+    workers race on the UPDATE; only one wins each row.
+    """
+    if db is None:
+        from database import get_supabase
+
+        db = get_supabase()
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(seconds=_HEARTBEAT_STALE_S)).isoformat()
+    try:
+        stale = (
+            db.table("autonomy_loop_state")
+            .select("quorum_id, autonomy_level, worker_id, heartbeat_at")
+            .eq("status", "running")
+            .lt("heartbeat_at", cutoff)
+            .execute()
+        )
+    except Exception:
+        logger.warning(
+            "reclaim_orphaned_autonomy_loops: SELECT failed (table missing?)",
+            exc_info=True,
+        )
+        return []
+
+    stale_rows = stale.data or []
+    if not stale_rows:
+        return []
+
+    # Phase 1: mark them orphaned so any zombie worker that wakes up sees
+    # status != 'running' on its CAS heartbeat and exits cleanly.
+    reclaimed: list[str] = []
+    for row in stale_rows:
+        quorum_id = row.get("quorum_id")
+        old_worker = row.get("worker_id")
+        try:
+            mark = (
+                db.table("autonomy_loop_state")
+                .update({"status": "orphaned", "updated_at": _now_iso()})
+                .eq("quorum_id", quorum_id)
+                .eq("status", "running")  # CAS guard — don't clobber a re-claim
+                .lt("heartbeat_at", cutoff)
+                .execute()
+            )
+        except Exception:
+            logger.warning(
+                "reclaim_orphaned_autonomy_loops: mark-orphaned failed for %s",
+                quorum_id,
+                exc_info=True,
+            )
+            continue
+        if not getattr(mark, "data", None):
+            # Another worker beat us to it.
+            continue
+        logger.info(
+            "autonomy_loop: marked %s orphaned (was owned by %s, heartbeat=%s)",
+            quorum_id,
+            old_worker,
+            row.get("heartbeat_at"),
+        )
+        reclaimed.append(quorum_id)
+
+    # Phase 2: opt-in resumption.
+    if os.environ.get("AUTONOMY_LOOP_RECLAIM_ORPHANS", "false").lower() not in (
+        "true",
+        "1",
+        "yes",
+    ):
+        return reclaimed
+
+    for row in stale_rows:
+        quorum_id = row.get("quorum_id")
+        if quorum_id not in reclaimed:
+            continue
+        level = float(row.get("autonomy_level") or 0.0)
+        if level <= 0:
+            continue
+        logger.info(
+            "autonomy_loop: reclaiming %s (autonomy_level=%.2f)", quorum_id, level
+        )
+        # start_autonomy_loop is async — schedule, don't await, so reclaim
+        # of N orphans is O(1) wall clock at startup.
+        await start_autonomy_loop(quorum_id, level, _is_reclaim=True)
+
+    return reclaimed
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+async def start_autonomy_loop(
+    quorum_id: str,
+    autonomy_level: float,
+    *,
+    _is_reclaim: bool = False,
+) -> None:
+    """Start the autonomy loop for a quorum.
+
+    Called when a quorum is created with autonomy_level > 0, when autonomy
+    is increased on a running quorum, or when the startup reclaim hook
+    resumes an orphaned loop.
+
+    Lease semantics:
+      • Upsert a row with worker_id = THIS worker's ID and status='running'.
+        If another worker already owns the row with a fresh heartbeat, this
+        upsert will rewrite worker_id to point at us — that's by design for
+        the explicit "stop and restart on this worker" path (e.g. an autonomy
+        level change). The previous owner's loop will exit on its next CAS
+        heartbeat when it sees worker_id != its own.
+      • Cancel the in-process task IF this worker is already running one for
+        the same quorum (handles autonomy-level-change as a stop-and-restart).
+    """
     if autonomy_level <= 0:
         return
+
+    from database import get_supabase
+
+    db = get_supabase()
+    _upsert_loop_state(
+        db,
+        quorum_id=quorum_id,
+        autonomy_level=autonomy_level,
+        status="running",
+        worker_id=_worker_id(),
+    )
+
     if quorum_id in _active_loops:
-        _active_loops[quorum_id].cancel()
+        old = _active_loops[quorum_id]
+        if not old.done():
+            old.cancel()
     _active_loops[quorum_id] = asyncio.create_task(
         _run_quorum_loop(quorum_id, autonomy_level)
     )
 
 
-async def stop_autonomy_loop(quorum_id: str):
-    """Stop the autonomy loop for a quorum."""
+async def stop_autonomy_loop(quorum_id: str) -> None:
+    """Stop the autonomy loop for a quorum.
+
+    Cancels the in-process task (if any) AND marks the DB row stopped so
+    other workers won't re-start it. If the loop is running on a different
+    worker, the DB row update is enough — that worker's next heartbeat will
+    observe status='stopped' and exit cleanly.
+    """
+    from database import get_supabase
+
+    db = get_supabase()
+    _mark_stopped(db, quorum_id)
+
     task = _active_loops.pop(quorum_id, None)
-    if task:
+    if task and not task.done():
         task.cancel()
 
 
-async def _run_quorum_loop(quorum_id: str, autonomy_level: float):
+async def _run_quorum_loop(quorum_id: str, autonomy_level: float) -> None:
     """Main loop for a single quorum's autonomous agents."""
     from database import get_supabase
     from llm import llm_provider
@@ -91,10 +369,11 @@ async def _run_quorum_loop(quorum_id: str, autonomy_level: float):
     base_interval = max(3, int(30 * (1.0 - autonomy_level)))
 
     logger.info(
-        "Autonomy loop started for quorum %s (level=%.1f, interval=%ds)",
+        "Autonomy loop started for quorum %s (level=%.1f, interval=%ds, worker=%s)",
         quorum_id,
         autonomy_level,
         base_interval,
+        _worker_id(),
     )
 
     try:
@@ -104,12 +383,28 @@ async def _run_quorum_loop(quorum_id: str, autonomy_level: float):
         round_num = 0
         while True:
             round_num += 1
+            db = get_supabase()
+
+            # Heartbeat + lease check. If the row's worker_id is no longer
+            # ours (another worker reclaimed) OR status != 'running' (a stop
+            # was issued), exit cleanly. This is the cooperative cancellation
+            # path for cross-worker control.
+            if not _lease_still_held(db, quorum_id):
+                logger.info(
+                    "autonomy_loop: lease lost for quorum %s (worker=%s); exiting",
+                    quorum_id,
+                    _worker_id(),
+                )
+                break
+
+            _heartbeat_loop_state(db, quorum_id, round_num)
+
             try:
                 await _run_autonomy_round(
                     quorum_id,
                     autonomy_level,
                     round_num,
-                    get_supabase(),
+                    db,
                     llm_provider,
                 )
             except asyncio.CancelledError:
@@ -127,7 +422,6 @@ async def _run_quorum_loop(quorum_id: str, autonomy_level: float):
 
             # Check if quorum is still active
             try:
-                db = get_supabase()
                 quorum = (
                     db.table("quorums")
                     .select("status")
@@ -156,6 +450,60 @@ async def _run_quorum_loop(quorum_id: str, autonomy_level: float):
         logger.info("Autonomy loop cancelled for quorum %s", quorum_id)
     finally:
         _active_loops.pop(quorum_id, None)
+        # Best-effort: only mark stopped if we still own the lease.
+        # (If we lost it to a reclaim, the new owner's row is the truth.)
+        try:
+            db = get_supabase()
+            check = (
+                db.table("autonomy_loop_state")
+                .select("worker_id, status")
+                .eq("quorum_id", quorum_id)
+                .maybe_single()
+                .execute()
+            )
+            if check and check.data and check.data.get("worker_id") == _worker_id():
+                _mark_stopped(db, quorum_id)
+        except Exception:
+            logger.debug(
+                "autonomy_loop: final stop-mark failed for %s (non-fatal)",
+                quorum_id,
+                exc_info=True,
+            )
+
+
+def _lease_still_held(db: Any, quorum_id: str) -> bool:
+    """Return True iff THIS worker still owns the autonomy_loop_state row.
+
+    Cooperative cancellation primitive. If the row is missing, status changed,
+    or worker_id no longer matches us, return False so the loop can exit.
+
+    Errors are treated as "lease still held" — we don't want a transient DB
+    blip to stop the whole loop. The next iteration will re-check.
+    """
+    try:
+        row = (
+            db.table("autonomy_loop_state")
+            .select("worker_id, status")
+            .eq("quorum_id", quorum_id)
+            .maybe_single()
+            .execute()
+        )
+    except Exception:
+        logger.debug(
+            "autonomy_loop: lease check failed for %s (assuming still held)",
+            quorum_id,
+            exc_info=True,
+        )
+        return True
+
+    if not row or not row.data:
+        # Row deleted (quorum cascaded away) — lease is gone.
+        return False
+    if row.data.get("status") != "running":
+        return False
+    if row.data.get("worker_id") != _worker_id():
+        return False
+    return True
 
 
 async def _run_autonomy_round(

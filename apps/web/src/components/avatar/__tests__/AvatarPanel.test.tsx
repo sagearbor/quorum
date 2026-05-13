@@ -49,6 +49,13 @@ vi.mock("@/lib/dataProvider", () => ({
     lastFacilitatorHandler = handler;
     return mockUnsubscribe;
   },
+  // 9.4 — ObservationStrip subscribes to facilitator observations. Stub
+  // returns an unsubscribe so the strip mounts without a WebSocket and
+  // stays hidden until the test sends it a static observation.
+  subscribeToFacilitatorObservations: (
+    _quorumId: string,
+    _handler: (frame: unknown) => void,
+  ) => mockUnsubscribe,
 }));
 
 // Track what the avatar controller is invoked with so tests can assert that

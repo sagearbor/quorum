@@ -727,6 +727,36 @@ async def _run_autonomy_round(
         except Exception:
             logger.debug("autonomy: facilitator_narration broadcast failed", exc_info=True)
 
+    # --- Facilitator agent (checklist 9.4): higher-level meta-narration ---
+    # Distinct from the per-turn ``facilitator_narration`` above. The
+    # facilitator agent fires every Nth round (default 3) and broadcasts a
+    # ``facilitator_observation`` WS frame with audience-facing meta-narration
+    # (e.g. "Three roles flagged enrollment risk; the IRB hasn't weighed in
+    # yet"). Reads via the 4 MCP servers from PR #21 (11.2).
+    try:
+        from agents.facilitator import (
+            run_and_broadcast as _facilitator_run_and_broadcast,
+            should_observe_this_round as _facilitator_should_observe,
+        )
+
+        if _facilitator_should_observe(round_num):
+            # ``run_and_broadcast`` swallows all errors and returns None on
+            # failure, so we don't need our own try/except here — but keep
+            # it for defence-in-depth so a broken import path can't blow up
+            # the orchestrator round.
+            await _facilitator_run_and_broadcast(
+                quorum_id=quorum_id,
+                db=db,
+                ws_manager=manager,
+                llm_provider=llm_provider,
+                round_num=round_num,
+            )
+    except Exception:
+        logger.debug(
+            "autonomy: facilitator observation step failed (non-fatal)",
+            exc_info=True,
+        )
+
     # Generate a proactive prompt based on the round and context
     quorum_data = (
         db.table("quorums")

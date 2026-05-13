@@ -865,6 +865,114 @@ export function subscribeToFacilitator(
 }
 
 // ---------------------------------------------------------------------------
+// Facilitator observations (9.4 — meta-narration above the per-turn
+// orchestrator narration). Distinct from the per-turn
+// ``facilitator_narration`` frame above: ``facilitator_observation`` fires
+// every Nth round (default 3) and carries audience-facing meta-narration
+// ("Three roles flagged enrollment risk; IRB silent so far.") rather than
+// per-turn speaker-election rationale.
+//
+// Wire shape (matches docs/CONTRACT.md WS frames):
+//   {
+//     type: "facilitator_observation",
+//     summary: string,
+//     severity: "info" | "notable" | "action_needed",
+//     referenced_role_ids: string[],
+//     suggested_tool_calls: string[],
+//     round?: number
+//   }
+// ---------------------------------------------------------------------------
+
+export type FacilitatorObservationSeverity =
+  | "info"
+  | "notable"
+  | "action_needed";
+
+/**
+ * A higher-level meta-observation emitted by the facilitator agent
+ * (apps/api/agents/facilitator.py) every Nth orchestrator round.
+ */
+export interface FacilitatorObservation {
+  /** One sentence, audience-facing. */
+  summary: string;
+  /** Escalation cue for the UI. */
+  severity: FacilitatorObservationSeverity;
+  /** Role IDs the observation mentions (for avatar / panel highlighting). */
+  referenced_role_ids: string[];
+  /**
+   * Tool names the agent suggests for follow-up. We do NOT auto-execute
+   * these; they're surfaced for transparency / future operator UI.
+   */
+  suggested_tool_calls: string[];
+  /** Orchestrator round number that produced this observation. */
+  round?: number | null;
+}
+
+/**
+ * Subscribe to facilitator-emitted ``facilitator_observation`` frames over
+ * the per-quorum WebSocket channel.
+ *
+ * Mirrors ``subscribeToFacilitator`` for the per-turn narration frame —
+ * same WS endpoint, different ``type`` discriminator. Returns an
+ * unsubscribe function; no-op in demo mode and during SSR.
+ */
+export function subscribeToFacilitatorObservations(
+  quorumId: string,
+  handler: (frame: FacilitatorObservation) => void,
+): () => void {
+  if (isDemoMode()) {
+    return () => {};
+  }
+  if (typeof window === "undefined") {
+    return () => {};
+  }
+
+  let ws: WebSocket | null = null;
+  let closed = false;
+
+  try {
+    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    ws = new WebSocket(
+      `${protocol}//${window.location.host}/quorums/${quorumId}/live`,
+    );
+
+    ws.onmessage = (event) => {
+      if (closed) return;
+      try {
+        const msg = JSON.parse(event.data);
+        if (msg && msg.type === "facilitator_observation") {
+          handler({
+            summary: String(msg.summary ?? ""),
+            severity: (msg.severity ?? "info") as FacilitatorObservationSeverity,
+            referenced_role_ids: Array.isArray(msg.referenced_role_ids)
+              ? msg.referenced_role_ids.map((r: unknown) => String(r))
+              : [],
+            suggested_tool_calls: Array.isArray(msg.suggested_tool_calls)
+              ? msg.suggested_tool_calls.map((t: unknown) => String(t))
+              : [],
+            round: typeof msg.round === "number" ? msg.round : null,
+          });
+        }
+      } catch {
+        // Ignore non-JSON or malformed frames
+      }
+    };
+  } catch {
+    // WebSocket failed to construct — fall back to no-op
+  }
+
+  return () => {
+    closed = true;
+    if (ws) {
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+    }
+  };
+}
+
 // Arbitration / blackboard (11.7 — authority arbitration with dissents)
 // ---------------------------------------------------------------------------
 

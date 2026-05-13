@@ -16,6 +16,7 @@ import { resolveArchetype } from "./archetypes/resolveArchetype";
 import { ARCHETYPES, resolveGlbUrl } from "./archetypes/archetypes";
 import { subscribeToFacilitator } from "@/lib/dataProvider";
 import { VisionTracker } from "./VisionTracker";
+import { ObservationStrip } from "./ObservationStrip";
 
 const CAMERA_STORAGE_KEY = "quorum.avatar.cameraDeviceId";
 
@@ -264,6 +265,13 @@ export function AvatarPanel({
           ))}
         </div>
       )}
+
+      {/* 9.4 — Facilitator meta-observation strip. Hidden until the first
+          ``facilitator_observation`` frame arrives so it doesn't take up
+          vertical space on a fresh quorum. */}
+      <div className="w-full px-3 pb-3">
+        <ObservationStrip quorumId={quorumId} />
+      </div>
     </div>
   );
 }

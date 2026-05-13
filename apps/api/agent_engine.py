@@ -624,7 +624,15 @@ def _load_agent_definition(role_name: str, role_id: str | None = None, db=None):
     or a generic auto-generated definition otherwise.
     """
     try:
-        from agents import load_agent
+        # NOTE: must import from the package-qualified path
+        # ``apps.api.agents`` — the repo has a sibling top-level ``agents/``
+        # directory (legacy agent definitions used by the standalone
+        # agents/tests/* suite) whose ``load_agent`` takes only ``(slug)``
+        # and shadows this import when pytest is invoked from the repo root.
+        # The canonical ``apps/api/agents/__init__.py`` accepts
+        # ``(slug, role_id=None, db=None)`` and prefers the architect-authored
+        # ``agent_configs`` persona — that is what we want here.
+        from apps.api.agents import load_agent
         slug = _slugify(role_name)
         return load_agent(slug, role_id=role_id, db=db)
     except FileNotFoundError:

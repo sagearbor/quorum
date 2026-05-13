@@ -19,6 +19,10 @@ import random
 import uuid
 from datetime import datetime, timedelta, timezone
 
+# Item 12.6: every Supabase ``.execute()`` is wrapped via ``aexec`` so the
+# blocking sync call doesn't stall the autonomy loop's event loop.
+from db.aexec import aexec
+
 logger = logging.getLogger(__name__)
 
 # How long a row may sit in 'processing' before the reaper treats it as
@@ -128,12 +132,11 @@ async def _run_quorum_loop(quorum_id: str, autonomy_level: float):
             # Check if quorum is still active
             try:
                 db = get_supabase()
-                quorum = (
+                quorum = await aexec(
                     db.table("quorums")
                     .select("status")
                     .eq("id", quorum_id)
                     .maybe_single()
-                    .execute()
                 )
                 if not quorum.data or quorum.data["status"] in ("resolved", "archived"):
                     logger.info(
@@ -189,13 +192,12 @@ async def _run_autonomy_round(
         stale_cutoff = (
             datetime.now(timezone.utc) - timedelta(seconds=_STALE_PROCESSING_TIMEOUT_S)
         ).isoformat()
-        reaped = (
+        reaped = await aexec(
             db.table("agent_requests")
             .update({"status": "pending", "claimed_at": None})
             .eq("quorum_id", quorum_id)
             .eq("status", "processing")
             .lt("claimed_at", stale_cutoff)
-            .execute()
         )
         if reaped and getattr(reaped, "data", None):
             logger.info(
@@ -209,14 +211,13 @@ async def _run_autonomy_round(
         )
 
     # --- Phase 1: Process pending A2A requests ---
-    pending = (
+    pending = await aexec(
         db.table("agent_requests")
         .select("id, to_role_id, request_type, priority")
         .eq("quorum_id", quorum_id)
         .eq("status", "pending")
         .order("priority", desc=True)
         .limit(5)
-        .execute()
     )
 
     for req in pending.data or []:
@@ -227,12 +228,11 @@ async def _run_autonomy_round(
         # the core fix for the duplicate-dispatch race at autonomy_level=1.0
         # where base_interval can drop to ~1.5s with jitter.
         try:
-            claim = (
+            claim = await aexec(
                 db.table("agent_requests")
                 .update({"status": "processing", "claimed_at": _now_iso()})
                 .eq("id", req["id"])
                 .eq("status", "pending")
-                .execute()
             )
         except Exception:
             logger.warning(
@@ -260,9 +260,11 @@ async def _run_autonomy_round(
                 # reaper-style behaviour is consistent and the next tick
                 # retries the same request.
                 try:
-                    db.table("agent_requests").update(
-                        {"status": "pending", "claimed_at": None}
-                    ).eq("id", req["id"]).execute()
+                    await aexec(
+                        db.table("agent_requests").update(
+                            {"status": "pending", "claimed_at": None}
+                        ).eq("id", req["id"])
+                    )
                 except Exception:
                     logger.warning(
                         "Failed to revert paused A2A request %s back to pending",
@@ -303,11 +305,10 @@ async def _run_autonomy_round(
         return  # Skip proactive turn this round (more likely at low autonomy)
 
     # Get all active roles in this quorum
-    roles = (
+    roles = await aexec(
         db.table("roles")
         .select("id, name, status")
         .eq("quorum_id", quorum_id)
-        .execute()
     )
     active_roles = [r for r in (roles.data or []) if r.get("status") == "active"]
 
@@ -330,14 +331,13 @@ async def _run_autonomy_round(
     # Find the most recent assistant speaker for the random fallback.
     last_speaker_id: str | None = None
     try:
-        recent = (
+        recent = await aexec(
             db.table("station_messages")
             .select("role_id, role, created_at")
             .eq("quorum_id", quorum_id)
             .eq("role", "assistant")
             .order("created_at", desc=True)
             .limit(1)
-            .execute()
         )
         rows = recent.data or []
         if rows:
@@ -380,24 +380,22 @@ async def _run_autonomy_round(
             logger.debug("autonomy: facilitator_narration broadcast failed", exc_info=True)
 
     # Generate a proactive prompt based on the round and context
-    quorum_data = (
+    quorum_data = await aexec(
         db.table("quorums")
         .select("title, description")
         .eq("id", quorum_id)
         .maybe_single()
-        .execute()
     )
     quorum_title = (quorum_data.data or {}).get("title", "this problem")
     quorum_desc = (quorum_data.data or {}).get("description", "")
 
     # Get recent insights to inform the proactive prompt
-    recent_insights = (
+    recent_insights = await aexec(
         db.table("agent_insights")
         .select("content, tags")
         .eq("quorum_id", quorum_id)
         .order("created_at", desc=True)
         .limit(3)
-        .execute()
     )
 
     insight_context = ""
@@ -538,8 +536,14 @@ async def _run_autonomy_round(
         return
     if autonomy_level >= 0.7 and round_num >= 3:
         try:
-            _maybe_auto_contribute(
-                db, quorum_id, role, autonomy_level, round_num, mode=mode
+            # 12.6: ``_maybe_auto_contribute`` is sync (also called from sync
+            # tests). Bounce it to a thread so its Supabase calls don't stall
+            # the autonomy loop. Kept sync to honour the stop-condition that
+            # helpers used in multiple contexts shouldn't change shape.
+            await aexec(
+                lambda: _maybe_auto_contribute(
+                    db, quorum_id, role, autonomy_level, round_num, mode=mode
+                )
             )
         except Exception:
             logger.warning(

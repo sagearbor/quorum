@@ -470,6 +470,39 @@ interface LLMProvider {
 }
 ```
 
+## Async Supabase Pattern (12.6)
+
+`supabase-py` is synchronous --- every `.execute()` blocks the calling thread.
+Inside FastAPI's async loop that stalls every other coroutine. New code on
+the autonomy hot paths MUST wrap Supabase calls in
+`apps/api/db/aexec.py::aexec` so the blocking work runs on the default
+thread-pool executor.
+
+```python
+# DON'T:  this blocks the event loop until Supabase replies.
+result = db.table("roles").select("*").eq("quorum_id", q).execute()
+
+# DO:     thread-pool the .execute(); the loop keeps spinning meanwhile.
+from db.aexec import aexec
+result = await aexec(db.table("roles").select("*").eq("quorum_id", q))
+
+# For sync helpers / mixed thunks, pass a zero-arg callable instead:
+result = await aexec(lambda: legacy_sync_helper(db, q))
+```
+
+Files already converted on the autonomy hot path:
+`apps/api/agent_engine.py`, `apps/api/autonomy_loop.py`,
+`apps/api/agents/orchestrator.py`, `apps/api/coordination/supabase_backend.py`,
+`apps/api/quorum_a2a/a2a_server.py`, `apps/api/quorum_a2a/a2a_client.py`.
+
+Out of scope for 12.6 (deferred to a post-expo follow-up): non-autonomy route
+handlers in `apps/api/routes.py`, `seed_loader.py`, `architect_agent.py`,
+`document_engine.py`. These are user-triggered, sequential, no stall risk.
+
+Approach B (full migration to `supabase.AsyncClient` / `supabase-py-async`)
+is documented but deferred --- much wider blast radius, API differs slightly,
+higher pre-expo risk.
+
 ## Environment Variables
 
 ```

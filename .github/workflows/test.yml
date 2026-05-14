@@ -34,12 +34,6 @@ jobs:
   backend-tests:
     name: Backend (apps/api) tests
     runs-on: ubuntu-latest
-    # TEMPORARY: 2 pre-existing failures in test_a2a_wakeup.py on `main`
-    # (load_agent() got an unexpected keyword argument 'role_id', and a
-    # 201 vs 404 mismatch). PR #23 (fix/test-failures-batch-1) resolves
-    # these. Remove `continue-on-error` once #23 lands — then this job
-    # becomes a hard gate.
-    continue-on-error: true
     env:
       QUORUM_TEST_MODE: "true"
     steps:
@@ -67,13 +61,6 @@ jobs:
   frontend-tests:
     name: Frontend (apps/web) tests
     runs-on: ubuntu-latest
-    # TEMPORARY: 5 pre-existing failures on `main` across:
-    #   - src/app/architect/__tests__/aiArchitect.test.tsx (3 tests)
-    #   - src/app/architect/__tests__/wizard.test.tsx (1 test)
-    #   - src/app/event/[slug]/EventPage.test.tsx (1 test)
-    # Track-down + fix is out of scope for this CI-gating PR. Remove
-    # `continue-on-error` once those land and this job becomes a hard gate.
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 

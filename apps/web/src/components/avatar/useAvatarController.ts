@@ -22,6 +22,7 @@ import { VisionTracker, type PresencePayload } from "./VisionTracker";
 import { EmotionDetector, type DetectedEmotion } from "./EmotionDetector";
 import { speakText as browserSpeakText } from "@/lib/speechSynthesis";
 import { nextChoreography, type ChoreographyState } from "./choreographer";
+import { vowelToMorphShape, type Vowel } from "./visemes";
 import type { IdleSceneHandle } from "./IdleScene";
 
 /**
@@ -151,6 +152,10 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
   // immediately on a non-existent narration.
   const msSinceNarrationRef = useRef(99999);
   const lastTickRef = useRef(0);
+  // Visemes (Task 13) — counts RAF ticks while speakingRef is true so we can
+  // cycle through vowels at a phoneme-ish cadence. Reset to 0 on silence so
+  // the next utterance starts clean.
+  const visemeTickRef = useRef(0);
   const presenceRef = useRef<PresencePayload>({
     detected: false,
     sizeRatio: 0,
@@ -340,8 +345,24 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
       if (handle) {
         handle.setFraming(out.cameraFraming === "bust" ? "bust" : "full_body");
         handle.setBodyPose({ x: out.bodyX, z: out.bodyZ, clip: out.animationClip });
-        // Visemes (Task 13) — leave null until the audio analyzer is wired.
-        handle.setMouthShape(null);
+        // Visemes (Task 13) — synthetic AH/EE/OO/MM alternation while speaking.
+        // The current AvatarProvider abstraction does not expose a usable
+        // <audio>/MediaStreamAudioSourceNode for AnalyserNode tapping, and the
+        // expo demo runs with audio OFF (the avatar visually mouths the
+        // narration on a silent floor). Phoneme accuracy doesn't matter at
+        // projector distance — what reads is "the mouth is moving in time
+        // with the narration." Phoneme-accurate FFT-driven visemes are a
+        // future swap once the provider exposes its audio source.
+        if (speakingRef.current) {
+          visemeTickRef.current += 1;
+          // Cycle vowels every ~10 frames (~167ms at 60fps) — phoneme cadence.
+          const phase = Math.floor(visemeTickRef.current / 10) % 4;
+          const vowel = (["AH", "EE", "OO", "MM"] as const)[phase] as Vowel;
+          handle.setMouthShape(vowelToMorphShape(vowel));
+        } else {
+          visemeTickRef.current = 0;
+          handle.setMouthShape(null);
+        }
       }
 
       raf = requestAnimationFrame(tick);

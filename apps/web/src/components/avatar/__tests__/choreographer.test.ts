@@ -30,3 +30,36 @@ describe("choreographer bust_only short-circuit", () => {
     expect(out.state).toBe("talking");
   });
 });
+
+describe("choreographer idle → approach", () => {
+  it("stays in idle_pacing when no person detected", () => {
+    const out = nextChoreography("idle_pacing", baseInput, 16);
+    expect(out.state).toBe("idle_pacing");
+    expect(out.cameraFraming).toBe("full_body");
+  });
+
+  it("stays in idle_pacing when person detected briefly", () => {
+    const out = nextChoreography("idle_pacing", {
+      ...baseInput,
+      presence: { detected: true, sizeRatio: 0.20, durationMs: 1000 },
+    }, 16);
+    expect(out.state).toBe("idle_pacing");
+  });
+
+  it("stays in idle_pacing when person detected long enough but too small", () => {
+    const out = nextChoreography("idle_pacing", {
+      ...baseInput,
+      presence: { detected: true, sizeRatio: 0.10, durationMs: 5000 },
+    }, 16);
+    expect(out.state).toBe("idle_pacing");
+  });
+
+  it("transitions to approach when person sustained > 15% area for > 2s", () => {
+    const out = nextChoreography("idle_pacing", {
+      ...baseInput,
+      presence: { detected: true, sizeRatio: 0.20, durationMs: 2500 },
+    }, 16);
+    expect(out.state).toBe("approach");
+    expect(out.animationClip).toBe("walking");
+  });
+});

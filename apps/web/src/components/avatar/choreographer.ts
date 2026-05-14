@@ -41,7 +41,31 @@ export function nextChoreography(
     };
   }
 
-  // Full choreography logic added in subsequent tasks.
+  // idle_pacing → approach
+  if (prev === "idle_pacing") {
+    if (
+      input.presence.detected &&
+      input.presence.sizeRatio > APPROACH_TRIGGER_SIZE &&
+      input.presence.durationMs > APPROACH_TRIGGER_MS
+    ) {
+      return {
+        state: "approach",
+        cameraFraming: "full_body",
+        bodyZ: 0,
+        bodyX: 0,
+        animationClip: "walking",
+      };
+    }
+    return {
+      state: "idle_pacing",
+      cameraFraming: "full_body",
+      bodyZ: 0,
+      bodyX: 0,
+      animationClip: "walking",
+    };
+  }
+
+  // Other states added in subsequent tasks.
   return {
     state: prev,
     cameraFraming: "full_body",

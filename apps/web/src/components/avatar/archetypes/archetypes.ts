@@ -213,18 +213,25 @@ const AVAILABLE_AVATURN: ReadonlySet<string> = new Set([
   '/avatars/avaturn/humanities_social.glb',
   '/avatars/avaturn/neutral.glb',
   '/avatars/avaturn/female_assistant.glb',
+  '/avatars/avaturn/female_assistant_sn.glb',
   '/avatars/avaturn/female_business.glb',
 ]);
 
 // When an archetype's own avaturn file isn't shipped, fall back to one of the
 // available faces. Curated (not hashed) so the assignment is predictable and
-// the 4 available avatars are distributed evenly across the 10 archetypes
-// that don't have their own avaturn-specific file. Each face appears for
-// 2-3 archetypes so all 4 are visible in a multi-role quorum.
+// the available avatars are distributed across the 10 archetypes that don't
+// have their own avaturn-specific file. Each face appears for 1-3 archetypes
+// so all of them are visible in a multi-role quorum.
+//
+// female_assistant_sn.glb is Taf v2 (newer Avaturn generation). Mapped to most
+// Taf roles so it gets the most exposure for A/B comparison vs the original.
+// female_assistant.glb stays on student_undergrad as the comparison anchor.
 const AVATURN_FALLBACK_BY_ARCHETYPE: Partial<Record<ArchetypeId, string>> = {
-  // female_assistant.glb — Taf (caring/generic feminine roles)
-  medical_clinical:    '/avatars/avaturn/female_assistant.glb',
-  patient_participant: '/avatars/avaturn/female_assistant.glb',
+  // female_assistant_sn.glb — Taf v2 (the newer, hopefully better generation)
+  medical_clinical:    '/avatars/avaturn/female_assistant_sn.glb',
+  patient_participant: '/avatars/avaturn/female_assistant_sn.glb',
+
+  // female_assistant.glb — Taf v1 (kept on one role as A/B comparison anchor)
   student_undergrad:   '/avatars/avaturn/female_assistant.glb',
 
   // female_business.glb — Stephanie (IT colleague; tech / business roles)

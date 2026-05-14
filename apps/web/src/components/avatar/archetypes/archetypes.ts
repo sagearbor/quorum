@@ -213,24 +213,31 @@ const AVAILABLE_AVATURN: ReadonlySet<string> = new Set([
   '/avatars/avaturn/humanities_social.glb',
   '/avatars/avaturn/neutral.glb',
   '/avatars/avaturn/female_assistant.glb',
+  '/avatars/avaturn/female_business.glb',
 ]);
 
 // When an archetype's own avaturn file isn't shipped, fall back to one of the
 // available faces. Curated (not hashed) so the assignment is predictable and
-// the 3 available avatars are distributed evenly across the 10 archetypes
-// that don't have their own avaturn-specific file.
+// the 4 available avatars are distributed evenly across the 10 archetypes
+// that don't have their own avaturn-specific file. Each face appears for
+// 2-3 archetypes so all 4 are visible in a multi-role quorum.
 const AVATURN_FALLBACK_BY_ARCHETYPE: Partial<Record<ArchetypeId, string>> = {
+  // female_assistant.glb — Taf (caring/generic feminine roles)
   medical_clinical:    '/avatars/avaturn/female_assistant.glb',
   patient_participant: '/avatars/avaturn/female_assistant.glb',
-  student_grad:        '/avatars/avaturn/female_assistant.glb',
   student_undergrad:   '/avatars/avaturn/female_assistant.glb',
 
-  researcher:          '/avatars/avaturn/neutral.glb',
-  engineer_tech:       '/avatars/avaturn/neutral.glb',
-  finance_ops:         '/avatars/avaturn/neutral.glb',
+  // female_business.glb — Stephanie (IT colleague; tech / business roles)
+  engineer_tech:       '/avatars/avaturn/female_business.glb',
+  finance_ops:         '/avatars/avaturn/female_business.glb',
+  administrator:       '/avatars/avaturn/female_business.glb',
 
+  // neutral.glb — Sage (research / generic)
+  researcher:          '/avatars/avaturn/neutral.glb',
+  student_grad:        '/avatars/avaturn/neutral.glb',
+
+  // humanities_social.glb — Sage (academic / formal)
   faculty:             '/avatars/avaturn/humanities_social.glb',
-  administrator:       '/avatars/avaturn/humanities_social.glb',
   ethics:              '/avatars/avaturn/humanities_social.glb',
 };
 

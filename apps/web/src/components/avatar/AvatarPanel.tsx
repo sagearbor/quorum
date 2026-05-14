@@ -143,6 +143,7 @@ export function AvatarPanel({
     paused,
     pausedReason,
     cameraDeviceId,
+    idleSceneRef,
   });
 
   // Connect gaze (yaw + pitch) from controller to IdleScene
@@ -204,11 +205,11 @@ export function AvatarPanel({
         </div>
       )}
 
-      {/* 3D avatar — IdleScene handles WebGL.
-          cameraMode flips to "torso" while speaking so the facilitator
-          stops reading as a standing mannequin and starts reading as
-          a talking head; idle reverts to the full-body framing so the
-          subtle pacing animation has room to breathe. */}
+      {/* 3D avatar — IdleScene handles WebGL. Framing, body pose, and mouth
+          shape are all driven imperatively via the IdleScene handle by the
+          choreographer in useAvatarController (post-Task-10). Until the
+          choreographer is wired, the scene defaults to full_body framing
+          + breathing — which is a clean improvement over the prior slide. */}
       <div
         className="flex-1 flex items-center justify-center min-h-0 w-full"
         data-testid="avatar-container"
@@ -218,7 +219,6 @@ export function AvatarPanel({
           glbUrl={glbUrl}
           width="100%"
           height="100%"
-          cameraMode={avatarState.speaking ? "torso" : "full_body"}
         />
       </div>
 

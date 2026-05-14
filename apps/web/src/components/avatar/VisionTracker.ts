@@ -5,7 +5,17 @@
  * Graceful fallback: if MediaPipe fails to load or no camera, auto-switches to mock.
  */
 
-type GazeCallback = (yaw: number, pitch?: number) => void;
+export interface PresencePayload {
+  detected: boolean;
+  sizeRatio: number;
+  durationMs: number;
+}
+
+export type GazeCallback = (
+  yaw: number,
+  pitch?: number,
+  presence?: PresencePayload
+) => void;
 
 export interface VisionTrackerOptions {
   onGaze: GazeCallback;
@@ -15,6 +25,24 @@ export interface VisionTrackerOptions {
   intervalMs?: number;
   /** Specific camera deviceId from MediaDeviceInfo. When omitted, falls back to facingMode:"user". */
   deviceId?: string;
+}
+
+/** Returns bbox area divided by frame area, in [0, 1]. */
+export function computeSizeRatio(
+  bbox: { width: number; height: number },
+  frame: { width: number; height: number }
+): number {
+  return (bbox.width * bbox.height) / (frame.width * frame.height);
+}
+
+/**
+ * 5-frame moving average of the size ratio. Mutates `buffer` in place
+ * (push + shift to keep len ≤ 5) and returns the new average.
+ */
+export function smoothSizeRatio(buffer: number[], next: number): number {
+  buffer.push(next);
+  if (buffer.length > 5) buffer.shift();
+  return buffer.reduce((a, b) => a + b, 0) / buffer.length;
 }
 
 export class VisionTracker {
@@ -29,6 +57,9 @@ export class VisionTracker {
   private timer: ReturnType<typeof setInterval> | null = null;
   private running = false;
   private mockStartTime = 0;
+  private sizeBuf: number[] = [];
+  private presenceDurationMs = 0;
+  private lastTickMs = 0;
 
   constructor(options: VisionTrackerOptions) {
     this.onGaze = options.onGaze;
@@ -86,6 +117,9 @@ export class VisionTracker {
     }
 
     this.detector = null;
+    this.sizeBuf = [];
+    this.presenceDurationMs = 0;
+    this.lastTickMs = 0;
   }
 
   isRunning(): boolean {
@@ -151,11 +185,12 @@ export class VisionTracker {
   private detectFrame(): void {
     if (!this.detector || !this.video || this.video.readyState < 2) return;
 
+    const now = performance.now();
+    const elapsed = this.lastTickMs === 0 ? 0 : now - this.lastTickMs;
+    this.lastTickMs = now;
+
     try {
-      const results = this.detector.detectForVideo(
-        this.video,
-        performance.now()
-      );
+      const results = this.detector.detectForVideo(this.video, now);
 
       if (results.detections && results.detections.length > 0) {
         // Use the largest (closest) person detection
@@ -182,10 +217,28 @@ export class VisionTracker {
         // Person above center (small Y) → negative pitch (avatar looks up)
         // Person below center (large Y) → positive pitch (avatar looks down)
         const pitch = (centerY / frameHeight) * 2 - 1;
+
+        const rawRatio = computeSizeRatio(
+          { width: bb.width, height: bb.height },
+          { width: frameWidth, height: frameHeight }
+        );
+        const sizeRatio = smoothSizeRatio(this.sizeBuf, rawRatio);
+        this.presenceDurationMs += elapsed;
+
         this.onGaze(
           Math.max(-1, Math.min(1, yaw)),
-          Math.max(-1, Math.min(1, pitch))
+          Math.max(-1, Math.min(1, pitch)),
+          {
+            detected: true,
+            sizeRatio,
+            durationMs: this.presenceDurationMs,
+          }
         );
+      } else {
+        // No person — reset presence accumulators and emit a "lost" payload
+        this.sizeBuf.length = 0;
+        this.presenceDurationMs = 0;
+        this.onGaze(0, 0, { detected: false, sizeRatio: 0, durationMs: 0 });
       }
     } catch {
       // Detection frame errors are non-fatal; skip this frame

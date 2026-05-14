@@ -122,16 +122,8 @@ vi.mock("../AvatarProvider", () => ({
 }));
 
 // Mock IdleScene to avoid Three.js in tests.
-// Capture the most recent props so cameraMode tests below can assert
-// what AvatarPanel passes down based on `avatarState.speaking`.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const idleSceneCalls: any[] = [];
 vi.mock("../IdleScene", () => ({
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  IdleScene: vi.fn((props: any) => {
-    idleSceneCalls.push(props);
-    return null;
-  }),
+  IdleScene: vi.fn(() => null),
 }));
 
 // Mock archetype modules
@@ -148,7 +140,6 @@ beforeEach(() => {
   mockSpeak.mockClear();
   mockBrowserSpeak.mockClear();
   mockUnsubscribe.mockClear();
-  idleSceneCalls.length = 0;
   lastFacilitatorHandler = null;
   mockControllerState = {
     direction: "center",
@@ -366,35 +357,11 @@ describe("AvatarPanel orchestrator narration", () => {
 // forwards it to IdleScene as `cameraMode={speaking ? "torso" : "full_body"}`.
 // ---------------------------------------------------------------------------
 
-describe("AvatarPanel cameraMode", () => {
-  it("passes cameraMode='full_body' to IdleScene when not speaking", () => {
-    mockControllerState.speaking = false;
-    render(<AvatarPanel quorumId="test-quorum" />);
-    // Last call captures the final render's props.
-    const latest = idleSceneCalls[idleSceneCalls.length - 1];
-    expect(latest).toBeDefined();
-    expect(latest.cameraMode).toBe("full_body");
-  });
-
-  it("passes cameraMode='torso' to IdleScene when speaking", () => {
-    mockControllerState.speaking = true;
-    render(<AvatarPanel quorumId="test-quorum" />);
-    const latest = idleSceneCalls[idleSceneCalls.length - 1];
-    expect(latest).toBeDefined();
-    expect(latest.cameraMode).toBe("torso");
-  });
-
-  it("flips cameraMode from full_body to torso when speaking transitions", () => {
-    mockControllerState.speaking = false;
-    const { rerender } = render(<AvatarPanel quorumId="test-quorum" />);
-    expect(idleSceneCalls[idleSceneCalls.length - 1].cameraMode).toBe("full_body");
-
-    // Simulate the controller flipping into "speaking".
-    mockControllerState.speaking = true;
-    rerender(<AvatarPanel quorumId="test-quorum" />);
-    expect(idleSceneCalls[idleSceneCalls.length - 1].cameraMode).toBe("torso");
-  });
-});
+// AvatarPanel no longer drives camera framing through props — IdleScene
+// exposes setFraming() on its imperative handle, and the choreographer
+// in useAvatarController calls it per RAF (controller wiring lands in a
+// later task). Tests for the framing→speaking relationship now live with
+// the controller; AvatarPanel just owns the wiring.
 
 describe("AvatarPanel camera picker", () => {
   beforeEach(() => {

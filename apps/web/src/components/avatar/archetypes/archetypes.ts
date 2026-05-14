@@ -212,7 +212,41 @@ export function isDukeBlueArchetype(id: ArchetypeId): boolean {
 const AVAILABLE_AVATURN: ReadonlySet<string> = new Set([
   '/avatars/avaturn/humanities_social.glb',
   '/avatars/avaturn/neutral.glb',
+  '/avatars/avaturn/female_assistant.glb',
+  '/avatars/avaturn/female_assistant_sn.glb',
+  '/avatars/avaturn/female_business.glb',
 ]);
+
+// When an archetype's own avaturn file isn't shipped, fall back to one of the
+// available faces. Curated (not hashed) so the assignment is predictable and
+// the available avatars are distributed across the 10 archetypes that don't
+// have their own avaturn-specific file. Each face appears for 1-3 archetypes
+// so all of them are visible in a multi-role quorum.
+//
+// female_assistant_sn.glb is Taf v2 (newer Avaturn generation). Mapped to most
+// Taf roles so it gets the most exposure for A/B comparison vs the original.
+// female_assistant.glb stays on student_undergrad as the comparison anchor.
+const AVATURN_FALLBACK_BY_ARCHETYPE: Partial<Record<ArchetypeId, string>> = {
+  // female_assistant_sn.glb — Taf v2 (the newer, hopefully better generation)
+  medical_clinical:    '/avatars/avaturn/female_assistant_sn.glb',
+  patient_participant: '/avatars/avaturn/female_assistant_sn.glb',
+
+  // female_assistant.glb — Taf v1 (kept on one role as A/B comparison anchor)
+  student_undergrad:   '/avatars/avaturn/female_assistant.glb',
+
+  // female_business.glb — Stephanie (IT colleague; tech / business roles)
+  engineer_tech:       '/avatars/avaturn/female_business.glb',
+  finance_ops:         '/avatars/avaturn/female_business.glb',
+  administrator:       '/avatars/avaturn/female_business.glb',
+
+  // neutral.glb — Sage (research / generic)
+  researcher:          '/avatars/avaturn/neutral.glb',
+  student_grad:        '/avatars/avaturn/neutral.glb',
+
+  // humanities_social.glb — Sage (academic / formal)
+  faculty:             '/avatars/avaturn/humanities_social.glb',
+  ethics:              '/avatars/avaturn/humanities_social.glb',
+};
 
 export function resolveGlbUrl(
   archetype: ArchetypeDefinition,
@@ -234,11 +268,18 @@ export function resolveGlbUrl(
 
   // Walk sources in declaration order, skipping ones we know don't ship.
   const chosen =
-    archetype.glbSources.find((s) => s.provider !== 'placeholder' && sourceExists(s))
-    ?? archetype.glbSources.find((s) => s.provider === 'placeholder');
+    archetype.glbSources.find((s) => s.provider !== 'placeholder' && sourceExists(s));
+  if (chosen) return toPlaceholderGltf(chosen.path);
 
-  if (!chosen) return `/avatars/${archetype.glb}`;
-  return toPlaceholderGltf(chosen.path);
+  // No archetype-specific avaturn ship exists — fall back to the curated
+  // avaturn assignment before dropping to the .gltf placeholder. Keeps the
+  // photoreal look for every role; reuses one of the 3 available faces.
+  const fallback = AVATURN_FALLBACK_BY_ARCHETYPE[archetype.id];
+  if (fallback) return fallback;
+
+  const placeholder = archetype.glbSources.find((s) => s.provider === 'placeholder');
+  if (!placeholder) return `/avatars/${archetype.glb}`;
+  return toPlaceholderGltf(placeholder.path);
 }
 
 // Placeholder files are generated as .gltf, but archetypes.ts lists them as .glb.

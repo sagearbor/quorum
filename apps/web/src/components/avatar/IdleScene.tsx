@@ -22,6 +22,9 @@ import type { DetectedEmotion } from "./EmotionDetector";
 export interface IdleSceneHandle {
   setGaze: (yaw: number, pitch?: number) => void;
   setEmotion: (emotion: DetectedEmotion) => void;
+  setFraming: (mode: CameraMode) => void;
+  setBodyPose: (pose: { x: number; z: number; clip: "breathing" | "walking" }) => void;
+  setMouthShape: (shape: { jawOpen: number; mouthFunnel: number; mouthPucker: number; mouthSmile: number; mouthClose: number } | null) => void;
 }
 
 /**
@@ -34,7 +37,7 @@ export interface IdleSceneHandle {
  *   facilitator stops reading as "standing mannequin" and starts reading
  *   as "talking head."
  */
-export type CameraMode = "full_body" | "torso";
+export type CameraMode = "full_body" | "torso" | "bust";
 
 interface CameraPreset {
   /** Camera world position (x, y, z). */
@@ -60,22 +63,18 @@ const CAMERA_PRESETS: Record<CameraMode, CameraPreset> = {
     lookAt: [0, 1.45, 0],
     fov: 28,
   },
+  // Tighter than torso — head + shoulders only. Tuned so the audience's
+  // eye lands on the avatar's eyes on a 60-inch projector at expo distance.
+  // Final values to be tuned during dev QA against an actual GLB.
+  bust: {
+    position: [0, 1.62, 1.15],
+    lookAt: [0, 1.6, 0],
+    fov: 24,
+  },
 };
 
 /** Duration of the camera lerp when cameraMode changes (ms). */
 const CAMERA_LERP_MS = 600;
-/**
- * Duration of the "settle to center X = 0" animation that plays BEFORE the
- * camera lerps to torso. Sequence is: settle position → camera tightens →
- * mouth animates.
- */
-const SETTLE_TO_CENTER_MS = 400;
-/** Full cycle period for idle pacing (ms). */
-const PACE_PERIOD_MS = 10_000;
-/** Half-amplitude (units) of horizontal pacing. */
-const PACE_AMPLITUDE = 0.3;
-/** Max yaw (radians) the body turns toward direction of motion. */
-const PACE_YAW = 0.08;
 
 export interface IdleSceneProps {
   /** URL to the GLB model file */
@@ -84,13 +83,6 @@ export interface IdleSceneProps {
   width?: string | number;
   /** Height of canvas (default "100%") */
   height?: string | number;
-  /**
-   * Camera framing mode. Defaults to "full_body" (matches legacy behavior).
-   * When set to "torso", the camera smoothly lerps to a close-up framing
-   * over ~600ms. Pair with the speaking state from useAvatarController so
-   * the camera tightens whenever the facilitator speaks.
-   */
-  cameraMode?: CameraMode;
 }
 
 // ─── Three.js Idle Scene ────────────────────────────────────────────
@@ -105,10 +97,13 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
     const emotionRef = useRef<DetectedEmotion>("neutral");
     // Mutable refs the animation loop reads on every frame. Using refs (not
     // state) so we don't tear down / rebuild the Three.js scene when the
-    // parent flips cameraMode — we just morph the existing camera.
-    const cameraModeRef = useRef<CameraMode>(props.cameraMode ?? "full_body");
+    // controller drives framing/pose/mouth — we just morph the existing scene.
+    const framingRef = useRef<CameraMode>("full_body");
+    const bodyPoseRef = useRef<{ x: number; z: number; clip: "breathing" | "walking" }>({ x: 0, z: 0, clip: "breathing" });
+    const mouthShapeRef = useRef<{ jawOpen: number; mouthFunnel: number; mouthPucker: number; mouthSmile: number; mouthClose: number } | null>(null);
     // The Three.js scene boots asynchronously; this flag becomes true once the
-    // scene exists so subsequent cameraMode prop changes know to start a lerp.
+    // scene exists so setFraming() knows to start a lerp instead of just
+    // updating the initial preset selection.
     const sceneReadyRef = useRef(false);
     // When set, the animation loop interpolates camera/avatar params toward
     // the target preset over the configured duration. `null` = no animation
@@ -116,8 +111,6 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
     type LerpState = {
       from: CameraPreset;
       to: CameraPreset;
-      /** ms remaining in the settle-to-center phase before camera lerp starts. */
-      settleRemainingMs: number;
       /** ms remaining in the camera lerp itself. */
       lerpRemainingMs: number;
       totalLerpMs: number;
@@ -133,6 +126,25 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
       setEmotion: (e: DetectedEmotion) => {
         emotionRef.current = e;
       },
+      setFraming: (mode: CameraMode) => {
+        if (framingRef.current === mode) return;
+        const fromPreset = CAMERA_PRESETS[framingRef.current];
+        const toPreset = CAMERA_PRESETS[mode];
+        framingRef.current = mode;
+        // Pre-mount: just record the requested mode — the mount path reads
+        // framingRef.current to pick the initial preset, so no lerp needed.
+        // Without this guard a stale lerp would queue full_body→target and
+        // briefly snap the camera away from target on cold start.
+        if (!sceneReadyRef.current) return;
+        lerpRef.current = {
+          from: fromPreset,
+          to: toPreset,
+          lerpRemainingMs: CAMERA_LERP_MS,
+          totalLerpMs: CAMERA_LERP_MS,
+        };
+      },
+      setBodyPose: (pose) => { bodyPoseRef.current = pose; },
+      setMouthShape: (shape) => { mouthShapeRef.current = shape; },
     }));
 
     // Lazy-load Three.js scene
@@ -155,10 +167,12 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x0f172a);
 
-        // Initial camera framing comes from the current cameraMode preset.
-        // We never re-create the camera on mode changes — the animation loop
-        // lerps its existing position/lookAt/fov toward the new preset.
-        const initialPreset = CAMERA_PRESETS[cameraModeRef.current];
+        // Initial camera framing comes from the current framing preset.
+        // We never re-create the camera on framing changes — the animation
+        // loop lerps its existing position/lookAt/fov toward the new preset.
+        // If setFraming() was called before mount, framingRef already holds
+        // the requested mode; if not, it defaults to "full_body".
+        const initialPreset = CAMERA_PRESETS[framingRef.current];
         const camera = new THREE.PerspectiveCamera(
           initialPreset.fov,
           width / height,
@@ -192,6 +206,11 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
         // and yaw it slightly toward the direction of motion. Captured after
         // GLB load so the pacing loop has something to move.
         let avatarRoot: any = null;
+        // Mixer actions for the bundled breathing idle and the optional
+        // Mixamo walk clip. Both exist in parallel; the animate loop
+        // crossfades their weights based on bodyPoseRef.current.clip.
+        let breathingAction: any = null;
+        let walkAction: any = null;
         /* eslint-enable @typescript-eslint/no-explicit-any */
 
         // Load GLB
@@ -227,11 +246,11 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
               }
             });
 
-            // Play first animation (idle) if available
+            // Play first animation (idle/breathing) if available
             if (gltf.animations.length > 0) {
               mixer = new THREE.AnimationMixer(gltf.scene);
-              const action = mixer.clipAction(gltf.animations[0]);
-              action.play();
+              breathingAction = mixer.clipAction(gltf.animations[0]);
+              breathingAction.play();
             } else {
               // Fix T-pose for GLBs whose arms are near-horizontal.
               // Detect by checking if LeftArm/RightArm quaternion is near-identity
@@ -257,6 +276,28 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
                   0.766085
                 );
               });
+            }
+
+            // Load the Mixamo walk clip alongside breathing. Falls back
+            // silently if the file isn't present (Sophie drops it in
+            // separately — Mixamo requires Adobe login so it can't be
+            // agent-downloaded). Skipped when no mixer exists (the GLB
+            // had no animations) since AnimationMixer needs the avatar
+            // root and we'd have no breathing action to crossfade against.
+            if (mixer) {
+              try {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const walkGltf = await new Promise<any>((resolve, reject) => {
+                  loader.load("/animations/walk.glb", resolve, undefined, reject);
+                });
+                if (!cancelled && walkGltf.animations.length > 0) {
+                  walkAction = mixer.clipAction(walkGltf.animations[0]);
+                  walkAction.setEffectiveWeight(0); // start hidden — breathing leads
+                  walkAction.play();
+                }
+              } catch {
+                // walk clip optional — falls back to breathing-only
+              }
             }
           } catch {
             // GLB load failure is non-fatal; show empty scene
@@ -307,19 +348,6 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
         let currentEyeYaw = 0;
         let currentHeadYaw = 0;
         let currentHeadPitch = 0;
-        // Idle pacing state — accumulated wall-clock time in seconds, fed
-        // into a sine wave to oscillate the avatar's X position.
-        let paceElapsedS = 0;
-        // Last computed pacing X — needed so that on "settle to center"
-        // transitions we lerp from wherever the avatar happens to be.
-        let lastPaceX = 0;
-        // Avatar body yaw added on top of any other rotation. Lerped each
-        // frame so direction changes feel natural.
-        let bodyYaw = 0;
-        // While true, the pacing loop is suppressed and the avatar's X glides
-        // back toward 0 over SETTLE_TO_CENTER_MS. Driven by the lerpRef state
-        // machine — when a lerp toward "torso" starts, settle phase runs
-        // first; the camera lerp itself only begins after the settle.
         const animate = () => {
           rafId = requestAnimationFrame(animate);
           const delta = clock.getDelta();
@@ -327,103 +355,77 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
 
           if (mixer) mixer.update(delta);
 
-          // ─── Camera lerp + settle phase ──────────────────────────
-          // When a new cameraMode is requested, lerpRef holds a from→to
-          // preset plus two countdowns. We run "settle to center" first
-          // (avatar X glides to 0) so the body isn't off-axis when the
-          // camera tightens, then we run the actual camera lerp.
-          const lerp = lerpRef.current;
-          let pacingSuppressed = false;
-          if (lerp) {
-            if (lerp.settleRemainingMs > 0) {
-              // Phase 1: hold camera, glide avatar X to 0.
-              lerp.settleRemainingMs = Math.max(0, lerp.settleRemainingMs - deltaMs);
-              pacingSuppressed = true;
-            } else {
-              // Phase 2: lerp camera from `from` preset to `to` preset.
-              lerp.lerpRemainingMs = Math.max(0, lerp.lerpRemainingMs - deltaMs);
-              const t = 1 - lerp.lerpRemainingMs / lerp.totalLerpMs;
-              // easeInOutCubic — feels less mechanical than linear lerp.
-              const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
-              const px =
-                lerp.from.position[0] + (lerp.to.position[0] - lerp.from.position[0]) * e;
-              const py =
-                lerp.from.position[1] + (lerp.to.position[1] - lerp.from.position[1]) * e;
-              const pz =
-                lerp.from.position[2] + (lerp.to.position[2] - lerp.from.position[2]) * e;
-              camera.position.set(px, py, pz);
-
-              lookAtTarget.x =
-                lerp.from.lookAt[0] + (lerp.to.lookAt[0] - lerp.from.lookAt[0]) * e;
-              lookAtTarget.y =
-                lerp.from.lookAt[1] + (lerp.to.lookAt[1] - lerp.from.lookAt[1]) * e;
-              lookAtTarget.z =
-                lerp.from.lookAt[2] + (lerp.to.lookAt[2] - lerp.from.lookAt[2]) * e;
-
-              camera.fov = lerp.from.fov + (lerp.to.fov - lerp.from.fov) * e;
-              camera.updateProjectionMatrix();
-
-              // Pacing stays suppressed for the entire torso framing —
-              // a torso shot looks weird if the body is drifting sideways
-              // out of frame. For full_body→full_body or torso→full_body
-              // we allow pacing to resume once the lerp completes.
-              if (cameraModeRef.current === "torso") {
-                pacingSuppressed = true;
-              }
-
-              if (lerp.lerpRemainingMs === 0) {
-                // Snap to final values to avoid lingering FP drift.
-                camera.position.set(
-                  lerp.to.position[0],
-                  lerp.to.position[1],
-                  lerp.to.position[2]
-                );
-                lookAtTarget.x = lerp.to.lookAt[0];
-                lookAtTarget.y = lerp.to.lookAt[1];
-                lookAtTarget.z = lerp.to.lookAt[2];
-                camera.fov = lerp.to.fov;
-                camera.updateProjectionMatrix();
-                lerpRef.current = null;
-              }
-            }
-          } else if (cameraModeRef.current === "torso") {
-            // Lerp already finished — but if we settled into torso framing,
-            // keep pacing suppressed so the body stays centered.
-            pacingSuppressed = true;
+          // ─── Body clip crossfade (breathing ↔ walking) ─────────
+          // bodyPoseRef.current.clip drives the mixer weight. Slow lerp
+          // (~0.05 per frame ≈ 1s @ 60fps) gives a smooth gait transition
+          // rather than an abrupt swap. Both actions must be present —
+          // the walk clip is optional, so guard on both refs.
+          if (walkAction && breathingAction) {
+            const targetWalkWeight = bodyPoseRef.current.clip === "walking" ? 1 : 0;
+            const currentWeight = walkAction.getEffectiveWeight();
+            const newWeight = currentWeight + (targetWalkWeight - currentWeight) * 0.05;
+            walkAction.setEffectiveWeight(newWeight);
+            breathingAction.setEffectiveWeight(1 - newWeight);
           }
 
-          // ─── Idle pacing ─────────────────────────────────────────
-          // Subtle sine-wave horizontal motion + slight body yaw toward
-          // direction of travel. Like someone waiting at a podium.
-          if (avatarRoot) {
-            if (pacingSuppressed) {
-              // Glide back to X = 0 + cancel body yaw. The 0.12 factor gives
-              // roughly the SETTLE_TO_CENTER_MS feel at 60fps.
-              lastPaceX += (0 - lastPaceX) * 0.12;
-              bodyYaw += (0 - bodyYaw) * 0.12;
-              avatarRoot.position.x = lastPaceX;
-              avatarRoot.rotation.y = bodyYaw;
-              // Don't advance paceElapsedS while suppressed so when pacing
-              // resumes the avatar starts from the center of the cycle
-              // (smooth re-entry).
-            } else {
-              paceElapsedS += delta;
-              const phase = (paceElapsedS / (PACE_PERIOD_MS / 1000)) * Math.PI * 2;
-              const targetX = Math.sin(phase) * PACE_AMPLITUDE;
-              // Yaw toward direction of motion using the derivative of sin
-              // (which is cos) — when moving right, turn slightly right.
-              const targetYaw = Math.cos(phase) * PACE_YAW;
-              // Light lerp so a sudden resume after settle doesn't snap.
-              lastPaceX += (targetX - lastPaceX) * 0.1;
-              bodyYaw += (targetYaw - bodyYaw) * 0.1;
-              avatarRoot.position.x = lastPaceX;
-              avatarRoot.rotation.y = bodyYaw;
+          // ─── Camera lerp ─────────────────────────────────────────
+          // When a new cameraMode is requested, lerpRef holds a from→to
+          // preset plus a countdown. The avatar body is now externally
+          // controlled (controller-driven choreography lands in a follow-up),
+          // so there's no "settle to center" pre-phase any more.
+          const lerp = lerpRef.current;
+          if (lerp) {
+            lerp.lerpRemainingMs = Math.max(0, lerp.lerpRemainingMs - deltaMs);
+            const t = 1 - lerp.lerpRemainingMs / lerp.totalLerpMs;
+            // easeInOutCubic — feels less mechanical than linear lerp.
+            const e = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+            const px =
+              lerp.from.position[0] + (lerp.to.position[0] - lerp.from.position[0]) * e;
+            const py =
+              lerp.from.position[1] + (lerp.to.position[1] - lerp.from.position[1]) * e;
+            const pz =
+              lerp.from.position[2] + (lerp.to.position[2] - lerp.from.position[2]) * e;
+            camera.position.set(px, py, pz);
+
+            lookAtTarget.x =
+              lerp.from.lookAt[0] + (lerp.to.lookAt[0] - lerp.from.lookAt[0]) * e;
+            lookAtTarget.y =
+              lerp.from.lookAt[1] + (lerp.to.lookAt[1] - lerp.from.lookAt[1]) * e;
+            lookAtTarget.z =
+              lerp.from.lookAt[2] + (lerp.to.lookAt[2] - lerp.from.lookAt[2]) * e;
+
+            camera.fov = lerp.from.fov + (lerp.to.fov - lerp.from.fov) * e;
+            camera.updateProjectionMatrix();
+
+            if (lerp.lerpRemainingMs === 0) {
+              // Snap to final values to avoid lingering FP drift.
+              camera.position.set(
+                lerp.to.position[0],
+                lerp.to.position[1],
+                lerp.to.position[2]
+              );
+              lookAtTarget.x = lerp.to.lookAt[0];
+              lookAtTarget.y = lerp.to.lookAt[1];
+              lookAtTarget.z = lerp.to.lookAt[2];
+              camera.fov = lerp.to.fov;
+              camera.updateProjectionMatrix();
+              lerpRef.current = null;
             }
           }
 
           // Re-apply lookAt every frame so the camera tracks the lerping
           // target during the camera-lerp phase. Cheap (just a matrix op).
           camera.lookAt(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z);
+
+          // ─── Body pose (controller-driven X/Z) ───────────────────
+          // Soft lerp toward the controller's target position so motion reads
+          // smooth even when the controller updates intermittently. Skipped
+          // when the GLB hasn't loaded yet (avatarRoot is still null).
+          if (avatarRoot) {
+            const target = bodyPoseRef.current;
+            avatarRoot.position.x += (target.x - avatarRoot.position.x) * 0.1;
+            avatarRoot.position.z += (target.z - avatarRoot.position.z) * 0.1;
+          }
 
           const gazeTarget = gazeRef.current;
 
@@ -460,6 +462,16 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
               // Center — clear all look morphs
               for (const key of ["eyeLookOutRight", "eyeLookInLeft", "eyeLookOutLeft", "eyeLookInRight"]) {
                 if (dict[key] !== undefined) infl[dict[key]] = 0;
+              }
+            }
+
+            // ─── Mouth shape (viseme-driven) ───────────────────────
+            // mouthShapeRef is null when no audio is playing; clear all
+            // mouth morphs in that case so the avatar's mouth is at rest.
+            const mouthShape = mouthShapeRef.current;
+            for (const key of ["jawOpen", "mouthFunnel", "mouthPucker", "mouthSmile", "mouthClose"] as const) {
+              if (dict[key] !== undefined) {
+                infl[dict[key]] = mouthShape ? mouthShape[key] : 0;
               }
             }
           }
@@ -504,37 +516,6 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
         cleanup?.();
       };
     }, [props.glbUrl]);
-
-    // ─── React to cameraMode changes ─────────────────────────────────
-    // When the parent toggles cameraMode (e.g. on `avatarState.speaking`),
-    // kick off a lerp in the animation loop. We never rebuild the scene —
-    // just hand the loop a new target preset and let it interpolate.
-    useEffect(() => {
-      const nextMode = props.cameraMode ?? "full_body";
-      const prevMode = cameraModeRef.current;
-      cameraModeRef.current = nextMode;
-
-      // First render before the scene boots — the mount path already reads
-      // cameraModeRef and picks the right initial preset, so we're done.
-      if (!sceneReadyRef.current) return;
-      if (prevMode === nextMode) return;
-
-      const fromPreset = CAMERA_PRESETS[prevMode];
-      const toPreset = CAMERA_PRESETS[nextMode];
-
-      // Sequence per spec: settle position → camera tightens → mouth animates.
-      // We only run the settle phase when tightening INTO torso framing —
-      // backing out to full_body looks fine without an extra pause.
-      const settleMs = nextMode === "torso" ? SETTLE_TO_CENTER_MS : 0;
-
-      lerpRef.current = {
-        from: fromPreset,
-        to: toPreset,
-        settleRemainingMs: settleMs,
-        lerpRemainingMs: CAMERA_LERP_MS,
-        totalLerpMs: CAMERA_LERP_MS,
-      };
-    }, [props.cameraMode]);
 
     return (
       <div

@@ -121,48 +121,69 @@ describe("IdleScene", () => {
   });
 
   // ─────────────────────────────────────────────────────────────────
-  // Camera framing — "torso" mode when speaking
+  // Imperative handle — setFraming / setBodyPose / setMouthShape
   //
-  // Sophie's UX note: a static full-body mannequin standing still while
-  // the avatar talks is off-putting. When `cameraMode="torso"` is passed,
-  // the scene should initialize with a tighter FOV and a closer camera
-  // position so the framing reads as a talking head.
-  //
-  // We only smoke-mount here: the Three.js scene boots inside an async IIFE
-  // and unit-asserting camera params requires either real WebGL or a much
-  // heavier mock setup. The flip-and-lerp behavior is exercised end-to-end
-  // by AvatarPanel.test.tsx (which asserts the prop wiring) plus visual QA.
+  // The choreographer (useAvatarController) drives framing, body pose,
+  // and visemes per-frame via the imperative handle, not via React props.
+  // We smoke-mount here: the Three.js scene boots inside an async IIFE
+  // so unit-asserting camera params requires real WebGL or a much heavier
+  // mock setup. End-to-end behavior is exercised by AvatarPanel + visual QA.
   // ─────────────────────────────────────────────────────────────────
-  describe("cameraMode", () => {
-    it("mounts cleanly when cameraMode is omitted (defaults to full_body)", () => {
+  describe("imperative handle", () => {
+    it("mounts cleanly with no props (defaults to full_body framing)", () => {
       expect(() => {
         render(<IdleScene />);
       }).not.toThrow();
       expect(screen.getByTestId("idle-scene-three")).toBeInTheDocument();
     });
 
-    it("mounts cleanly with cameraMode='torso'", () => {
-      expect(() => {
-        render(<IdleScene cameraMode="torso" />);
-      }).not.toThrow();
-      expect(screen.getByTestId("idle-scene-three")).toBeInTheDocument();
+    it("exposes setFraming, setBodyPose, setMouthShape via ref", () => {
+      const ref = createRef<IdleSceneHandle>();
+      render(<IdleScene ref={ref} />);
+
+      expect(ref.current).not.toBeNull();
+      expect(typeof ref.current!.setFraming).toBe("function");
+      expect(typeof ref.current!.setBodyPose).toBe("function");
+      expect(typeof ref.current!.setMouthShape).toBe("function");
     });
 
-    it("mounts cleanly with cameraMode='full_body'", () => {
-      expect(() => {
-        render(<IdleScene cameraMode="full_body" />);
-      }).not.toThrow();
-      expect(screen.getByTestId("idle-scene-three")).toBeInTheDocument();
+    it("setFraming accepts all CameraMode values without throwing", () => {
+      const ref = createRef<IdleSceneHandle>();
+      render(<IdleScene ref={ref} />);
+
+      expect(() => ref.current!.setFraming("full_body")).not.toThrow();
+      expect(() => ref.current!.setFraming("torso")).not.toThrow();
+      expect(() => ref.current!.setFraming("bust")).not.toThrow();
+      // Calling with the same mode again is a no-op.
+      expect(() => ref.current!.setFraming("bust")).not.toThrow();
     });
 
-    it("does not throw when cameraMode prop changes after mount", () => {
-      const { rerender } = render(<IdleScene cameraMode="full_body" />);
-      expect(() => {
-        rerender(<IdleScene cameraMode="torso" />);
-      }).not.toThrow();
-      expect(() => {
-        rerender(<IdleScene cameraMode="full_body" />);
-      }).not.toThrow();
+    it("setBodyPose accepts breathing and walking clip targets", () => {
+      const ref = createRef<IdleSceneHandle>();
+      render(<IdleScene ref={ref} />);
+
+      expect(() =>
+        ref.current!.setBodyPose({ x: 0, z: 0, clip: "breathing" })
+      ).not.toThrow();
+      expect(() =>
+        ref.current!.setBodyPose({ x: 0.5, z: -0.3, clip: "walking" })
+      ).not.toThrow();
+    });
+
+    it("setMouthShape accepts a shape object and null (rest)", () => {
+      const ref = createRef<IdleSceneHandle>();
+      render(<IdleScene ref={ref} />);
+
+      expect(() =>
+        ref.current!.setMouthShape({
+          jawOpen: 0.4,
+          mouthFunnel: 0.1,
+          mouthPucker: 0,
+          mouthSmile: 0,
+          mouthClose: 0,
+        })
+      ).not.toThrow();
+      expect(() => ref.current!.setMouthShape(null)).not.toThrow();
     });
   });
 });

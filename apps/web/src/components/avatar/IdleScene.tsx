@@ -131,6 +131,11 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
         const fromPreset = CAMERA_PRESETS[framingRef.current];
         const toPreset = CAMERA_PRESETS[mode];
         framingRef.current = mode;
+        // Pre-mount: just record the requested mode — the mount path reads
+        // framingRef.current to pick the initial preset, so no lerp needed.
+        // Without this guard a stale lerp would queue full_body→target and
+        // briefly snap the camera away from target on cold start.
+        if (!sceneReadyRef.current) return;
         lerpRef.current = {
           from: fromPreset,
           to: toPreset,

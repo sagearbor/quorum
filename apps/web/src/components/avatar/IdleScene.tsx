@@ -22,6 +22,9 @@ import type { DetectedEmotion } from "./EmotionDetector";
 export interface IdleSceneHandle {
   setGaze: (yaw: number, pitch?: number) => void;
   setEmotion: (emotion: DetectedEmotion) => void;
+  setFraming: (mode: CameraMode) => void;
+  setBodyPose: (pose: { x: number; z: number; clip: "breathing" | "walking" }) => void;
+  setMouthShape: (shape: { jawOpen: number; mouthFunnel: number; mouthPucker: number; mouthSmile: number; mouthClose: number } | null) => void;
 }
 
 /**
@@ -80,13 +83,6 @@ export interface IdleSceneProps {
   width?: string | number;
   /** Height of canvas (default "100%") */
   height?: string | number;
-  /**
-   * Camera framing mode. Defaults to "full_body" (matches legacy behavior).
-   * When set to "torso", the camera smoothly lerps to a close-up framing
-   * over ~600ms. Pair with the speaking state from useAvatarController so
-   * the camera tightens whenever the facilitator speaks.
-   */
-  cameraMode?: CameraMode;
 }
 
 // ─── Three.js Idle Scene ────────────────────────────────────────────
@@ -101,10 +97,13 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
     const emotionRef = useRef<DetectedEmotion>("neutral");
     // Mutable refs the animation loop reads on every frame. Using refs (not
     // state) so we don't tear down / rebuild the Three.js scene when the
-    // parent flips cameraMode — we just morph the existing camera.
-    const cameraModeRef = useRef<CameraMode>(props.cameraMode ?? "full_body");
+    // controller drives framing/pose/mouth — we just morph the existing scene.
+    const framingRef = useRef<CameraMode>("full_body");
+    const bodyPoseRef = useRef<{ x: number; z: number; clip: "breathing" | "walking" }>({ x: 0, z: 0, clip: "breathing" });
+    const mouthShapeRef = useRef<{ jawOpen: number; mouthFunnel: number; mouthPucker: number; mouthSmile: number; mouthClose: number } | null>(null);
     // The Three.js scene boots asynchronously; this flag becomes true once the
-    // scene exists so subsequent cameraMode prop changes know to start a lerp.
+    // scene exists so setFraming() knows to start a lerp instead of just
+    // updating the initial preset selection.
     const sceneReadyRef = useRef(false);
     // When set, the animation loop interpolates camera/avatar params toward
     // the target preset over the configured duration. `null` = no animation
@@ -127,6 +126,20 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
       setEmotion: (e: DetectedEmotion) => {
         emotionRef.current = e;
       },
+      setFraming: (mode: CameraMode) => {
+        if (framingRef.current === mode) return;
+        const fromPreset = CAMERA_PRESETS[framingRef.current];
+        const toPreset = CAMERA_PRESETS[mode];
+        framingRef.current = mode;
+        lerpRef.current = {
+          from: fromPreset,
+          to: toPreset,
+          lerpRemainingMs: CAMERA_LERP_MS,
+          totalLerpMs: CAMERA_LERP_MS,
+        };
+      },
+      setBodyPose: (pose) => { bodyPoseRef.current = pose; },
+      setMouthShape: (shape) => { mouthShapeRef.current = shape; },
     }));
 
     // Lazy-load Three.js scene
@@ -149,10 +162,12 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x0f172a);
 
-        // Initial camera framing comes from the current cameraMode preset.
-        // We never re-create the camera on mode changes — the animation loop
-        // lerps its existing position/lookAt/fov toward the new preset.
-        const initialPreset = CAMERA_PRESETS[cameraModeRef.current];
+        // Initial camera framing comes from the current framing preset.
+        // We never re-create the camera on framing changes — the animation
+        // loop lerps its existing position/lookAt/fov toward the new preset.
+        // If setFraming() was called before mount, framingRef already holds
+        // the requested mode; if not, it defaults to "full_body".
+        const initialPreset = CAMERA_PRESETS[framingRef.current];
         const camera = new THREE.PerspectiveCamera(
           initialPreset.fov,
           width / height,
@@ -357,6 +372,16 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
           // target during the camera-lerp phase. Cheap (just a matrix op).
           camera.lookAt(lookAtTarget.x, lookAtTarget.y, lookAtTarget.z);
 
+          // ─── Body pose (controller-driven X/Z) ───────────────────
+          // Soft lerp toward the controller's target position so motion reads
+          // smooth even when the controller updates intermittently. Skipped
+          // when the GLB hasn't loaded yet (avatarRoot is still null).
+          if (avatarRoot) {
+            const target = bodyPoseRef.current;
+            avatarRoot.position.x += (target.x - avatarRoot.position.x) * 0.1;
+            avatarRoot.position.z += (target.z - avatarRoot.position.z) * 0.1;
+          }
+
           const gazeTarget = gazeRef.current;
 
           // Eyes lead: fast lerp to target
@@ -392,6 +417,16 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
               // Center — clear all look morphs
               for (const key of ["eyeLookOutRight", "eyeLookInLeft", "eyeLookOutLeft", "eyeLookInRight"]) {
                 if (dict[key] !== undefined) infl[dict[key]] = 0;
+              }
+            }
+
+            // ─── Mouth shape (viseme-driven) ───────────────────────
+            // mouthShapeRef is null when no audio is playing; clear all
+            // mouth morphs in that case so the avatar's mouth is at rest.
+            const mouthShape = mouthShapeRef.current;
+            for (const key of ["jawOpen", "mouthFunnel", "mouthPucker", "mouthSmile", "mouthClose"] as const) {
+              if (dict[key] !== undefined) {
+                infl[dict[key]] = mouthShape ? mouthShape[key] : 0;
               }
             }
           }
@@ -436,31 +471,6 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
         cleanup?.();
       };
     }, [props.glbUrl]);
-
-    // ─── React to cameraMode changes ─────────────────────────────────
-    // When the parent toggles cameraMode (e.g. on `avatarState.speaking`),
-    // kick off a lerp in the animation loop. We never rebuild the scene —
-    // just hand the loop a new target preset and let it interpolate.
-    useEffect(() => {
-      const nextMode = props.cameraMode ?? "full_body";
-      const prevMode = cameraModeRef.current;
-      cameraModeRef.current = nextMode;
-
-      // First render before the scene boots — the mount path already reads
-      // cameraModeRef and picks the right initial preset, so we're done.
-      if (!sceneReadyRef.current) return;
-      if (prevMode === nextMode) return;
-
-      const fromPreset = CAMERA_PRESETS[prevMode];
-      const toPreset = CAMERA_PRESETS[nextMode];
-
-      lerpRef.current = {
-        from: fromPreset,
-        to: toPreset,
-        lerpRemainingMs: CAMERA_LERP_MS,
-        totalLerpMs: CAMERA_LERP_MS,
-      };
-    }, [props.cameraMode]);
 
     return (
       <div

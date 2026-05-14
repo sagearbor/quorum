@@ -145,3 +145,43 @@ describe("choreographer talking → retreating", () => {
     expect(out.state).toBe("retreating");
   });
 });
+
+describe("choreographer retreating + idle pacing", () => {
+  it("ramps bodyZ from 0.6 → 0 during retreating", () => {
+    const early = nextChoreography("retreating", {
+      ...baseInput,
+      msInCurrentState: 0,
+    }, 16);
+    expect(early.bodyZ).toBeCloseTo(0.6, 2);
+
+    const end = nextChoreography("retreating", {
+      ...baseInput,
+      msInCurrentState: 1200,
+    }, 16);
+    expect(end.bodyZ).toBeCloseTo(0, 2);
+  });
+
+  it("returns to idle_pacing when retreat ramp completes", () => {
+    const out = nextChoreography("retreating", {
+      ...baseInput,
+      msInCurrentState: 1300,
+    }, 16);
+    expect(out.state).toBe("idle_pacing");
+  });
+
+  it("idle_pacing bodyX traces a sine wave", () => {
+    // 10s period, 0.6 amplitude. At t=2500ms (quarter period) bodyX should be 0.6.
+    const peak = nextChoreography("idle_pacing", {
+      ...baseInput,
+      msInCurrentState: 2500,
+    }, 16);
+    expect(peak.bodyX).toBeCloseTo(0.6, 1);
+
+    // At t=5000ms (half period) bodyX returns to 0.
+    const zero = nextChoreography("idle_pacing", {
+      ...baseInput,
+      msInCurrentState: 5000,
+    }, 16);
+    expect(zero.bodyX).toBeCloseTo(0, 1);
+  });
+});

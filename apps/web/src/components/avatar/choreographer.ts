@@ -27,6 +27,9 @@ const APPROACH_TRIGGER_MS = 2000;
 const RETREAT_AFTER_MS = 5000;
 const APPROACH_RAMP_MS = 1500;
 const APPROACH_BODY_Z = 0.6;
+const RETREAT_RAMP_MS = 1200;
+const PACE_PERIOD_MS = 10000;
+const PACE_AMPLITUDE = 0.6;
 
 export function nextChoreography(
   prev: ChoreographyState,
@@ -62,7 +65,7 @@ export function nextChoreography(
       state: "idle_pacing",
       cameraFraming: "full_body",
       bodyZ: 0,
-      bodyX: 0,
+      bodyX: Math.sin((input.msInCurrentState / PACE_PERIOD_MS) * 2 * Math.PI) * PACE_AMPLITUDE,
       animationClip: "walking",
     };
   }
@@ -122,12 +125,28 @@ export function nextChoreography(
     };
   }
 
-  // Other states added in subsequent tasks.
-  return {
-    state: prev,
-    cameraFraming: "full_body",
-    bodyZ: 0,
-    bodyX: 0,
-    animationClip: "breathing",
-  };
+  if (prev === "retreating") {
+    const t = Math.min(1, input.msInCurrentState / RETREAT_RAMP_MS);
+    const bodyZ = APPROACH_BODY_Z * (1 - t);
+
+    if (t >= 1) {
+      return {
+        state: "idle_pacing",
+        cameraFraming: "full_body",
+        bodyZ: 0,
+        bodyX: 0,
+        animationClip: "walking",
+      };
+    }
+    return {
+      state: "retreating",
+      cameraFraming: "full_body",
+      bodyZ,
+      bodyX: 0,
+      animationClip: "walking",
+    };
+  }
+
+  // All states covered above; this is unreachable but keeps TS happy.
+  throw new Error(`unreachable choreography state: ${prev as string}`);
 }

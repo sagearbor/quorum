@@ -1,6 +1,11 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   transpilePackages: [],
+  // Lint runs as a CI hard gate; don't re-run it during the production
+  // build (Vercel/Railway).  Keeps deploys unblocked when CI is also green.
+  eslint: {
+    ignoreDuringBuilds: true,
+  },
   webpack: (config) => {
     config.resolve.extensions.push(".json");
     return config;

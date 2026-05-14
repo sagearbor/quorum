@@ -9,7 +9,7 @@
 
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useRef, useState, useCallback, type RefObject } from "react";
 import {
   createAvatarProvider,
   type AvatarProvider,
@@ -18,9 +18,21 @@ import {
   type Direction,
 } from "./AvatarProvider";
 import { StereoAnalyzer } from "./StereoAnalyzer";
-import { VisionTracker } from "./VisionTracker";
+import { VisionTracker, type PresencePayload } from "./VisionTracker";
 import { EmotionDetector, type DetectedEmotion } from "./EmotionDetector";
 import { speakText as browserSpeakText } from "@/lib/speechSynthesis";
+import { nextChoreography, type ChoreographyState } from "./choreographer";
+import type { IdleSceneHandle } from "./IdleScene";
+
+/**
+ * Read once at module load: when NEXT_PUBLIC_AVATAR_CHOREOGRAPHY === "bust_only"
+ * the choreographer short-circuits to a permanent bust framing with no walking,
+ * Z motion, or vision-driven state changes. Safety net for the expo when full
+ * choreography misbehaves on stage.
+ */
+const BUST_ONLY =
+  typeof process !== "undefined" &&
+  process.env?.NEXT_PUBLIC_AVATAR_CHOREOGRAPHY === "bust_only";
 
 export interface AvatarControllerOptions {
   /**
@@ -57,6 +69,13 @@ export interface AvatarControllerOptions {
   pausedReason?: string | null;
   /** Specific webcam deviceId. When changed, the VisionTracker restarts on the new camera. */
   cameraDeviceId?: string;
+  /**
+   * Optional ref to the IdleScene's imperative handle. When provided, the
+   * choreographer's per-RAF output is routed to setFraming + setBodyPose.
+   * AvatarPanel owns this ref; passing it in here lets the controller drive
+   * the scene without needing to lift the choreographer state up to the panel.
+   */
+  idleSceneRef?: RefObject<IdleSceneHandle | null>;
 }
 
 export interface AvatarControllerState {
@@ -97,6 +116,7 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
     paused = false,
     pausedReason = null,
     cameraDeviceId,
+    idleSceneRef,
   } = options;
 
   const [state, setState] = useState<AvatarControllerState>({
@@ -122,6 +142,21 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
   const stereoYawRef = useRef(0);
   const visionYawRef = useRef(0);
   const visionPitchRef = useRef(0);
+
+  // Choreographer state — driven per-RAF in the effect below.
+  const choreoStateRef = useRef<ChoreographyState>("idle_pacing");
+  const msInStateRef = useRef(0);
+  // Start "long ago" so the controller doesn't think narration is fresh on
+  // first mount — otherwise the approach → talking transition would fire
+  // immediately on a non-existent narration.
+  const msSinceNarrationRef = useRef(99999);
+  const lastTickRef = useRef(0);
+  const presenceRef = useRef<PresencePayload>({
+    detected: false,
+    sizeRatio: 0,
+    durationMs: 0,
+  });
+  const latestNarrationRef = useRef<string | undefined>(undefined);
 
   // Compute emotion from health score delta
   const computeEmotion = useCallback(
@@ -203,9 +238,10 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
     if (!enableVision) return;
 
     const tracker = new VisionTracker({
-      onGaze: (yaw, pitch) => {
+      onGaze: (yaw, pitch, presence) => {
         visionYawRef.current = yaw;
         visionPitchRef.current = pitch ?? 0;
+        if (presence) presenceRef.current = presence;
         mergeAndSetGaze(stereoYawRef.current, yaw, visionPitchRef.current);
       },
       deviceId: cameraDeviceId,
@@ -253,6 +289,69 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
       return { ...s, paused, pausedReason };
     });
   }, [paused, pausedReason]);
+
+  // Track narration arrival for the choreographer. We reset
+  // ``msSinceNarrationRef`` to 0 whenever a new non-empty synthesisText arrives
+  // — this is independent of TTS state (paused / speaking dedup), since the
+  // choreographer cares about narration *availability*, not whether the
+  // provider actually spoke it. ``latestNarrationRef`` mirrors the value so
+  // the RAF tick can pass it into the choreographer without re-rendering.
+  useEffect(() => {
+    if (!synthesisText) return;
+    if (synthesisText === latestNarrationRef.current) return;
+    latestNarrationRef.current = synthesisText;
+    msSinceNarrationRef.current = 0;
+  }, [synthesisText]);
+
+  // Per-RAF tick driving the choreographer. Reads presence from the vision
+  // tracker, speaking state, and narration tracking refs; pushes the result
+  // to the IdleScene handle (framing + body pose). Runs unconditionally so the
+  // pacing sine wave keeps animating even before the first user is detected.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    let raf = 0;
+    const tick = () => {
+      const now = performance.now();
+      const dtMs = lastTickRef.current === 0 ? 0 : now - lastTickRef.current;
+      lastTickRef.current = now;
+
+      msInStateRef.current += dtMs;
+      msSinceNarrationRef.current += dtMs;
+
+      const out = nextChoreography(
+        choreoStateRef.current,
+        {
+          presence: presenceRef.current,
+          speaking: speakingRef.current,
+          narrationText: latestNarrationRef.current,
+          msSinceLastNarration: msSinceNarrationRef.current,
+          msInCurrentState: msInStateRef.current,
+          bustOnly: BUST_ONLY,
+        },
+        dtMs,
+      );
+
+      if (out.state !== choreoStateRef.current) {
+        choreoStateRef.current = out.state;
+        msInStateRef.current = 0;
+      }
+
+      const handle = idleSceneRef?.current;
+      if (handle) {
+        handle.setFraming(out.cameraFraming === "bust" ? "bust" : "full_body");
+        handle.setBodyPose({ x: out.bodyX, z: out.bodyZ, clip: out.animationClip });
+        // Visemes (Task 13) — leave null until the audio analyzer is wired.
+        handle.setMouthShape(null);
+      }
+
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => {
+      cancelAnimationFrame(raf);
+      lastTickRef.current = 0;
+    };
+  }, [idleSceneRef]);
 
   // Speak new synthesis text.
   // Priority: configured AvatarProvider (ElevenLabs/Simli) → browser SpeechSynthesis fallback.

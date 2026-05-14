@@ -143,6 +143,7 @@ export function AvatarPanel({
     paused,
     pausedReason,
     cameraDeviceId,
+    idleSceneRef,
   });
 
   // Connect gaze (yaw + pitch) from controller to IdleScene

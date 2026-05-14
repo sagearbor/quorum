@@ -206,6 +206,11 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
         // and yaw it slightly toward the direction of motion. Captured after
         // GLB load so the pacing loop has something to move.
         let avatarRoot: any = null;
+        // Mixer actions for the bundled breathing idle and the optional
+        // Mixamo walk clip. Both exist in parallel; the animate loop
+        // crossfades their weights based on bodyPoseRef.current.clip.
+        let breathingAction: any = null;
+        let walkAction: any = null;
         /* eslint-enable @typescript-eslint/no-explicit-any */
 
         // Load GLB
@@ -241,11 +246,11 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
               }
             });
 
-            // Play first animation (idle) if available
+            // Play first animation (idle/breathing) if available
             if (gltf.animations.length > 0) {
               mixer = new THREE.AnimationMixer(gltf.scene);
-              const action = mixer.clipAction(gltf.animations[0]);
-              action.play();
+              breathingAction = mixer.clipAction(gltf.animations[0]);
+              breathingAction.play();
             } else {
               // Fix T-pose for GLBs whose arms are near-horizontal.
               // Detect by checking if LeftArm/RightArm quaternion is near-identity
@@ -271,6 +276,28 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
                   0.766085
                 );
               });
+            }
+
+            // Load the Mixamo walk clip alongside breathing. Falls back
+            // silently if the file isn't present (Sophie drops it in
+            // separately — Mixamo requires Adobe login so it can't be
+            // agent-downloaded). Skipped when no mixer exists (the GLB
+            // had no animations) since AnimationMixer needs the avatar
+            // root and we'd have no breathing action to crossfade against.
+            if (mixer) {
+              try {
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                const walkGltf = await new Promise<any>((resolve, reject) => {
+                  loader.load("/animations/walk.glb", resolve, undefined, reject);
+                });
+                if (!cancelled && walkGltf.animations.length > 0) {
+                  walkAction = mixer.clipAction(walkGltf.animations[0]);
+                  walkAction.setEffectiveWeight(0); // start hidden — breathing leads
+                  walkAction.play();
+                }
+              } catch {
+                // walk clip optional — falls back to breathing-only
+              }
             }
           } catch {
             // GLB load failure is non-fatal; show empty scene
@@ -327,6 +354,19 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
           const deltaMs = delta * 1000;
 
           if (mixer) mixer.update(delta);
+
+          // ─── Body clip crossfade (breathing ↔ walking) ─────────
+          // bodyPoseRef.current.clip drives the mixer weight. Slow lerp
+          // (~0.05 per frame ≈ 1s @ 60fps) gives a smooth gait transition
+          // rather than an abrupt swap. Both actions must be present —
+          // the walk clip is optional, so guard on both refs.
+          if (walkAction && breathingAction) {
+            const targetWalkWeight = bodyPoseRef.current.clip === "walking" ? 1 : 0;
+            const currentWeight = walkAction.getEffectiveWeight();
+            const newWeight = currentWeight + (targetWalkWeight - currentWeight) * 0.05;
+            walkAction.setEffectiveWeight(newWeight);
+            breathingAction.setEffectiveWeight(1 - newWeight);
+          }
 
           // ─── Camera lerp ─────────────────────────────────────────
           // When a new cameraMode is requested, lerpRef holds a from→to

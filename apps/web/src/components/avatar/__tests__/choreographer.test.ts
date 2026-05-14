@@ -104,3 +104,44 @@ describe("choreographer approach → talking", () => {
     expect(out.state).toBe("talking");
   });
 });
+
+describe("choreographer talking → retreating", () => {
+  const inTalking = {
+    ...baseInput,
+    presence: { detected: true, sizeRatio: 0.30, durationMs: 8000 },
+    speaking: true,
+    narrationText: "Welcome",
+    msSinceLastNarration: 100,
+  };
+
+  it("stays in talking while speaking", () => {
+    const out = nextChoreography("talking", inTalking, 16);
+    expect(out.state).toBe("talking");
+    expect(out.cameraFraming).toBe("bust");
+  });
+
+  it("stays in talking when 4s of silence + still speaking", () => {
+    const out = nextChoreography("talking", {
+      ...inTalking,
+      msSinceLastNarration: 4000,
+    }, 16);
+    expect(out.state).toBe("talking");
+  });
+
+  it("transitions to retreating after 5s silence + TTS ended", () => {
+    const out = nextChoreography("talking", {
+      ...inTalking,
+      msSinceLastNarration: 5500,
+      speaking: false,
+    }, 16);
+    expect(out.state).toBe("retreating");
+  });
+
+  it("transitions to retreating immediately when person leaves frame", () => {
+    const out = nextChoreography("talking", {
+      ...inTalking,
+      presence: { detected: false, sizeRatio: 0.02, durationMs: 0 },
+    }, 16);
+    expect(out.state).toBe("retreating");
+  });
+});

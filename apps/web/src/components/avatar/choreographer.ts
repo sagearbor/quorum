@@ -98,6 +98,30 @@ export function nextChoreography(
     };
   }
 
+  if (prev === "talking") {
+    const personLeft =
+      !input.presence.detected || input.presence.sizeRatio < APPROACH_RELEASE_SIZE;
+    const ttsIdle =
+      !input.speaking && input.msSinceLastNarration > RETREAT_AFTER_MS;
+
+    if (personLeft || ttsIdle) {
+      return {
+        state: "retreating",
+        cameraFraming: "full_body",
+        bodyZ: APPROACH_BODY_Z,
+        bodyX: 0,
+        animationClip: "walking",
+      };
+    }
+    return {
+      state: "talking",
+      cameraFraming: "bust",
+      bodyZ: APPROACH_BODY_Z,
+      bodyX: 0,
+      animationClip: "breathing",
+    };
+  }
+
   // Other states added in subsequent tasks.
   return {
     state: prev,

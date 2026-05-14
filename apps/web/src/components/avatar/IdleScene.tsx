@@ -278,25 +278,38 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
               });
             }
 
-            // Load the Mixamo walk clip alongside breathing. Falls back
-            // silently if the file isn't present (Sophie drops it in
-            // separately — Mixamo requires Adobe login so it can't be
-            // agent-downloaded). Skipped when no mixer exists (the GLB
-            // had no animations) since AnimationMixer needs the avatar
-            // root and we'd have no breathing action to crossfade against.
+            // Load the Mixamo walk clip alongside breathing. Tries GLB
+            // first, then falls back to FBX (Mixamo's actual export format
+            // since they dropped direct GLB export). Both paths are
+            // wrapped in try/catch so a missing file just falls back to
+            // breathing-only — no crash. Skipped when no mixer exists
+            // (the avatar GLB had no animations) since AnimationMixer
+            // needs the avatar root and we'd have no breathing action
+            // to crossfade against.
             if (mixer) {
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              let walkClip: any = null;
               try {
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                const walkGltf = await new Promise<any>((resolve, reject) => {
+                walkClip = await new Promise<any>((resolve, reject) => {
                   loader.load("/animations/walk.glb", resolve, undefined, reject);
                 });
-                if (!cancelled && walkGltf.animations.length > 0) {
-                  walkAction = mixer.clipAction(walkGltf.animations[0]);
-                  walkAction.setEffectiveWeight(0); // start hidden — breathing leads
-                  walkAction.play();
-                }
               } catch {
-                // walk clip optional — falls back to breathing-only
+                try {
+                  const { FBXLoader } = await import(
+                    "three/examples/jsm/loaders/FBXLoader.js"
+                  );
+                  const fbxLoader = new FBXLoader();
+                  walkClip = await new Promise<any>((resolve, reject) => {
+                    fbxLoader.load("/animations/walk.fbx", resolve, undefined, reject);
+                  });
+                } catch {
+                  // both missing — falls back to breathing-only
+                }
+              }
+              if (!cancelled && walkClip?.animations?.length > 0) {
+                walkAction = mixer.clipAction(walkClip.animations[0]);
+                walkAction.setEffectiveWeight(0); // start hidden — breathing leads
+                walkAction.play();
               }
             }
           } catch {

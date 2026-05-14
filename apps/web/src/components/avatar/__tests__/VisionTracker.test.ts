@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { VisionTracker } from "../VisionTracker";
+import { VisionTracker, computeSizeRatio, smoothSizeRatio } from "../VisionTracker";
 
 // Mock @mediapipe/tasks-vision
 vi.mock("@mediapipe/tasks-vision", () => ({
@@ -142,6 +142,27 @@ describe("VisionTracker", () => {
         value: original,
         configurable: true,
       });
+    });
+  });
+
+  describe("presence helpers", () => {
+    it("computeSizeRatio returns bbox area / frame area", () => {
+      const ratio = computeSizeRatio(
+        { width: 100, height: 200 },
+        { width: 1000, height: 1000 }
+      );
+      expect(ratio).toBeCloseTo(0.02, 4);
+    });
+
+    it("smoothSizeRatio averages last 5 frames", () => {
+      const buf: number[] = [];
+      expect(smoothSizeRatio(buf, 0.1)).toBeCloseTo(0.1, 4);
+      expect(smoothSizeRatio(buf, 0.2)).toBeCloseTo(0.15, 4);
+      expect(smoothSizeRatio(buf, 0.3)).toBeCloseTo(0.2, 4);
+      expect(smoothSizeRatio(buf, 0.4)).toBeCloseTo(0.25, 4);
+      expect(smoothSizeRatio(buf, 0.5)).toBeCloseTo(0.3, 4);
+      expect(smoothSizeRatio(buf, 0.6)).toBeCloseTo(0.4, 4);
+      expect(buf).toHaveLength(5);
     });
   });
 

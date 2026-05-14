@@ -20,7 +20,7 @@
  * docs/audit/2026-05-12-overnight-plan.html.
  */
 
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 const API_BASE =
@@ -72,7 +72,7 @@ async function fetchQuorumRoles(quorumId: string): Promise<MinimalRole[]> {
   }
 }
 
-export default function PairPage() {
+function PairPageInner() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const quorumId = searchParams.get("qr");
@@ -216,5 +216,21 @@ export default function PairPage() {
         )}
       </div>
     </div>
+  );
+}
+
+// useSearchParams() requires a Suspense boundary during static prerender —
+// otherwise Next.js bails out of static export with a CSR-bailout error.
+export default function PairPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900 p-6">
+          <div className="text-slate-500 dark:text-slate-400">Loading…</div>
+        </div>
+      }
+    >
+      <PairPageInner />
+    </Suspense>
   );
 }

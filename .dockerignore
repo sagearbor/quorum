@@ -1,0 +1,21 @@
+# Avoid shipping local dev cruft and frontend code into the API image.
+node_modules
+.next
+**/__pycache__
+**/*.pyc
+**/.pytest_cache
+**/.mypy_cache
+**/.ruff_cache
+**/.venv
+**/.env
+**/.env.*
+!**/.env.example
+apps/web
+e2e
+docs
+tmp
+.git
+.github
+.claude
+supabase
+

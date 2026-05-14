@@ -104,8 +104,17 @@ export function nextChoreography(
   if (prev === "talking") {
     const personLeft =
       !input.presence.detected || input.presence.sizeRatio < APPROACH_RELEASE_SIZE;
+    // Only retreat on "TTS idle" if narration has actually happened at some
+    // point. Without this guard, the initial msSinceLastNarration sentinel
+    // (99999) immediately satisfies the > 5000 check and the avatar bounces
+    // straight from talking back to retreating, producing an endless
+    // approach↔retreat oscillation when a face is detected but no narration
+    // ever fires (the silent-floor expo case).
+    const hasEverNarrated = input.narrationText !== undefined;
     const ttsIdle =
-      !input.speaking && input.msSinceLastNarration > RETREAT_AFTER_MS;
+      hasEverNarrated &&
+      !input.speaking &&
+      input.msSinceLastNarration > RETREAT_AFTER_MS;
 
     if (personLeft || ttsIdle) {
       return {

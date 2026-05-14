@@ -144,6 +144,21 @@ describe("choreographer talking → retreating", () => {
     }, 16);
     expect(out.state).toBe("retreating");
   });
+
+  it("does NOT retreat from talking on TTS-idle if narration never happened", () => {
+    // Silent-floor expo case: face detected, choreographer reaches talking,
+    // but no narration ever fires. Without the hasEverNarrated guard the
+    // sentinel msSinceLastNarration value would immediately satisfy the
+    // > 5000 retreat trigger, causing approach↔retreat oscillation.
+    const out = nextChoreography("talking", {
+      ...baseInput,
+      presence: { detected: true, sizeRatio: 0.30, durationMs: 8000 },
+      speaking: false,
+      narrationText: undefined,
+      msSinceLastNarration: 99999,
+    }, 16);
+    expect(out.state).toBe("talking");
+  });
 });
 
 describe("choreographer retreating + idle pacing", () => {

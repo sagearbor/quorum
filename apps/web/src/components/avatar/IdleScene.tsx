@@ -307,6 +307,16 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
                 }
               }
               if (!cancelled && walkClip?.animations?.length > 0) {
+                // Strip Mixamo's `mixamorig:` bone-name prefix from each
+                // track so the clip binds to standard humanoid bones (Hips,
+                // Spine, etc.) on the Avaturn / RPM skeleton. Without this,
+                // AnimationMixer can't find any matching bones and the clip
+                // plays silently — the legs never move.
+                walkClip.animations.forEach((clip: { tracks: Array<{ name: string }> }) => {
+                  clip.tracks.forEach((track) => {
+                    track.name = track.name.replace(/^mixamorig[1-9]?:/, "");
+                  });
+                });
                 walkAction = mixer.clipAction(walkClip.animations[0]);
                 walkAction.setEffectiveWeight(0); // start hidden — breathing leads
                 walkAction.play();

@@ -235,3 +235,35 @@ Phoneme-accurate visemes (wasm Whisper-tiny or similar) are out of scope for thi
 7. **Tests, manual QA, docs** — including `docs/CONTRACT.md` update. (~2h)
 
 Total estimate: ~13 hours of focused work. Realistic 2-day calendar with QA cycles and Avaturn-asset coordination overlap.
+
+## Future polish ideas (post-expo, not in scope here)
+
+Filed for future iterations — call out as code comments where the relevant hook points exist so the next implementer can find them quickly.
+
+### Random idle micro-motions
+A small library of short Mixamo clips picked at random while in `idle_pacing` to break the gait monotony:
+- Looks-around (head pan + eye glance)
+- Dab pose (1.5s)
+- Irish jig (2s burst)
+- Skip a few steps
+- Quick stretch
+- Phone-check pantomime
+
+Implementation hook: `choreographer.ts` already has `animationClip` as the output; extend it to a tagged union so `idle_pacing` can occasionally output `{ kind: "emote", clip: "dab", ttlMs: 1500 }`. The mixer crossfades, completes, returns to walking. Probabilistic trigger — e.g. ~5% chance per 10s window.
+
+### Gesture mirroring (vision-driven response)
+VisionTracker already runs MediaPipe; swap from `ObjectDetector` ("person") to `GestureRecognizer` (peace sign, thumbs up, wave, raised hand). When a recognized gesture fires, the choreographer responds with the matching emote clip. Examples:
+- Peace sign → avatar holds peace sign back for 2s
+- Wave → avatar waves
+- Thumbs up → avatar nods + thumbs up
+- Raised hand (question) → avatar tilts head curiously
+
+Implementation hook: `VisionTracker.ts` would gain a parallel `onGesture(kind)` callback; `choreographer.ts` consumes it the same way it consumes `presence`. The gesture triggers an emote clip override on top of any current state.
+
+### Cross-archetype personality
+The `PersonalityProfile` in `archetypes.ts` already has knobs (`walkSpeed`, `gestureFreq`, `fidget`, `headSway`). Currently unused by the avatar render path. The future state machine could read these — e.g. a `researcher` archetype gestures more frequently in the `talking` state, an `administrator` gestures less.
+
+### Ambient soundscape
+On the silent expo floor, even a faint background hum (typing, distant chatter at -30dB) layered under the room sound makes the projector scene feel less sterile. Trivially layered into the existing audio context — completely separate from the muted-TTS path.
+
+These are all <1-day additions individually; collectively they'd add up to a "this avatar feels alive" polish pass that's worth doing once the core choreography is stable.

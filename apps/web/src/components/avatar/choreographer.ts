@@ -25,6 +25,8 @@ const APPROACH_TRIGGER_SIZE = 0.15;
 const APPROACH_RELEASE_SIZE = 0.05;
 const APPROACH_TRIGGER_MS = 2000;
 const RETREAT_AFTER_MS = 5000;
+const APPROACH_RAMP_MS = 1500;
+const APPROACH_BODY_Z = 0.6;
 
 export function nextChoreography(
   prev: ChoreographyState,
@@ -60,6 +62,37 @@ export function nextChoreography(
       state: "idle_pacing",
       cameraFraming: "full_body",
       bodyZ: 0,
+      bodyX: 0,
+      animationClip: "walking",
+    };
+  }
+
+  if (prev === "approach") {
+    const t = Math.min(1, input.msInCurrentState / APPROACH_RAMP_MS);
+    const bodyZ = APPROACH_BODY_Z * t;
+
+    if (input.narrationText !== undefined && input.msSinceLastNarration < 100) {
+      return {
+        state: "talking",
+        cameraFraming: "bust",
+        bodyZ: APPROACH_BODY_Z,
+        bodyX: 0,
+        animationClip: "breathing",
+      };
+    }
+    if (t >= 1) {
+      return {
+        state: "talking",
+        cameraFraming: "bust",
+        bodyZ: APPROACH_BODY_Z,
+        bodyX: 0,
+        animationClip: "breathing",
+      };
+    }
+    return {
+      state: "approach",
+      cameraFraming: t > 0.5 ? "bust" : "full_body",
+      bodyZ,
       bodyX: 0,
       animationClip: "walking",
     };

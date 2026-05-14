@@ -63,3 +63,44 @@ describe("choreographer idle → approach", () => {
     expect(out.animationClip).toBe("walking");
   });
 });
+
+describe("choreographer approach → talking", () => {
+  const inApproach = {
+    ...baseInput,
+    presence: { detected: true, sizeRatio: 0.30, durationMs: 3000 },
+  };
+
+  it("ramps bodyZ from 0 toward 0.6 over msInCurrentState", () => {
+    const early = nextChoreography("approach", { ...inApproach, msInCurrentState: 0 }, 16);
+    expect(early.state).toBe("approach");
+    expect(early.bodyZ).toBeCloseTo(0, 2);
+
+    const mid = nextChoreography("approach", { ...inApproach, msInCurrentState: 750 }, 16);
+    expect(mid.bodyZ).toBeCloseTo(0.3, 1);
+
+    const end = nextChoreography("approach", { ...inApproach, msInCurrentState: 1500 }, 16);
+    expect(end.bodyZ).toBeCloseTo(0.6, 2);
+  });
+
+  it("camera framing lerps full_body → bust during approach", () => {
+    const mid = nextChoreography("approach", { ...inApproach, msInCurrentState: 1500 }, 16);
+    expect(mid.cameraFraming).toBe("bust");
+  });
+
+  it("transitions to talking when narration arrives", () => {
+    const out = nextChoreography("approach", {
+      ...inApproach,
+      narrationText: "Welcome to the demo",
+      msSinceLastNarration: 0,
+    }, 16);
+    expect(out.state).toBe("talking");
+  });
+
+  it("transitions to talking when approach ramp completes even without narration", () => {
+    const out = nextChoreography("approach", {
+      ...inApproach,
+      msInCurrentState: 1600,
+    }, 16);
+    expect(out.state).toBe("talking");
+  });
+});

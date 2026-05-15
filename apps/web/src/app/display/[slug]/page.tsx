@@ -5,6 +5,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { DashboardCarousel } from "@/components/carousel/DashboardCarousel";
 import { PresenceDots } from "@/components/PresenceDots";
 import { usePresence } from "@/hooks/usePresence";
+import { buildWsUrl } from "@/lib/wsUrl";
 
 interface RoleStatus {
   role_id: string;
@@ -67,8 +68,7 @@ export default function DisplayPage() {
   useEffect(() => {
     for (const qId of quorumIds) {
       try {
-        const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-        const ws = new WebSocket(`${protocol}//${window.location.host}/quorums/${qId}/live`);
+        const ws = new WebSocket(buildWsUrl(`/quorums/${qId}/live`));
         wsRef.current = ws;
 
         ws.onmessage = (event) => {

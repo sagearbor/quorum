@@ -11,6 +11,7 @@ import type {
   DemoContribution,
   DemoArtifact,
 } from "./demoMode";
+import { buildWsUrl } from "./wsUrl";
 
 // Dynamic import() so demoMode.ts (and its seed JSON) are excluded from the
 // production bundle when QUORUM_TEST_MODE is off. All calls gated by isDemoMode().
@@ -827,10 +828,7 @@ export function subscribeToFacilitator(
   let closed = false;
 
   try {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
-    ws = new WebSocket(
-      `${protocol}//${window.location.host}/quorums/${quorumId}/live`
-    );
+    ws = new WebSocket(buildWsUrl(`/quorums/${quorumId}/live`));
 
     ws.onmessage = (event) => {
       if (closed) return;
@@ -931,9 +929,8 @@ export function subscribeToFacilitatorObservations(
   let closed = false;
 
   try {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     ws = new WebSocket(
-      `${protocol}//${window.location.host}/quorums/${quorumId}/live`,
+      buildWsUrl(`/quorums/${quorumId}/live`),
     );
 
     ws.onmessage = (event) => {
@@ -1036,9 +1033,8 @@ export function subscribeToBlackboard(
   let closed = false;
 
   try {
-    const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
     ws = new WebSocket(
-      `${protocol}//${window.location.host}/quorums/${quorumId}/live`,
+      buildWsUrl(`/quorums/${quorumId}/live`),
     );
 
     ws.onmessage = (event) => {

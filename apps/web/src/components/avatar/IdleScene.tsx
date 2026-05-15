@@ -325,13 +325,21 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
                 // even when it appears mid-path (some Mixamo exports use
                 // hierarchical track names like `Y_Bot/mixamorig:Hips`).
                 walkClip.animations.forEach((clip: { tracks: Array<{ name: string }> }) => {
+                  // Strip Mixamo prefix if present (covers raw Mixamo FBX
+                  // exports — `mixamorig:Hips`, `mixamorigHips`, etc.).
+                  // No-op for already-clean RPM-library clips.
                   clip.tracks.forEach((track) => {
-                    // Mixamo's prefix is `mixamorig` and may or may not be
-                    // followed by a colon depending on the FBX export
-                    // pipeline. Sophie's actual download had no colon
-                    // (`mixamorigHips.position`), so the colon is optional.
                     track.name = track.name.replace(/mixamorig[1-9]?:?/g, "");
                   });
+                  // Drop `Hips.position` so the walk plays IN PLACE — the
+                  // choreographer drives the avatar's world X/Z via
+                  // bodyPoseRef. Without this, clips that ship with a
+                  // forward-traveling hip translation (like RPM's
+                  // F_Walk_002) make the avatar literally walk off-screen
+                  // every cycle, leaving a black canvas.
+                  clip.tracks = clip.tracks.filter(
+                    (track) => track.name !== "Hips.position"
+                  );
                 });
                 // DEBUG: log skeleton + clip track names so a bone-mismatch
                 // is visible in the browser console. Remove once verified.

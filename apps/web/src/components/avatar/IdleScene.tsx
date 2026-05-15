@@ -408,6 +408,9 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
         let currentEyeYaw = 0;
         let currentHeadYaw = 0;
         let currentHeadPitch = 0;
+        // Closure state for the yaw-debug log (logged once every ~2s
+        // to confirm the rotation lerp is actually running on prod).
+        const yawDebugRef = { lastLog: 0 };
         const animate = () => {
           rafId = requestAnimationFrame(animate);
           const delta = clock.getDelta();
@@ -490,10 +493,18 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
             const target = bodyPoseRef.current;
             avatarRoot.position.x += (target.x - avatarRoot.position.x) * 0.1;
             avatarRoot.position.z += (target.z - avatarRoot.position.z) * 0.1;
-            // Yaw lerp — smoothly turns the avatar to face direction of
-            // motion during idle pacing. Same factor as position so the
-            // body and the rotation stay in phase visually.
-            avatarRoot.rotation.y += (target.yaw - avatarRoot.rotation.y) * 0.1;
+            // Yaw lerp — turns the avatar to face direction of motion.
+            // Aggressive (0.3) so the turn lands faster than the L/R sine
+            // wave reverses; otherwise the rotation lags so far behind the
+            // velocity that the avatar appears to never face the right way.
+            avatarRoot.rotation.y += (target.yaw - avatarRoot.rotation.y) * 0.3;
+            // Diagnostic: once-per-second log of yaw target vs current so we
+            // can confirm the rotation lerp is actually running on prod.
+            if (!yawDebugRef.lastLog || Date.now() - yawDebugRef.lastLog > 2000) {
+              // eslint-disable-next-line no-console
+              console.log("[IdleScene] yaw target=", target.yaw.toFixed(2), " current=", avatarRoot.rotation.y.toFixed(2), " bodyX=", target.x.toFixed(2));
+              yawDebugRef.lastLog = Date.now();
+            }
           }
 
           const gazeTarget = gazeRef.current;

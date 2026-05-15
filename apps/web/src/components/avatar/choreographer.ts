@@ -18,6 +18,8 @@ export interface ChoreographyOutput {
   bodyZ: number;
   /** Body world-X target. In `idle_pacing` this is computed as `sin(msInCurrentState * 2π / 10000) * 0.6` so the avatar paces with a 10s period and 0.6-unit amplitude — but the visible motion comes from the walk clip, not from the X translation by itself. In all other states, 0. */
   bodyX: number;
+  /** Body world-Y rotation (radians). In `idle_pacing` the avatar smoothly turns to face the direction of motion (-π/2 right, +π/2 left, 0 facing camera at extrema). All other states return 0 (face camera). */
+  bodyYaw: number;
   animationClip: "breathing" | "walking";
 }
 
@@ -30,6 +32,8 @@ const APPROACH_BODY_Z = 0.6;
 const RETREAT_RAMP_MS = 1200;
 const PACE_PERIOD_MS = 10000;
 const PACE_AMPLITUDE = 0.6;
+/** Steepness of the tanh curve mapping pacing velocity → body yaw. Higher = avatar snaps to face direction sooner; lower = lingers facing camera at extrema. 3 gives a natural turn that aligns the gait with the world translation by mid-cycle. */
+const PACE_YAW_STEEPNESS = 3;
 
 export function nextChoreography(
   prev: ChoreographyState,
@@ -42,6 +46,7 @@ export function nextChoreography(
       cameraFraming: "bust",
       bodyZ: 0,
       bodyX: 0,
+      bodyYaw: 0,
       animationClip: "breathing",
     };
   }
@@ -58,14 +63,25 @@ export function nextChoreography(
         cameraFraming: "full_body",
         bodyZ: 0,
         bodyX: 0,
+        bodyYaw: 0,
         animationClip: "walking",
       };
     }
+    // Avatar paces L↔R via sin(phase). bodyYaw smoothly tracks the velocity
+    // direction (cos(phase)) so the body turns to face direction of motion:
+    //   phase = 0 (about to walk right): yaw → -π/2 (face right)
+    //   phase = π/2 (rightmost extremum, velocity = 0): yaw → 0 (face camera)
+    //   phase = π (about to walk left): yaw → +π/2 (face left)
+    //   phase = 3π/2 (leftmost extremum): yaw → 0 (face camera)
+    // tanh smoothing avoids the snap at zero crossings; ±90° aligns the
+    // walk clip's forward gait with the world translation direction.
+    const phase = (input.msInCurrentState / PACE_PERIOD_MS) * 2 * Math.PI;
     return {
       state: "idle_pacing",
       cameraFraming: "full_body",
       bodyZ: 0,
-      bodyX: Math.sin((input.msInCurrentState / PACE_PERIOD_MS) * 2 * Math.PI) * PACE_AMPLITUDE,
+      bodyX: Math.sin(phase) * PACE_AMPLITUDE,
+      bodyYaw: -Math.PI / 2 * Math.tanh(Math.cos(phase) * PACE_YAW_STEEPNESS),
       animationClip: "walking",
     };
   }
@@ -80,6 +96,7 @@ export function nextChoreography(
         cameraFraming: "bust",
         bodyZ: APPROACH_BODY_Z,
         bodyX: 0,
+        bodyYaw: 0,
         animationClip: "breathing",
       };
     }
@@ -89,6 +106,7 @@ export function nextChoreography(
         cameraFraming: "bust",
         bodyZ: APPROACH_BODY_Z,
         bodyX: 0,
+        bodyYaw: 0,
         animationClip: "breathing",
       };
     }
@@ -97,6 +115,7 @@ export function nextChoreography(
       cameraFraming: t > 0.5 ? "bust" : "full_body",
       bodyZ,
       bodyX: 0,
+      bodyYaw: 0,
       animationClip: "walking",
     };
   }
@@ -122,6 +141,7 @@ export function nextChoreography(
         cameraFraming: "full_body",
         bodyZ: APPROACH_BODY_Z,
         bodyX: 0,
+        bodyYaw: 0,
         animationClip: "walking",
       };
     }
@@ -130,6 +150,7 @@ export function nextChoreography(
       cameraFraming: "bust",
       bodyZ: APPROACH_BODY_Z,
       bodyX: 0,
+      bodyYaw: 0,
       animationClip: "breathing",
     };
   }
@@ -144,6 +165,7 @@ export function nextChoreography(
         cameraFraming: "full_body",
         bodyZ: 0,
         bodyX: 0,
+        bodyYaw: 0,
         animationClip: "walking",
       };
     }
@@ -152,6 +174,7 @@ export function nextChoreography(
       cameraFraming: "full_body",
       bodyZ,
       bodyX: 0,
+      bodyYaw: 0,
       animationClip: "walking",
     };
   }

@@ -199,4 +199,52 @@ describe("choreographer retreating + idle pacing", () => {
     }, 16);
     expect(zero.bodyX).toBeCloseTo(0, 1);
   });
+
+  it("idle_pacing bodyYaw turns avatar to face direction of motion", () => {
+    // At t=0: about to walk right (+X), velocity is positive (cos(0)=1) →
+    // body should turn to face right, yaw ≈ -π/2.
+    const startMovingRight = nextChoreography("idle_pacing", {
+      ...baseInput,
+      msInCurrentState: 0,
+    }, 16);
+    expect(startMovingRight.bodyYaw).toBeCloseTo(-Math.PI / 2, 1);
+
+    // At t=2500ms (rightmost extremum, velocity = 0): yaw → 0 (face camera).
+    const rightmostExtremum = nextChoreography("idle_pacing", {
+      ...baseInput,
+      msInCurrentState: 2500,
+    }, 16);
+    expect(rightmostExtremum.bodyYaw).toBeCloseTo(0, 1);
+
+    // At t=5000ms (about to walk left, velocity is negative): yaw ≈ +π/2.
+    const startMovingLeft = nextChoreography("idle_pacing", {
+      ...baseInput,
+      msInCurrentState: 5000,
+    }, 16);
+    expect(startMovingLeft.bodyYaw).toBeCloseTo(Math.PI / 2, 1);
+  });
+
+  it("non-idle states return bodyYaw=0 (face camera)", () => {
+    const inApproach = nextChoreography("approach", {
+      ...baseInput,
+      presence: { detected: true, sizeRatio: 0.30, durationMs: 3000 },
+      msInCurrentState: 750,
+    }, 16);
+    expect(inApproach.bodyYaw).toBe(0);
+
+    const inTalking = nextChoreography("talking", {
+      ...baseInput,
+      presence: { detected: true, sizeRatio: 0.30, durationMs: 8000 },
+      speaking: true,
+      narrationText: "Hi",
+      msSinceLastNarration: 100,
+    }, 16);
+    expect(inTalking.bodyYaw).toBe(0);
+
+    const inRetreating = nextChoreography("retreating", {
+      ...baseInput,
+      msInCurrentState: 600,
+    }, 16);
+    expect(inRetreating.bodyYaw).toBe(0);
+  });
 });

@@ -23,7 +23,7 @@ export interface IdleSceneHandle {
   setGaze: (yaw: number, pitch?: number) => void;
   setEmotion: (emotion: DetectedEmotion) => void;
   setFraming: (mode: CameraMode) => void;
-  setBodyPose: (pose: { x: number; z: number; clip: "breathing" | "walking" }) => void;
+  setBodyPose: (pose: { x: number; z: number; yaw: number; clip: "breathing" | "walking" }) => void;
   setMouthShape: (shape: { jawOpen: number; mouthFunnel: number; mouthPucker: number; mouthSmile: number; mouthClose: number } | null) => void;
 }
 
@@ -99,7 +99,7 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
     // state) so we don't tear down / rebuild the Three.js scene when the
     // controller drives framing/pose/mouth — we just morph the existing scene.
     const framingRef = useRef<CameraMode>("full_body");
-    const bodyPoseRef = useRef<{ x: number; z: number; clip: "breathing" | "walking" }>({ x: 0, z: 0, clip: "breathing" });
+    const bodyPoseRef = useRef<{ x: number; z: number; yaw: number; clip: "breathing" | "walking" }>({ x: 0, z: 0, yaw: 0, clip: "breathing" });
     const mouthShapeRef = useRef<{ jawOpen: number; mouthFunnel: number; mouthPucker: number; mouthSmile: number; mouthClose: number } | null>(null);
     // The Three.js scene boots asynchronously; this flag becomes true once the
     // scene exists so setFraming() knows to start a lerp instead of just
@@ -490,6 +490,10 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
             const target = bodyPoseRef.current;
             avatarRoot.position.x += (target.x - avatarRoot.position.x) * 0.1;
             avatarRoot.position.z += (target.z - avatarRoot.position.z) * 0.1;
+            // Yaw lerp — smoothly turns the avatar to face direction of
+            // motion during idle pacing. Same factor as position so the
+            // body and the rotation stay in phase visually.
+            avatarRoot.rotation.y += (target.yaw - avatarRoot.rotation.y) * 0.1;
           }
 
           const gazeTarget = gazeRef.current;

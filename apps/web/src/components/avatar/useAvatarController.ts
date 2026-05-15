@@ -344,7 +344,7 @@ export function useAvatarController(options: AvatarControllerOptions): AvatarCon
       const handle = idleSceneRef?.current;
       if (handle) {
         handle.setFraming(out.cameraFraming === "bust" ? "bust" : "full_body");
-        handle.setBodyPose({ x: out.bodyX, z: out.bodyZ, clip: out.animationClip });
+        handle.setBodyPose({ x: out.bodyX, z: out.bodyZ, yaw: out.bodyYaw, clip: out.animationClip });
         // Visemes (Task 13) — synthetic AH/EE/OO/MM alternation while speaking.
         // The current AvatarProvider abstraction does not expose a usable
         // <audio>/MediaStreamAudioSourceNode for AnalyserNode tapping, and the

@@ -245,9 +245,14 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
               }
             });
 
-            // Play first animation (idle/breathing) if available
+            // Always create a mixer — we need it to play the Mixamo walk
+            // clip even when the avatar GLB ships no animations of its own
+            // (Avaturn outputs zero bundled animations; the breathing idle
+            // is on the GLB only for legacy RPM-style avatars).
+            mixer = new THREE.AnimationMixer(gltf.scene);
+
+            // Play first bundled animation (breathing) if available.
             if (gltf.animations.length > 0) {
-              mixer = new THREE.AnimationMixer(gltf.scene);
               breathingAction = mixer.clipAction(gltf.animations[0]);
               breathingAction.play();
             } else {
@@ -399,15 +404,20 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
 
           // ─── Body clip crossfade (breathing ↔ walking) ─────────
           // bodyPoseRef.current.clip drives the mixer weight. Slow lerp
-          // (~0.05 per frame ≈ 1s @ 60fps) gives a smooth gait transition
-          // rather than an abrupt swap. Both actions must be present —
-          // the walk clip is optional, so guard on both refs.
-          if (walkAction && breathingAction) {
+          // (~0.05 per frame ≈ 1s @ 60fps) for smooth gait transitions.
+          // Three branches:
+          //  - walk + breathing → crossfade between them
+          //  - walk only (Avaturn ships no bundled animations) → toggle
+          //    walk weight directly between 0 (still) and 1 (walking)
+          //  - breathing only → leave it at full weight
+          if (walkAction) {
             const targetWalkWeight = bodyPoseRef.current.clip === "walking" ? 1 : 0;
             const currentWeight = walkAction.getEffectiveWeight();
             const newWeight = currentWeight + (targetWalkWeight - currentWeight) * 0.05;
             walkAction.setEffectiveWeight(newWeight);
-            breathingAction.setEffectiveWeight(1 - newWeight);
+            if (breathingAction) {
+              breathingAction.setEffectiveWeight(1 - newWeight);
+            }
           }
 
           // ─── Camera lerp ─────────────────────────────────────────

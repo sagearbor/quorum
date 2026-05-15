@@ -292,7 +292,11 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
                 walkClip = await new Promise<any>((resolve, reject) => {
                   loader.load("/animations/walk.glb", resolve, undefined, reject);
                 });
-              } catch {
+                // eslint-disable-next-line no-console
+                console.log("[IdleScene] walk.glb loaded");
+              } catch (glbErr) {
+                // eslint-disable-next-line no-console
+                console.log("[IdleScene] walk.glb missing, trying FBX:", glbErr);
                 try {
                   const { FBXLoader } = await import(
                     "three/examples/jsm/loaders/FBXLoader.js"
@@ -301,8 +305,11 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
                   walkClip = await new Promise<any>((resolve, reject) => {
                     fbxLoader.load("/animations/walk.fbx", resolve, undefined, reject);
                   });
-                } catch {
-                  // both missing — falls back to breathing-only
+                  // eslint-disable-next-line no-console
+                  console.log("[IdleScene] walk.fbx loaded:", { animations: walkClip?.animations?.length, hasScene: !!walkClip });
+                } catch (fbxErr) {
+                  // eslint-disable-next-line no-console
+                  console.error("[IdleScene] walk.fbx load FAILED:", fbxErr);
                 }
               }
               if (!cancelled && walkClip?.animations?.length > 0) {

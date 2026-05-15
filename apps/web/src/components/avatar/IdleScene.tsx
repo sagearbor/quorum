@@ -63,12 +63,13 @@ const CAMERA_PRESETS: Record<CameraMode, CameraPreset> = {
     lookAt: [0, 1.45, 0],
     fov: 28,
   },
-  // Head + neck + top of shoulders in frame. Earlier numbers (z=1.15,
-  // FOV 24) zoomed in to just the eyes — too tight. Pulled back + widened.
+  // Head + neck + top of shoulders in frame. Camera position pulled back
+  // ~10% on Z and FOV widened a touch from earlier (z=1.9, fov=30) per
+  // user feedback — Sophie said it was a hair too zoomed in.
   bust: {
-    position: [0, 1.55, 1.9],
+    position: [0, 1.55, 2.1],
     lookAt: [0, 1.5, 0],
-    fov: 30,
+    fov: 32,
   },
 };
 

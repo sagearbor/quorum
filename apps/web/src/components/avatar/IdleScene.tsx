@@ -325,7 +325,11 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
                 // hierarchical track names like `Y_Bot/mixamorig:Hips`).
                 walkClip.animations.forEach((clip: { tracks: Array<{ name: string }> }) => {
                   clip.tracks.forEach((track) => {
-                    track.name = track.name.replace(/mixamorig[1-9]?:/g, "");
+                    // Mixamo's prefix is `mixamorig` and may or may not be
+                    // followed by a colon depending on the FBX export
+                    // pipeline. Sophie's actual download had no colon
+                    // (`mixamorigHips.position`), so the colon is optional.
+                    track.name = track.name.replace(/mixamorig[1-9]?:?/g, "");
                   });
                 });
                 // DEBUG: log skeleton + clip track names so a bone-mismatch

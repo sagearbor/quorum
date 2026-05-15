@@ -63,13 +63,12 @@ const CAMERA_PRESETS: Record<CameraMode, CameraPreset> = {
     lookAt: [0, 1.45, 0],
     fov: 28,
   },
-  // Tighter than torso — head + shoulders only. Tuned so the audience's
-  // eye lands on the avatar's eyes on a 60-inch projector at expo distance.
-  // Final values to be tuned during dev QA against an actual GLB.
+  // Head + neck + top of shoulders in frame. Earlier numbers (z=1.15,
+  // FOV 24) zoomed in to just the eyes — too tight. Pulled back + widened.
   bust: {
-    position: [0, 1.62, 1.15],
-    lookAt: [0, 1.6, 0],
-    fov: 24,
+    position: [0, 1.55, 1.9],
+    lookAt: [0, 1.5, 0],
+    fov: 30,
   },
 };
 
@@ -308,15 +307,28 @@ export const IdleScene = forwardRef<IdleSceneHandle, IdleSceneProps>(
               }
               if (!cancelled && walkClip?.animations?.length > 0) {
                 // Strip Mixamo's `mixamorig:` bone-name prefix from each
-                // track so the clip binds to standard humanoid bones (Hips,
-                // Spine, etc.) on the Avaturn / RPM skeleton. Without this,
-                // AnimationMixer can't find any matching bones and the clip
-                // plays silently — the legs never move.
+                // track so the clip binds to standard humanoid bones on the
+                // Avaturn / RPM skeleton. Use /g so the prefix is stripped
+                // even when it appears mid-path (some Mixamo exports use
+                // hierarchical track names like `Y_Bot/mixamorig:Hips`).
                 walkClip.animations.forEach((clip: { tracks: Array<{ name: string }> }) => {
                   clip.tracks.forEach((track) => {
-                    track.name = track.name.replace(/^mixamorig[1-9]?:/, "");
+                    track.name = track.name.replace(/mixamorig[1-9]?:/g, "");
                   });
                 });
+                // DEBUG: log skeleton + clip track names so a bone-mismatch
+                // is visible in the browser console. Remove once verified.
+                // eslint-disable-next-line no-console
+                console.log("[IdleScene] walk clip tracks:", walkClip.animations[0].tracks.map((t: { name: string }) => t.name).slice(0, 20));
+                if (avatarRoot) {
+                  const boneNames: string[] = [];
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  avatarRoot.traverse((child: any) => {
+                    if (child.isBone) boneNames.push(child.name);
+                  });
+                  // eslint-disable-next-line no-console
+                  console.log("[IdleScene] avatar skeleton bones:", boneNames.slice(0, 30));
+                }
                 walkAction = mixer.clipAction(walkClip.animations[0]);
                 walkAction.setEffectiveWeight(0); // start hidden — breathing leads
                 walkAction.play();

@@ -1125,6 +1125,30 @@ async def ask_facilitator(quorum_id: str, station_id: str, body: AskRequest):
             reason="llm_unavailable",
         )
 
+    # Recompute health score so the dashboard chart moves on every chat turn
+    # too — not just on structured-fields /contribute calls.  Without this,
+    # human-driven conversation never UPDATEs the quorums row, useQuorumLive
+    # never appends a new history point, and the line stays flat unless
+    # autonomy mode happens to bump some other column on the same row.
+    try:
+        roles_data = db.table("roles").select("*").eq("quorum_id", quorum_id).execute()
+        contribs_data = db.table("contributions").select("*").eq("quorum_id", quorum_id).execute()
+        artifact_result = db.table("artifacts").select("*").eq("quorum_id", quorum_id).execute()
+        artifact = artifact_result.data[0] if artifact_result.data else None
+        health_score, metrics = calculate_health_score(
+            roles_data.data, contribs_data.data, artifact,
+        )
+        db.table("quorums").update({"heat_score": health_score}).eq("id", quorum_id).execute()
+        await manager.broadcast(quorum_id, {
+            "type": "health_update",
+            "data": {"score": health_score, "metrics": metrics},
+        })
+    except Exception:
+        logger.warning(
+            "ask_facilitator: health recompute failed quorum=%s",
+            quorum_id, exc_info=True,
+        )
+
     # Broadcast so other listeners see the exchange
     await manager.broadcast(quorum_id, {
         "type": "facilitator_reply",

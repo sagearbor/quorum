@@ -362,7 +362,10 @@ export default function EventPage() {
                         // hardcoded "anon-local" user_token.  /pair then
                         // redirects to the station page (or to /agent in 10.5).
                         const stationLabel = `station-${i + 1}`;
-                        const url = `${baseUrl}/pair?qr=${quorum.id}&st=${stationLabel}`;
+                        // ev=<slug> lets /pair redirect to the full avatar
+                        // route at /event/<slug>/quorum/<id>?station=N instead
+                        // of the text-only /agent route.
+                        const url = `${baseUrl}/pair?qr=${quorum.id}&st=${stationLabel}&ev=${slug}`;
                         return (
                           <a
                             key={i}

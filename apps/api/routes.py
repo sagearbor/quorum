@@ -8,6 +8,7 @@ import logging
 import os
 import pathlib
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 
@@ -162,16 +163,56 @@ def _db_contribs_to_llm(contribs_data: list[dict]) -> list[LLMContribution]:
 # GET /events
 # ---------------------------------------------------------------------------
 @router.get("/events")
-async def list_events():
+async def list_events(include_archived: bool = False):
     """List all events, newest first.
 
-    Returns a flat list of event rows — clients use the slug to navigate to
-    /event/{slug}.  No quorum data is embedded here; the event page fetches
-    quorums separately.
+    Archived events are hidden by default — pass include_archived=true to surface
+    them (used by the architect's 'Show archived' toggle).  Clients use the slug
+    to navigate to /event/{slug}.  No quorum data is embedded here.
     """
     db = get_supabase()
-    result = db.table("events").select("*").order("created_at", desc=True).execute()
+    query = db.table("events").select("*").order("created_at", desc=True)
+    if not include_archived:
+        query = query.is_("archived_at", "null")
+    result = query.execute()
     return result.data or []
+
+
+# ---------------------------------------------------------------------------
+# PATCH /events/{event_id}  — archive / unarchive
+# ---------------------------------------------------------------------------
+@router.patch("/events/{event_id}")
+async def update_event(event_id: str, body: dict):
+    """Update an event's archive state.
+
+    Body: {"archived": true}  → sets archived_at = now()
+          {"archived": false} → clears archived_at
+    """
+    db = get_supabase()
+    if "archived" not in body:
+        raise HTTPException(status_code=400, detail="Missing 'archived' field")
+    archived = bool(body["archived"])
+    patch = {"archived_at": datetime.now(timezone.utc).isoformat() if archived else None}
+    result = db.table("events").update(patch).eq("id", event_id).execute()
+    if not result.data:
+        raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
+    return result.data[0]
+
+
+# ---------------------------------------------------------------------------
+# DELETE /events/{event_id}  — hard delete (cascades through quorums, etc.)
+# ---------------------------------------------------------------------------
+@router.delete("/events/{event_id}", status_code=204)
+async def delete_event(event_id: str):
+    """Hard-delete an event.  All quorums, roles, contributions, and related
+    rows cascade-delete via FK constraints.  Use archive (PATCH) for soft delete.
+    """
+    db = get_supabase()
+    existing = db.table("events").select("id").eq("id", event_id).maybe_single().execute()
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail=f"Event {event_id} not found")
+    db.table("events").delete().eq("id", event_id).execute()
+    return None
 
 
 # ---------------------------------------------------------------------------

@@ -3,10 +3,12 @@
 /**
  * /pair — QR-landing page.
  *
- * The station QR codes point here (?qr=<quorum_id>&st=<station_label>).
+ * The station QR codes point here (?qr=<quorum_id>&st=<station_label>&ev=<event_slug>).
  * On mount we POST /sessions/participant to mint a phone participant_id,
  * stash it in sessionStorage as `quorum.participant`, then redirect to the
- * mobile agent route at `/agent/<role_id>?ds=<participant_id>`.
+ * full avatar quorum route at `/event/<slug>/quorum/<id>?station=N`.
+ * Older QR codes (printed before ev= was added) omit ev — those fall back to
+ * the text-only `/agent/<role_id>?ds=<participant_id>` mobile route.
  *
  * Role selection: the QR code does NOT carry a role_id, and the
  * `/sessions/participant` endpoint does not yet echo one back.  As a stop-gap
@@ -77,6 +79,7 @@ function PairPageInner() {
   const searchParams = useSearchParams();
   const quorumId = searchParams.get("qr");
   const stationLabel = searchParams.get("st") ?? null;
+  const eventSlug = searchParams.get("ev") ?? null;
 
   const [status, setStatus] = useState<PairStatus>({ kind: "loading" });
 
@@ -155,11 +158,24 @@ function PairPageInner() {
 
         setStatus({ kind: "ok", displayName: data.display_name });
 
-        router.replace(
-          `/agent/${encodeURIComponent(roleId)}?ds=${encodeURIComponent(
-            data.participant_id,
-          )}`,
-        );
+        // Prefer the full avatar route when ev=<slug> is in the QR.  Older
+        // printed QR codes don't include ev — those keep the legacy /agent
+        // text-only redirect so existing handouts still work.
+        if (eventSlug) {
+          const stationNum = stationLabel?.match(/(\d+)/)?.[1];
+          const stationQuery = stationNum ? `?station=${stationNum}` : "";
+          router.replace(
+            `/event/${encodeURIComponent(
+              eventSlug,
+            )}/quorum/${encodeURIComponent(quorumId)}${stationQuery}`,
+          );
+        } else {
+          router.replace(
+            `/agent/${encodeURIComponent(roleId)}?ds=${encodeURIComponent(
+              data.participant_id,
+            )}`,
+          );
+        }
       } catch {
         if (!cancelled) {
           setStatus({
@@ -179,7 +195,7 @@ function PairPageInner() {
     // refiring the mint on each render in tests where the mock returns a new
     // object identity.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [quorumId, stationLabel]);
+  }, [quorumId, stationLabel, eventSlug]);
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 dark:bg-slate-900 p-6">

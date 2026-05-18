@@ -77,6 +77,25 @@ export function useStationConversation(
       setMessages((prev) => {
         // Deduplicate — Supabase realtime can fire after an optimistic insert
         if (prev.some((m) => m.id === msg.id)) return prev;
+
+        // The optimistic message uses id `optimistic-${Date.now()}` but the
+        // realtime echo arrives with the real DB UUID. Match by (role, content)
+        // and replace the optimistic placeholder in place so the user doesn't
+        // see the same message twice.
+        const incomingContent = (msg.content ?? "").trim();
+        const optimisticIdx = prev.findIndex(
+          (m) =>
+            typeof m.id === "string" &&
+            m.id.startsWith("optimistic-") &&
+            m.role === msg.role &&
+            (m.content ?? "").trim() === incomingContent
+        );
+        if (optimisticIdx !== -1) {
+          const next = prev.slice();
+          next[optimisticIdx] = msg;
+          return next;
+        }
+
         return [...prev, msg];
       });
     });
@@ -169,6 +188,24 @@ export function useStationConversation(
     };
     setMessages((prev) => {
       if (prev.some((m) => m.id === assistantMsg.id)) return prev;
+
+      // If an optimistic assistant message with matching content exists (e.g.
+      // appended speculatively before the real message_id arrived), replace it
+      // in place instead of producing a duplicate row.
+      const incomingContent = (assistantMsg.content ?? "").trim();
+      const optimisticIdx = prev.findIndex(
+        (m) =>
+          typeof m.id === "string" &&
+          m.id.startsWith("optimistic-") &&
+          m.role === assistantMsg.role &&
+          (m.content ?? "").trim() === incomingContent
+      );
+      if (optimisticIdx !== -1) {
+        const next = prev.slice();
+        next[optimisticIdx] = assistantMsg;
+        return next;
+      }
+
       return [...prev, assistantMsg];
     });
   }, [quorumId, roleId, stationId]);

@@ -94,11 +94,15 @@ class TierSettings:
 _TIER_DEFAULTS: dict[LLMTier, TierSettings] = {
     LLMTier.CONFLICT: TierSettings(temperature=0.3, max_tokens=2048),
     LLMTier.SYNTHESIS: TierSettings(temperature=0.7, max_tokens=4096),
-    LLMTier.AGENT_CHAT: TierSettings(temperature=0.4, max_tokens=1024),
+    # AGENT_CHAT and AGENT_RESPOND bumped to 4096 (was 1024 / 2048): long
+    # agent persona responses (300-500+ words with a trailing `[tags: ...]`
+    # block) were being truncated mid-sentence, dropping the tag block and
+    # falling through to keyword extraction that emitted junk tags.
+    LLMTier.AGENT_CHAT: TierSettings(temperature=0.4, max_tokens=4096),
     LLMTier.AGENT_REASON: TierSettings(temperature=0.7, max_tokens=4096),
     # AGENT_RESPOND is GPT-5/reasoning: temperature is ignored, but we still
     # carry a value for parity with `chat()` callers.
-    LLMTier.AGENT_RESPOND: TierSettings(temperature=0.4, max_tokens=2048),
+    LLMTier.AGENT_RESPOND: TierSettings(temperature=0.4, max_tokens=4096),
 }
 
 

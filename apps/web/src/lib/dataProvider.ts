@@ -619,11 +619,14 @@ export function subscribeToStationMessages(
     return () => {};
   }
 
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let channel: any = null;
-
-  import("./supabase").then(({ supabase }) => {
-    channel = supabase
+  // The dynamic import resolves asynchronously, so we capture the
+  // channel-creation promise itself. The cleanup function awaits it before
+  // calling removeChannel — otherwise a fast unmount (StrictMode, route
+  // change before the import settles) leaks the subscription.
+  let unsubscribed = false;
+  const channelPromise = import("./supabase").then(({ supabase }) => {
+    if (unsubscribed) return null;
+    return supabase
       .channel(`station-messages:${quorumId}:${stationId}`)
       .on(
         "postgres_changes",
@@ -644,11 +647,14 @@ export function subscribeToStationMessages(
   });
 
   return () => {
-    if (channel) {
-      import("./supabase").then(({ supabase }) => {
-        supabase.removeChannel(channel!);
-      });
-    }
+    unsubscribed = true;
+    channelPromise.then((channel) => {
+      if (channel) {
+        import("./supabase").then(({ supabase }) => {
+          supabase.removeChannel(channel);
+        });
+      }
+    });
   };
 }
 

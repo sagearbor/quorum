@@ -52,13 +52,15 @@ export interface EventSummary {
   created_at: string;
   access_code?: string | null;
   max_active_quorums?: number | null;
+  archived_at?: string | null;
 }
 
 /**
  * Fetch all events (newest first).
  * In demo mode returns two canned events so the UI works offline.
+ * Pass includeArchived=true to surface soft-archived events.
  */
-export async function getEvents(): Promise<EventSummary[]> {
+export async function getEvents(includeArchived = false): Promise<EventSummary[]> {
   if (isDemoMode()) {
     return [
       {
@@ -77,8 +79,9 @@ export async function getEvents(): Promise<EventSummary[]> {
   }
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+  const url = `${apiBase}/events${includeArchived ? "?include_archived=true" : ""}`;
   try {
-    const res = await fetch(`${apiBase}/events`);
+    const res = await fetch(url);
     if (!res.ok) return [];
     const data = await res.json();
     // API returns a list directly

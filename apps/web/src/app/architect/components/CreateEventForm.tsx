@@ -5,6 +5,7 @@ import { useArchitectStore } from "@/store/architect";
 import { slugify } from "@/lib/slugify";
 import { QRCodeSVG } from "qrcode.react";
 import { ArchitectMicButton } from "./ArchitectMicButton";
+import { EventActionButtons } from "@/components/events/EventActionButtons";
 import type { RealtimeToolCall } from "@/hooks/useArchitectRealtime";
 
 interface ExistingEvent {
@@ -45,52 +46,11 @@ export function CreateEventForm() {
     setStep(2);
   }
 
-  async function archiveEvent(event: ExistingEvent, archived: boolean) {
-    try {
-      const res = await fetch(`${apiBase}/events/${event.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ archived }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      setExistingEvents((prev) =>
-        prev.map((e) =>
-          e.id === event.id
-            ? { ...e, archived_at: archived ? new Date().toISOString() : null }
-            : e,
-        ),
-      );
-    } catch {
-      // Non-fatal: revert by re-fetching
-      fetch(`${apiBase}/events${showArchived ? "?include_archived=true" : ""}`)
-        .then((r) => (r.ok ? r.json() : []))
-        .then((data) => setExistingEvents(data ?? []))
-        .catch(() => {});
-    }
-  }
-
-  async function deleteEvent(event: ExistingEvent) {
-    if (
-      typeof window !== "undefined" &&
-      !window.confirm(
-        `Permanently delete "${event.name}"?\n\nAll quorums, contributions, and artifacts in this event will also be deleted. This cannot be undone.`,
-      )
-    ) {
-      return;
-    }
-    try {
-      const res = await fetch(`${apiBase}/events/${event.id}`, {
-        method: "DELETE",
-      });
-      if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
-      setExistingEvents((prev) => prev.filter((e) => e.id !== event.id));
-    } catch {
-      // Re-fetch to recover from any partial state
-      fetch(`${apiBase}/events${showArchived ? "?include_archived=true" : ""}`)
-        .then((r) => (r.ok ? r.json() : []))
-        .then((data) => setExistingEvents(data ?? []))
-        .catch(() => {});
-    }
+  function refetchEvents() {
+    fetch(`${apiBase}/events${showArchived ? "?include_archived=true" : ""}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => setExistingEvents(data ?? []))
+      .catch(() => {});
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -239,34 +199,23 @@ export function CreateEventForm() {
                       {new Date(ev.created_at).toLocaleDateString()}
                     </span>
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => archiveEvent(ev, !isArchived)}
-                    aria-label={isArchived ? `Unarchive ${ev.name}` : `Archive ${ev.name}`}
-                    title={isArchived ? "Unarchive" : "Archive"}
-                    className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors flex-shrink-0"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="21 8 21 21 3 21 3 8" />
-                      <rect x="1" y="3" width="22" height="5" />
-                      <line x1="10" y1="12" x2="14" y2="12" />
-                    </svg>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => deleteEvent(ev)}
-                    aria-label={`Delete ${ev.name}`}
-                    title="Delete (cascades to all quorums)"
-                    className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors flex-shrink-0"
-                  >
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <polyline points="3 6 5 6 21 6" />
-                      <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6" />
-                      <path d="M10 11v6" />
-                      <path d="M14 11v6" />
-                      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
-                    </svg>
-                  </button>
+                  <EventActionButtons
+                    event={ev}
+                    isArchived={isArchived}
+                    onArchiveChanged={(archived) =>
+                      setExistingEvents((prev) =>
+                        prev.map((e) =>
+                          e.id === ev.id
+                            ? { ...e, archived_at: archived ? new Date().toISOString() : null }
+                            : e,
+                        ),
+                      )
+                    }
+                    onDeleted={() =>
+                      setExistingEvents((prev) => prev.filter((e) => e.id !== ev.id))
+                    }
+                    onError={refetchEvents}
+                  />
                 </div>
               );
             })}

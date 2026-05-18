@@ -72,7 +72,7 @@ def _make_fake_supabase(overrides: dict[str, Any] | None = None) -> MagicMock:
 
         # All other builder methods return self
         for method in (
-            "select", "eq", "neq", "lt", "gt", "gte", "lte",
+            "select", "eq", "neq", "lt", "gt", "gte", "lte", "is_",
             "order", "limit", "insert", "update", "delete",
             "upsert", "filter",
         ):

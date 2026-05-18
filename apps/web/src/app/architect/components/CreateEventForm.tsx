@@ -28,6 +28,9 @@ export function CreateEventForm() {
   const [submitting, setSubmitting] = useState(false);
   const [existingEvents, setExistingEvents] = useState<ExistingEvent[]>([]);
   const [showArchived, setShowArchived] = useState(false);
+  // Existing-events accordion is collapsed by default — the architect is
+  // primarily for *creating* events; picking an existing one is the rare path.
+  const [showExisting, setShowExisting] = useState(false);
 
   const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -144,26 +147,53 @@ export function CreateEventForm() {
     <div className="space-y-6">
       <ArchitectMicButton onFormUpdate={handleVoiceFormUpdate} />
 
-      {/* Existing events — pick one to add more quorums */}
+      {/* Existing events — collapsed by default since the architect is
+          primarily for creating new events.  Click to expand. */}
       {(existingEvents.length > 0 || showArchived) && (
         <div>
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">
+          <button
+            type="button"
+            onClick={() => setShowExisting((v) => !v)}
+            aria-expanded={showExisting}
+            data-testid="existing-events-toggle"
+            className="w-full flex items-center justify-between mb-2 px-1 py-1 -mx-1 rounded hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors"
+          >
+            <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-1.5">
+              <svg
+                width="12"
+                height="12"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={`text-gray-400 transition-transform ${showExisting ? "rotate-90" : ""}`}
+              >
+                <path d="M9 18l6-6-6-6" />
+              </svg>
               Continue with an existing event
-              <span className="ml-2 text-xs font-normal text-gray-400">
+              <span className="ml-1 text-xs font-normal text-gray-400">
                 ({existingEvents.length})
               </span>
             </h3>
-            <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={showArchived}
-                onChange={(e) => setShowArchived(e.target.checked)}
-                className="rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500"
-              />
-              Show archived
-            </label>
-          </div>
+            {showExisting && (
+              <label
+                className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <input
+                  type="checkbox"
+                  checked={showArchived}
+                  onChange={(e) => setShowArchived(e.target.checked)}
+                  className="rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500"
+                />
+                Show archived
+              </label>
+            )}
+          </button>
+          {showExisting && (
+          <>
           <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
             {existingEvents.map((ev) => {
               const isArchived = !!ev.archived_at;
@@ -228,6 +258,8 @@ export function CreateEventForm() {
               <span className="bg-white dark:bg-gray-800 px-3 text-xs text-gray-500 dark:text-gray-400">or create new</span>
             </div>
           </div>
+          </>
+          )}
         </div>
       )}
 

@@ -240,6 +240,9 @@ export default function QuorumPage() {
   const [autonomyLevel, setAutonomyLevel] = useState<number>(0);
   const [showAutonomyControl, setShowAutonomyControl] = useState(false);
   const [showAgentActivity, setShowAgentActivity] = useState(false);
+  // Sticky topic header is collapsed by default — only the title + role + dashboard
+  // are always visible.  Expanded reveals description, station, autonomy slider.
+  const [headerExpanded, setHeaderExpanded] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
   const [contributions, setContributions] = useState<Contribution[]>([]);
   const [currentRole, setCurrentRole] = useState<Role | null>(null);
@@ -602,82 +605,137 @@ export default function QuorumPage() {
           </div>
         )}
 
-        <header className="mb-4">
-          <div className="flex items-start justify-between">
-            <h1 className="text-xl font-bold">
-              {quorumTitle || `Quorum ${quorumId}`}
-            </h1>
-            <Link
-              href={`/display/${slug}`}
-              data-testid="dashboard-link"
-              className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 text-indigo-600 px-3 py-1.5 text-xs font-medium hover:bg-indigo-100 transition-colors flex-shrink-0"
-            >
-              <svg
-                width="14"
-                height="14"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              >
-                <rect x="3" y="3" width="7" height="7" />
-                <rect x="14" y="3" width="7" height="7" />
-                <rect x="3" y="14" width="7" height="7" />
-                <rect x="14" y="14" width="7" height="7" />
-              </svg>
-              Dashboard
-            </Link>
-          </div>
-          {quorumDescription && (
-            <p className="text-sm text-gray-600 dark:text-gray-300 mt-1">{quorumDescription}</p>
-          )}
-          {station && (
-            <span className="mt-2 inline-flex items-center gap-1 rounded bg-indigo-50 px-2 py-0.5 text-indigo-700 text-xs font-medium">
-              Station {station}
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={() => setShowAutonomyControl((v) => !v)}
-            className="mt-2 inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
-          >
-            Autonomy: {autonomyLevel.toFixed(1)}
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d={showAutonomyControl ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
-            </svg>
-          </button>
-          {showAutonomyControl && (
-            <div className="mt-2 p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
-              <div className="flex items-center gap-3">
-                <span className="text-xs text-gray-600 dark:text-gray-300 w-16">Human</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="1"
-                  step="0.1"
-                  value={autonomyLevel}
-                  onChange={async (e) => {
-                    const val = parseFloat(e.target.value);
-                    setAutonomyLevel(val);
-                    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-                    await fetch(`${apiBase}/quorums/${quorumId}/autonomy`, {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ autonomy_level: val }),
-                    }).catch(() => {});
+        <header
+          data-testid="quorum-header"
+          className="sticky top-0 z-30 -mx-4 sm:-mx-6 px-4 sm:px-6 mb-4 bg-white/95 dark:bg-gray-900/95 backdrop-blur supports-[backdrop-filter]:bg-white/75 supports-[backdrop-filter]:dark:bg-gray-900/75 border-b border-gray-200 dark:border-gray-700"
+        >
+          {/* Always-visible row: topic title + current role + dashboard + expand chevron */}
+          <div className="flex items-center justify-between gap-2 py-2.5">
+            <div className="flex items-center gap-2 min-w-0">
+              <h1 className="text-base sm:text-lg font-bold truncate text-gray-900 dark:text-gray-100">
+                {quorumTitle || `Quorum ${quorumId}`}
+              </h1>
+              {currentRole && (
+                <span
+                  className="text-[10px] sm:text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap"
+                  style={{
+                    backgroundColor: currentRole.color
+                      ? `${currentRole.color}20`
+                      : "#e0e7ff",
+                    color: currentRole.color ?? "#4f46e5",
                   }}
-                  className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
-                />
-                <span className="text-xs text-gray-600 dark:text-gray-300 w-16 text-right">Autonomous</span>
-                <span className="text-sm font-semibold text-blue-600 w-8 text-right tabular-nums">
-                  {autonomyLevel.toFixed(1)}
+                >
+                  {currentRole.name}
                 </span>
+              )}
+              {station && (
+                <span className="text-[10px] sm:text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap bg-indigo-50 text-indigo-700">
+                  Station {station}
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1.5 flex-shrink-0">
+              <Link
+                href={`/display/${slug}`}
+                data-testid="dashboard-link"
+                className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-50 text-indigo-600 px-2.5 py-1.5 text-xs font-medium hover:bg-indigo-100 transition-colors"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <rect x="3" y="3" width="7" height="7" />
+                  <rect x="14" y="3" width="7" height="7" />
+                  <rect x="3" y="14" width="7" height="7" />
+                  <rect x="14" y="14" width="7" height="7" />
+                </svg>
+                <span className="hidden sm:inline">Dashboard</span>
+              </Link>
+              <button
+                type="button"
+                data-testid="header-expand-toggle"
+                onClick={() => setHeaderExpanded((v) => !v)}
+                aria-expanded={headerExpanded}
+                aria-label={headerExpanded ? "Hide topic details" : "Show topic details"}
+                title={headerExpanded ? "Hide topic details" : "Show topic details"}
+                className="p-1.5 rounded-lg text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+              >
+                <svg
+                  width="14"
+                  height="14"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  className={`transition-transform ${headerExpanded ? "rotate-180" : ""}`}
+                >
+                  <path d="M6 9l6 6 6-6" />
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          {/* Expanded details — description, station, autonomy. Hidden by default
+              so the sticky bar stays small. */}
+          {headerExpanded && (
+            <div className="pb-3 space-y-2">
+              {quorumDescription && (
+                <p className="text-sm text-gray-600 dark:text-gray-300">
+                  {quorumDescription}
+                </p>
+              )}
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowAutonomyControl((v) => !v)}
+                  className="inline-flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                >
+                  Autonomy: {autonomyLevel.toFixed(1)}
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d={showAutonomyControl ? "M18 15l-6-6-6 6" : "M6 9l6 6 6-6"} />
+                  </svg>
+                </button>
               </div>
-              <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">
-                Adjust how proactively agents communicate. Changes take effect immediately.
-              </p>
+              {showAutonomyControl && (
+                <div className="p-3 bg-gray-50 dark:bg-gray-900 rounded-lg border border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xs text-gray-600 dark:text-gray-300 w-16">Human</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="1"
+                      step="0.1"
+                      value={autonomyLevel}
+                      onChange={async (e) => {
+                        const val = parseFloat(e.target.value);
+                        setAutonomyLevel(val);
+                        const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+                        await fetch(`${apiBase}/quorums/${quorumId}/autonomy`, {
+                          method: "PATCH",
+                          headers: { "Content-Type": "application/json" },
+                          body: JSON.stringify({ autonomy_level: val }),
+                        }).catch(() => {});
+                      }}
+                      className="flex-1 h-1.5 bg-gray-200 rounded-lg appearance-none cursor-pointer accent-blue-600"
+                    />
+                    <span className="text-xs text-gray-600 dark:text-gray-300 w-16 text-right">Autonomous</span>
+                    <span className="text-sm font-semibold text-blue-600 w-8 text-right tabular-nums">
+                      {autonomyLevel.toFixed(1)}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">
+                    Adjust how proactively agents communicate. Changes take effect immediately.
+                  </p>
+                </div>
+              )}
             </div>
           )}
         </header>

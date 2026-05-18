@@ -28,6 +28,10 @@
 
 import { useMemo } from "react";
 import type { AffinityNode, AffinityEdge } from "@quorum/types/src/dashboard";
+import { DashboardInfo } from "./DashboardInfo";
+
+const AGENT_AFFINITY_BLURB =
+  "**Agent Affinity Graph.** Each node is an AI role; edges connect roles that share `domain_tags` (the keywords each persona is tagged with). Tightly clustered roles tend to agree by default; isolated roles bring outsider perspectives. The graph is recomputed as new contributions add tags to the quorum's vocabulary.";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -134,7 +138,10 @@ export function AgentAffinityGraph({
     >
       {/* Header */}
       <div className="flex items-center justify-between px-2 pb-2">
-        <h3 className="text-sm font-semibold text-white/90">Agent Affinity</h3>
+        <div className="flex items-center gap-1.5">
+          <h3 className="text-sm font-semibold text-white/90">Agent Affinity</h3>
+          <DashboardInfo blurb={AGENT_AFFINITY_BLURB} />
+        </div>
         <div className="flex items-center gap-3 text-[10px] text-white/40">
           <span className="flex items-center gap-1">
             <span

@@ -48,6 +48,7 @@ export function DashboardCarousel({
 
   const [slideIndex, setSlideIndex] = useState(0);
   const [activeInterval, setActiveInterval] = useState(intervalMs);
+  const [paused, setPaused] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Build panel pairs based on mode
@@ -58,14 +59,47 @@ export function DashboardCarousel({
     setSlideIndex((prev) => (prev + 1) % Math.max(totalSlides, 1));
   }, [totalSlides]);
 
-  // Auto-advance timer
+  const retreat = useCallback(() => {
+    setSlideIndex((prev) => (prev - 1 + Math.max(totalSlides, 1)) % Math.max(totalSlides, 1));
+  }, [totalSlides]);
+
+  // Auto-advance timer — uses activeInterval so the pill selector takes effect.
   useEffect(() => {
     if (totalSlides <= 1) return;
-    timerRef.current = setInterval(advance, intervalMs);
+    if (paused) return;
+    timerRef.current = setInterval(advance, activeInterval);
     return () => {
       if (timerRef.current) clearInterval(timerRef.current);
     };
-  }, [advance, intervalMs, totalSlides]);
+  }, [advance, activeInterval, totalSlides, paused]);
+
+  // Keyboard controls — Space toggles paused, Arrow keys navigate.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (
+          tag === "INPUT" ||
+          tag === "TEXTAREA" ||
+          tag === "SELECT" ||
+          target.isContentEditable
+        ) {
+          return;
+        }
+      }
+      if (e.key === " " || e.code === "Space") {
+        e.preventDefault();
+        setPaused((p) => !p);
+      } else if (e.key === "ArrowLeft") {
+        retreat();
+      } else if (e.key === "ArrowRight") {
+        advance();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [advance, retreat]);
 
   const currentPair = panelPairs[slideIndex % Math.max(panelPairs.length, 1)] ?? [];
 
@@ -80,6 +114,34 @@ export function DashboardCarousel({
               {INTERVAL_LABELS[i]}
             </button>
           ))}
+          <span className="mx-1 h-3 w-px bg-white/10" />
+          <button
+            type="button"
+            onClick={retreat}
+            disabled={totalSlides <= 1}
+            aria-label="Previous slide"
+            className="text-xs px-2 py-0.5 rounded text-white/30 hover:bg-white/10 hover:text-white/70 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-white/30"
+          >
+            ◀
+          </button>
+          <button
+            type="button"
+            onClick={() => setPaused((p) => !p)}
+            aria-label={paused ? "Play" : "Pause"}
+            aria-pressed={paused}
+            className={`text-xs px-2 py-0.5 rounded transition-colors ${paused ? "bg-white/20 text-white/70" : "text-white/30 hover:bg-white/10 hover:text-white/70"}`}
+          >
+            {paused ? "▶︎" : "❚❚"}
+          </button>
+          <button
+            type="button"
+            onClick={advance}
+            disabled={totalSlides <= 1}
+            aria-label="Next slide"
+            className="text-xs px-2 py-0.5 rounded text-white/30 hover:bg-white/10 hover:text-white/70 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-white/30"
+          >
+            ▶
+          </button>
         </div>
         <span className="text-xs text-white/30 uppercase tracking-widest">
           {mode === "multi-view" ? "Multi-View" : "Multi-Quorum"} — {eventSlug}

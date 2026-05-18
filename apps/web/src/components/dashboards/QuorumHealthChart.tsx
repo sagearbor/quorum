@@ -13,7 +13,11 @@ import {
   ResponsiveContainer,
 } from "recharts";
 import { useQuorumLive } from "@/hooks/useQuorumLive";
+import { DashboardInfo } from "./DashboardInfo";
 import type { HealthSnapshot } from "@quorum/types";
+
+const QUORUM_HEALTH_BLURB =
+  "**Quorum Health Chart.** A live snapshot of how close this quorum is to producing its decision artifact. The main line ('score') is a composite of role coverage, completion, consensus, and conflict resolution — higher is better. It rises when participants contribute through any role, and steps up further when the AI facilitator runs a turn. The dotted target line is the threshold at which the quorum is ready to finalize.";
 
 interface QuorumHealthChartProps {
   quorumId: string;
@@ -77,7 +81,10 @@ export function QuorumHealthChart({
       {/* Header */}
       <div className="flex items-center justify-between px-2 mb-2">
         <div className="flex items-center gap-3">
-          <h3 className="text-sm font-semibold text-white/90">Quorum Health</h3>
+          <div className="flex items-center gap-1.5">
+            <h3 className="text-sm font-semibold text-white/90">Quorum Health</h3>
+            <DashboardInfo blurb={QUORUM_HEALTH_BLURB} />
+          </div>
           <div
             className="transition-all duration-700 ease-out"
           >

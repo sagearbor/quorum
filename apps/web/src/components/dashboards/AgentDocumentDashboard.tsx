@@ -29,6 +29,10 @@ import {
   Cell,
 } from "recharts";
 import { useAgentDocuments } from "@/hooks/useAgentDocuments";
+import { DashboardInfo } from "./DashboardInfo";
+
+const AGENT_DOCUMENTS_BLURB =
+  "**Agent Documents.** The reference material the AI agents are reading from for this quorum — protocols, briefs, prior decisions. Each agent's persona is conditioned by the documents listed under its role. Add or replace documents to change what evidence the agents reason over.";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -601,9 +605,12 @@ export function AgentDocumentDashboard({
     >
       {/* Header */}
       <div className="flex items-center justify-between px-1">
-        <h3 className="text-sm font-semibold text-white/90">
-          Agent Documents
-        </h3>
+        <div className="flex items-center gap-1.5">
+          <h3 className="text-sm font-semibold text-white/90">
+            Agent Documents
+          </h3>
+          <DashboardInfo blurb={AGENT_DOCUMENTS_BLURB} />
+        </div>
         <span className="text-xs text-white/40">
           {activeDocuments.length} active
         </span>

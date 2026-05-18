@@ -477,8 +477,12 @@ async def contribute(quorum_id: str, body: ContributeRequest):
         roles_data.data, all_contribs.data, artifact,
     )
 
-    # Save health score to quorum
-    db.table("quorums").update({"heat_score": health_score}).eq("id", quorum_id).execute()
+    # Save health score + per-metric breakdown to quorum.  The `metrics`
+    # column feeds the frontend's Postgres realtime subscription so the
+    # secondary lines on the Quorum Health Chart update live too.
+    db.table("quorums").update(
+        {"heat_score": health_score, "metrics": metrics}
+    ).eq("id", quorum_id).execute()
 
     # Broadcast health update
     await manager.broadcast(quorum_id, {
@@ -1138,7 +1142,9 @@ async def ask_facilitator(quorum_id: str, station_id: str, body: AskRequest):
         health_score, metrics = calculate_health_score(
             roles_data.data, contribs_data.data, artifact,
         )
-        db.table("quorums").update({"heat_score": health_score}).eq("id", quorum_id).execute()
+        db.table("quorums").update(
+            {"heat_score": health_score, "metrics": metrics}
+        ).eq("id", quorum_id).execute()
         await manager.broadcast(quorum_id, {
             "type": "health_update",
             "data": {"score": health_score, "metrics": metrics},

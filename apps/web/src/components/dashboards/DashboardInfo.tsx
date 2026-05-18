@@ -38,8 +38,44 @@ export function DashboardInfo({ blurb, className = "" }: DashboardInfoProps) {
     };
   }, [open]);
 
-  // Render `**bold**` segments as <strong>; everything else as text.
-  const segments = blurb.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+  // Render inline `**bold**` segments as <strong>; plain text otherwise.
+  function renderInline(text: string, lineKey: number) {
+    const segments = text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+    return segments.map((seg, i) => {
+      if (seg.startsWith("**") && seg.endsWith("**")) {
+        return (
+          <strong key={`${lineKey}-${i}`} className="font-semibold text-white">
+            {seg.slice(2, -2)}
+          </strong>
+        );
+      }
+      return <span key={`${lineKey}-${i}`}>{seg}</span>;
+    });
+  }
+
+  // Split blurb into lines.  Lines that start with "- " become bullets;
+  // everything else renders as a paragraph.  Adjacent bullets are grouped
+  // into a single <ul> so spacing looks right.
+  const lines = blurb.split(/\n/);
+  const blocks: Array<
+    | { type: "p"; text: string }
+    | { type: "ul"; items: string[] }
+  > = [];
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    if (!line) continue;
+    if (line.startsWith("- ")) {
+      const item = line.slice(2);
+      const last = blocks[blocks.length - 1];
+      if (last && last.type === "ul") {
+        last.items.push(item);
+      } else {
+        blocks.push({ type: "ul", items: [item] });
+      }
+    } else {
+      blocks.push({ type: "p", text: line });
+    }
+  }
 
   return (
     <span ref={containerRef} className={`relative inline-flex ${className}`}>
@@ -55,17 +91,23 @@ export function DashboardInfo({ blurb, className = "" }: DashboardInfoProps) {
       {open && (
         <div
           role="dialog"
-          className="absolute right-0 top-6 z-50 w-72 rounded-md border border-white/10 bg-black/90 p-3 text-xs leading-relaxed text-white/80 shadow-xl backdrop-blur-md"
+          className="absolute right-0 top-6 z-50 w-80 rounded-md border border-white/10 bg-black/90 p-3 text-xs leading-relaxed text-white/80 shadow-xl backdrop-blur-md"
         >
-          {segments.map((seg, i) => {
-            if (seg.startsWith("**") && seg.endsWith("**")) {
+          {blocks.map((block, bi) => {
+            if (block.type === "p") {
               return (
-                <strong key={i} className="font-semibold text-white">
-                  {seg.slice(2, -2)}
-                </strong>
+                <p key={bi} className={bi > 0 ? "mt-2" : ""}>
+                  {renderInline(block.text, bi)}
+                </p>
               );
             }
-            return <span key={i}>{seg}</span>;
+            return (
+              <ul key={bi} className="mt-2 space-y-1 list-disc pl-4 marker:text-white/40">
+                {block.items.map((item, ii) => (
+                  <li key={ii}>{renderInline(item, bi * 100 + ii)}</li>
+                ))}
+              </ul>
+            );
           })}
         </div>
       )}

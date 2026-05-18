@@ -120,13 +120,20 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
               if (cancelled) return;
               const heatScore = payload.new.heat_score ?? 0;
               setState((prev) => {
+                // The API now writes the full HealthMetrics dict to the new
+                // `metrics` jsonb column alongside `heat_score`.  If present
+                // we adopt it so the secondary lines on the Quorum Health
+                // Chart update live; otherwise we fall back to the prior
+                // metrics so existing rows without the column still work.
+                const incomingMetrics: HealthMetrics = payload.new.metrics ?? prev.metrics;
                 const snapshot: HealthSnapshot = {
                   timestamp: Date.now(),
                   score: heatScore,
-                  metrics: prev.metrics,
+                  metrics: incomingMetrics,
                 };
                 return {
                   ...prev,
+                  metrics: incomingMetrics,
                   healthScore: heatScore,
                   history: [...prev.history.slice(-59), snapshot],
                 };

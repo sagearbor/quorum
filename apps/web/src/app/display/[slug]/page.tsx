@@ -1,6 +1,7 @@
 "use client";
 
 import { useParams } from "next/navigation";
+import Link from "next/link";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { DashboardCarousel } from "@/components/carousel/DashboardCarousel";
 import { PresenceDots } from "@/components/PresenceDots";
@@ -134,7 +135,14 @@ export default function DisplayPage() {
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
             LIVE
           </span>
-          <span className="text-xs text-white/40">PROJECTION MODE</span>
+          <Link
+            href={`/event/${slug}`}
+            title="Back to event"
+            className="text-xs text-white/40 transition-colors hover:text-white/70 inline-flex items-center gap-1 cursor-default hover:cursor-pointer"
+          >
+            <span aria-hidden="true">&#8617;</span>
+            PROJECTION MODE
+          </Link>
         </div>
       </header>
 

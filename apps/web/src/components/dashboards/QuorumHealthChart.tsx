@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, type ReactElement } from "react";
 import {
   LineChart,
   Line,
@@ -16,8 +16,13 @@ import { useQuorumLive } from "@/hooks/useQuorumLive";
 import { DashboardInfo } from "./DashboardInfo";
 import type { HealthSnapshot } from "@quorum/types";
 
-const QUORUM_HEALTH_BLURB =
-  "**Quorum Health Chart.** A live snapshot of how close this quorum is to producing its decision artifact. The main line ('score') is a composite of role coverage, completion, consensus, and conflict resolution — higher is better. It rises when participants contribute through any role, and steps up further when the AI facilitator runs a turn. The dotted target line is the threshold at which the quorum is ready to finalize.";
+const QUORUM_HEALTH_BLURB = `**Quorum Health Chart.** A live snapshot of how close this quorum is to producing its decision artifact.
+- **Composite** (blue ●) — overall score 0-100, weighted blend of the lines below.  Higher is better.  The dotted target line is the threshold for the quorum to finalize.
+- **Completion** (cyan ▲) — fraction of expected contributions submitted.
+- **Consensus** (purple ■) — how aligned the roles are; drops when new conflicts are detected.
+- **Role Coverage** (green ◆) — how many of the configured roles have actually contributed.
+- **Critical Path** (orange ★) — health of the dependency chain; drops if a high-authority role is blocked.
+- **Path Clear** (pink ✚) — inverse of blocker count; lower means more decisions are stuck.`;
 
 interface QuorumHealthChartProps {
   quorumId: string;
@@ -27,13 +32,101 @@ interface QuorumHealthChartProps {
   staticScore?: number;
 }
 
-const METRIC_LINES = [
-  { key: "completion_pct", color: "#22d3ee", label: "Completion" },
-  { key: "consensus_score", color: "#a78bfa", label: "Consensus" },
-  { key: "role_coverage_pct", color: "#34d399", label: "Role Coverage" },
-  { key: "critical_path_score", color: "#fb923c", label: "Critical Path" },
-  { key: "blocker_score", color: "#f472b6", label: "Path Clear" },
+type MetricShape = "triangle" | "square" | "diamond" | "star" | "cross";
+
+const METRIC_LINES: ReadonlyArray<{
+  key: "completion_pct" | "consensus_score" | "role_coverage_pct" | "critical_path_score" | "blocker_score";
+  color: string;
+  label: string;
+  shape: MetricShape;
+  glyph: string;
+}> = [
+  { key: "completion_pct", color: "#22d3ee", label: "Completion", shape: "triangle", glyph: "▲" },
+  { key: "consensus_score", color: "#a78bfa", label: "Consensus", shape: "square", glyph: "■" },
+  { key: "role_coverage_pct", color: "#34d399", label: "Role Coverage", shape: "diamond", glyph: "◆" },
+  { key: "critical_path_score", color: "#fb923c", label: "Critical Path", shape: "star", glyph: "★" },
+  { key: "blocker_score", color: "#f472b6", label: "Path Clear", shape: "cross", glyph: "✚" },
 ] as const;
+
+/**
+ * Render a small SVG shape centred at (cx, cy) in the given color.  Used as
+ * the `dot` for each secondary line so series are distinguishable by both
+ * shape and color (Sophie's expo feedback — overlapping lines were
+ * indistinguishable when only color differed).
+ */
+function renderShape(
+  shape: MetricShape,
+  cx: number,
+  cy: number,
+  color: string,
+  size = 5,
+  opacity = 0.85,
+): ReactElement {
+  switch (shape) {
+    case "triangle": {
+      const h = size * 1.1;
+      const pts = `${cx},${cy - h} ${cx - size},${cy + h * 0.6} ${cx + size},${cy + h * 0.6}`;
+      return <polygon points={pts} fill={color} fillOpacity={opacity} />;
+    }
+    case "square":
+      return (
+        <rect
+          x={cx - size}
+          y={cy - size}
+          width={size * 2}
+          height={size * 2}
+          fill={color}
+          fillOpacity={opacity}
+        />
+      );
+    case "diamond": {
+      const pts = `${cx},${cy - size * 1.1} ${cx + size * 1.1},${cy} ${cx},${cy + size * 1.1} ${cx - size * 1.1},${cy}`;
+      return <polygon points={pts} fill={color} fillOpacity={opacity} />;
+    }
+    case "star": {
+      // 5-pointed star
+      const spikes = 5;
+      const outer = size * 1.3;
+      const inner = size * 0.55;
+      let path = "";
+      for (let i = 0; i < spikes * 2; i++) {
+        const r = i % 2 === 0 ? outer : inner;
+        const a = (Math.PI / spikes) * i - Math.PI / 2;
+        const x = cx + Math.cos(a) * r;
+        const y = cy + Math.sin(a) * r;
+        path += (i === 0 ? "M" : "L") + x.toFixed(2) + "," + y.toFixed(2) + " ";
+      }
+      path += "Z";
+      return <path d={path} fill={color} fillOpacity={opacity} />;
+    }
+    case "cross": {
+      // Plus / cross
+      const t = size * 0.55; // thickness
+      const l = size * 1.2;  // arm length
+      return (
+        <g fill={color} fillOpacity={opacity}>
+          <rect x={cx - t / 2} y={cy - l} width={t} height={l * 2} />
+          <rect x={cx - l} y={cy - t / 2} width={l * 2} height={t} />
+        </g>
+      );
+    }
+  }
+}
+
+function makeDot(shape: MetricShape, color: string, size = 4, opacity = 0.85) {
+  // Recharts calls this for every data point.  Return a transparent
+  // placeholder when cx/cy are missing (Recharts does this for the activeDot
+  // slot etc.).  Typed loosely to satisfy Recharts' DotProps union.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const DotComponent = (props: any) => {
+    const cx = typeof props?.cx === "number" ? props.cx : null;
+    const cy = typeof props?.cy === "number" ? props.cy : null;
+    if (cx == null || cy == null) return null;
+    return <g>{renderShape(shape, cx, cy, color, size, opacity)}</g>;
+  };
+  DotComponent.displayName = `MetricDot(${shape})`;
+  return DotComponent;
+}
 
 function formatTime(ts: number): string {
   const d = new Date(ts);
@@ -130,8 +223,26 @@ export function QuorumHealthChart({
             />
             <Legend
               wrapperStyle={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}
-              iconType="circle"
-              iconSize={8}
+              iconSize={10}
+              content={({ payload }) => (
+                <ul className="flex flex-wrap justify-center gap-3 pt-1" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                  {(payload ?? []).map((entry, i) => {
+                    const name = String(entry.value);
+                    const color = entry.color ?? "#fff";
+                    // Composite uses circle, others use shape glyphs from
+                    // METRIC_LINES.  Looking up by label so the legend
+                    // matches whichever order Recharts emits.
+                    const metric = METRIC_LINES.find((m) => m.label === name);
+                    const glyph = metric?.glyph ?? "●";
+                    return (
+                      <li key={i} className="inline-flex items-center gap-1" style={{ color: "rgba(255,255,255,0.65)" }}>
+                        <span aria-hidden="true" style={{ color, fontSize: 13, lineHeight: 1 }}>{glyph}</span>
+                        <span>{name}</span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             />
 
             {/* Threshold reference line */}
@@ -160,18 +271,20 @@ export function QuorumHealthChart({
               animationEasing="ease-out"
             />
 
-            {/* Individual metric lines */}
-            {METRIC_LINES.map(({ key, color, label }) => (
+            {/* Individual metric lines — each with a distinct shape AND
+                colour so overlapping series remain legible (Sophie's
+                expo-feedback fix). */}
+            {METRIC_LINES.map(({ key, color, label, shape }) => (
               <Line
                 key={key}
                 type="monotone"
                 dataKey={key}
                 name={label}
                 stroke={color}
-                strokeWidth={1.2}
-                strokeOpacity={0.6}
-                dot={{ r: 2, fill: color, strokeWidth: 0, fillOpacity: 0.6 }}
-                activeDot={{ r: 4, fill: color, stroke: "#fff", strokeWidth: 1.5 }}
+                strokeWidth={1.6}
+                strokeOpacity={0.85}
+                dot={makeDot(shape, color, 4, 0.85)}
+                activeDot={makeDot(shape, color, 6, 1)}
                 animationDuration={400}
                 animationEasing="ease-out"
               />

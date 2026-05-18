@@ -256,11 +256,16 @@ async def generate_roles(
     # .run_typed.
     if _provider_supports_run_typed(llm_provider):
         try:
+            # 4-6 personas × 300-500 words each easily blows past the CONFLICT
+            # tier's 2048-token default, so override.  Seen in the wild: a
+            # ~80-word multi-paragraph problem statement triggered "Model token
+            # limit (2048) exceeded before any response was generated."
             output = await llm_provider.run_typed(
                 user_content,
                 tier=LLMTier.CONFLICT,
                 output_type=RoleSuggestionList,
                 instructions=_ROLE_GENERATION_INSTRUCTIONS,
+                max_tokens=8192,
             )
             return list(output.roles)
         except ValueError:
@@ -315,6 +320,10 @@ async def _generate_roles_legacy(
     system_prompt = _ROLE_GENERATION_INSTRUCTIONS + "\n\n" + schema_hint
     legacy_user = f"Problem: {problem}\n\nReturn the JSON array now."
     raw = ""
+    # See generate_roles(): 4-6 personas × 300-500 words blow past the
+    # CONFLICT tier's 2048-token default.  respond() ignores max_tokens (no
+    # parameter on the ABC), so the legacy path only gets the bump via chat().
+    role_gen_max_tokens = 8192
     try:
         raw, _ = await llm_provider.respond(
             instructions=system_prompt,
@@ -329,7 +338,9 @@ async def _generate_roles_legacy(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": legacy_user},
         ]
-        raw = await llm_provider.chat(messages, tier=LLMTier.CONFLICT)
+        raw = await llm_provider.chat(
+            messages, tier=LLMTier.CONFLICT, max_tokens=role_gen_max_tokens
+        )
 
     if not raw or not raw.strip():
         logger.warning("LLM returned empty response for role generation. raw=%r", raw)

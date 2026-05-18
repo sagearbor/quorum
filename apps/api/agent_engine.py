@@ -28,6 +28,11 @@ from quorum_llm.affinity import (
     extract_tags_from_text,
     find_relevant_agents,
 )
+from quorum_llm.metric_deltas import (
+    append_rationale,
+    apply_deltas_to_running_total,
+    extract_score_deltas,
+)
 from quorum_llm.conversation import (
     AgentDocumentContext,
     AgentInsightContext,
@@ -597,6 +602,24 @@ async def _process_agent_turn_impl(
     reply_tags = extract_tags_from_text(reply, existing_vocabulary=vocab)
     # Grow the quorum vocabulary with any new tags discovered in this turn
     update_vocabulary(quorum_id, reply_tags)
+
+    # --- 10.5. Parse + apply LLM-driven metric deltas ---
+    # Best-effort: parse the reply for a [scores: ...] block, decay the
+    # cumulative running total stored on quorums.llm_metric_deltas, add the
+    # new turn's deltas, clamp, and persist.  Any DB failure here is silently
+    # dropped — the chat turn completes regardless.
+    try:
+        await _apply_llm_metric_deltas(
+            db=db,
+            quorum_id=quorum_id,
+            reply_text=reply,
+        )
+    except Exception:
+        logger.warning(
+            "agent_engine: LLM-metric-delta application failed for quorum=%s",
+            quorum_id,
+            exc_info=True,
+        )
 
     # --- 11. Persist agent reply ---
     reply_msg_id = str(uuid.uuid4())
@@ -1255,6 +1278,94 @@ def _build_prompt(
         # block see no behavior change (see 11.8 consolidation comment above).
         include_context_ack=True,
     )
+
+
+async def _apply_llm_metric_deltas(
+    *,
+    db,
+    quorum_id: str,
+    reply_text: str,
+) -> tuple[dict[str, float], list[dict]] | None:
+    """Parse + apply LLM-driven metric deltas from one agent reply.
+
+    Reads the current ``quorums.llm_metric_deltas`` accumulator and the
+    ``llm_metric_rationales`` ring buffer, applies the 20%-per-turn decay to
+    the existing values, adds whatever this reply emitted in its
+    ``[scores: ...]`` block, clamps cumulatively to [-50, +50], and writes
+    both columns back.  Also broadcasts a ``health_update`` message so the
+    frontend can refresh the chart immediately.
+
+    Returns ``(new_running_deltas, new_rationales)`` on success, ``None``
+    when no [scores: ...] block was present (so the caller knows nothing
+    changed and can skip the broadcast).
+    """
+    deltas, why = extract_score_deltas(reply_text or "")
+    if not deltas:
+        return None
+
+    # Load current accumulator + ring buffer.
+    try:
+        row = await aexec(
+            db.table("quorums")
+            .select("llm_metric_deltas, llm_metric_rationales")
+            .eq("id", quorum_id)
+            .maybe_single()
+        )
+        existing_data = (row.data if row else None) or {}
+    except Exception:
+        logger.warning(
+            "agent_engine: could not load llm_metric_deltas for quorum=%s",
+            quorum_id,
+            exc_info=True,
+        )
+        existing_data = {}
+
+    existing_running: dict = existing_data.get("llm_metric_deltas") or {}
+    existing_rationales: list = existing_data.get("llm_metric_rationales") or []
+
+    new_running = apply_deltas_to_running_total(existing_running, deltas)
+    new_rationales = append_rationale(
+        existing_rationales,
+        ts=_now_iso(),
+        deltas=deltas,
+        why=why,
+    )
+
+    # Persist.
+    try:
+        await aexec(
+            db.table("quorums").update({
+                "llm_metric_deltas": new_running,
+                "llm_metric_rationales": new_rationales,
+            }).eq("id", quorum_id)
+        )
+    except Exception:
+        logger.warning(
+            "agent_engine: failed to persist llm_metric_deltas for quorum=%s",
+            quorum_id,
+            exc_info=True,
+        )
+        return None
+
+    # Broadcast over WS so the frontend gets it ahead of the realtime
+    # Postgres channel.  Best-effort; never blocks the turn return.
+    try:
+        from ws_manager import manager  # type: ignore
+
+        await manager.broadcast(quorum_id, {
+            "type": "health_update",
+            "data": {
+                "llm_deltas": new_running,
+                "llm_rationales": new_rationales[-5:],
+            },
+        })
+    except Exception:
+        logger.debug(
+            "agent_engine: ws broadcast of llm_metric_deltas failed",
+            exc_info=True,
+        )
+
+    return new_running, new_rationales
 
 
 async def _publish_insight(

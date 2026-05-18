@@ -1,0 +1,24 @@
+-- LLM-driven metric deltas: per-quorum modulation of the 5 secondary health
+-- metrics based on what the agent personas detect during conversation.
+--
+-- Why a separate column from `metrics` (added in 20260518000003)?  The
+-- baseline `metrics` jsonb is the deterministic, calculated reading from
+-- apps/api/health.py — completion %, role coverage, etc.  These deltas are
+-- the cumulative LLM-driven modulation layered on top.  Keeping them
+-- separate lets the frontend toggle between "deterministic only" (Live
+-- Signals OFF) and "deterministic + LLM modulation" (ON) without losing
+-- either signal, and lets us cap/decay them independently.
+--
+-- llm_metric_deltas: single accumulator object, one float per metric key:
+--   {"consensus": -7.3, "blockers": +4.0, "completion": 0, ...}
+-- Each turn: existing values decay by 20% then new deltas (per persona's
+-- [scores: ...] block) are added in.  Cumulative value clamped to [-50, 50]
+-- so a single bad turn can't permanently sink the chart.
+--
+-- llm_metric_rationales: ring buffer of the most recent ~20 rationale entries
+-- from `[scores-why: ...]` blocks.  Each entry is:
+--   {ts, metric, delta, why}
+-- The frontend uses this list to surface a "Why:" hover line on the Recharts
+-- tooltip when a series has a non-zero delta at that point.
+ALTER TABLE quorums ADD COLUMN IF NOT EXISTS llm_metric_deltas jsonb DEFAULT '{}'::jsonb;
+ALTER TABLE quorums ADD COLUMN IF NOT EXISTS llm_metric_rationales jsonb DEFAULT '[]'::jsonb;

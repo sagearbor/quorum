@@ -153,6 +153,7 @@ export const handlers = [
           },
         ],
         problem_summary: "Test problem description",
+        short_title: "Test Short Title",
       });
     }
   ),

@@ -243,6 +243,9 @@ export default function QuorumPage() {
   // Sticky topic header is collapsed by default — only the title + role + dashboard
   // are always visible.  Expanded reveals description, station, autonomy slider.
   const [headerExpanded, setHeaderExpanded] = useState(false);
+  // Always-visible row can swap between the short title and a 2-line preview
+  // of the long description without forcing the user to expand the accordion.
+  const [headerShowDescription, setHeaderShowDescription] = useState(false);
   const [roles, setRoles] = useState<Role[]>([]);
   const [contributions, setContributions] = useState<Contribution[]>([]);
   const [currentRole, setCurrentRole] = useState<Role | null>(null);
@@ -612,9 +615,58 @@ export default function QuorumPage() {
           {/* Always-visible row: topic title + current role + dashboard + expand chevron */}
           <div className="flex items-center justify-between gap-2 py-2.5">
             <div className="flex items-center gap-2 min-w-0">
-              <h1 className="text-base sm:text-lg font-bold truncate text-gray-900 dark:text-gray-100">
-                {quorumTitle || `Quorum ${quorumId}`}
-              </h1>
+              {headerShowDescription && quorumDescription ? (
+                <p
+                  data-testid="quorum-header-text"
+                  className="text-xs sm:text-sm text-gray-700 dark:text-gray-300 line-clamp-2 min-w-0"
+                  title={quorumDescription}
+                >
+                  {quorumDescription}
+                </p>
+              ) : (
+                <h1
+                  data-testid="quorum-header-text"
+                  className="text-base sm:text-lg font-bold truncate text-gray-900 dark:text-gray-100"
+                >
+                  {quorumTitle || `Quorum ${quorumId}`}
+                </h1>
+              )}
+              {quorumDescription && (
+                <button
+                  type="button"
+                  data-testid="header-title-toggle"
+                  onClick={() => setHeaderShowDescription((v) => !v)}
+                  aria-pressed={headerShowDescription}
+                  aria-label={
+                    headerShowDescription
+                      ? "Show short title"
+                      : "Show longer description"
+                  }
+                  title={
+                    headerShowDescription
+                      ? "Show short title"
+                      : "Show longer description"
+                  }
+                  className="p-1 rounded-md text-gray-400 dark:text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 transition-colors flex-shrink-0"
+                >
+                  <svg
+                    width="12"
+                    height="12"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  >
+                    {/* Two horizontal lines + arrows = "swap short/long view" */}
+                    <line x1="3" y1="8" x2="15" y2="8" />
+                    <polyline points="18 5 21 8 18 11" />
+                    <line x1="21" y1="16" x2="9" y2="16" />
+                    <polyline points="6 13 3 16 6 19" />
+                  </svg>
+                </button>
+              )}
               {currentRole && (
                 <span
                   className="text-[10px] sm:text-xs font-medium px-2 py-0.5 rounded-full flex-shrink-0 whitespace-nowrap"

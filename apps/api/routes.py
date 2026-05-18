@@ -29,7 +29,7 @@ from health import calculate_health_score
 from llm import llm_provider
 from architect_agent import (
     RoleSuggestion,
-    generate_roles,
+    generate_roles_with_title,
     persist_agent_configs,
     send_guidance,
 )
@@ -886,12 +886,17 @@ async def architect_generate_roles(event_id: str, body: GenerateRolesRequest):
     _fetch_single(db, "events", "id", event_id, select="id", label="Event")
 
     try:
-        roles = await generate_roles(body.problem)
+        roles, short_title = await generate_roles_with_title(body.problem)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Role generation failed: {type(e).__name__}: {e}")
+    problem_summary = _smart_title_from_problem(body.problem)
     return GenerateRolesResponse(
         roles=[r.model_dump() for r in roles],
-        problem_summary=_smart_title_from_problem(body.problem),
+        problem_summary=problem_summary,
+        # If the LLM gave us a real short_title use it; otherwise fall back
+        # to the deterministic first-sentence summary so the UI is never
+        # blank.  Mock-mode and the legacy JSON-parse path both yield "".
+        short_title=short_title or problem_summary,
     )
 
 

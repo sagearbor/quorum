@@ -269,6 +269,9 @@ class RoleSuggestionResponse(BaseModel):
 class GenerateRolesResponse(BaseModel):
     roles: list[RoleSuggestionResponse]
     problem_summary: str
+    # 6-12 word punchy headline produced by the architect LLM. Empty string
+    # signals "LLM omitted it; UI should fall back to problem_summary".
+    short_title: str = ""
 
 
 class AIStartRequest(BaseModel):

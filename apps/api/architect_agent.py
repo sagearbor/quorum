@@ -79,6 +79,16 @@ class RoleSuggestionList(BaseModel):
         min_length=1,
         description="The set of suggested roles for the quorum (4-6 typical).",
     )
+    short_title: str = Field(
+        default="",
+        description=(
+            "Punchy 6-12 word headline for the quorum derived from the problem "
+            "description. Used as the default short quorum title in the UI. "
+            "No trailing punctuation, no quotation marks. Empty string is "
+            "tolerated as a fallback signal — the API will fall back to the "
+            "deterministic first-sentence summary in that case."
+        ),
+    )
 
 
 _MOCK_ROLES: list[dict[str, Any]] = [
@@ -215,6 +225,12 @@ _ROLE_GENERATION_INSTRUCTIONS = (
     "affinity routing between agents) and a temperature in the range "
     "0.2-0.7 that fits the role (lower = more analytical, higher = more "
     "exploratory).\n\n"
+    "ALSO produce a top-level ``short_title``: a punchy 6-12 word headline "
+    "that captures the essence of the problem at a glance. Treat this as "
+    "the quorum's name — Title Case, no trailing punctuation, no quotation "
+    "marks, no leading 'A ' / 'The ' filler if it can be avoided. It must "
+    "NOT simply repeat the first sentence of the problem — it must be a "
+    "tighter, more memorable framing.\n\n"
     "Make ONE LLM call returning all roles at once — do not split into "
     "multiple round-trips."
 )
@@ -225,10 +241,26 @@ async def generate_roles(
 ) -> list[RoleSuggestion]:
     """Generate role suggestions for a quorum given a problem description.
 
-    When QUORUM_TEST_MODE=true, returns 4 hardcoded mock roles.
+    Backward-compatible signature: returns just ``list[RoleSuggestion]``.
+    Callers that also want the LLM-produced ``short_title`` headline should
+    use :func:`generate_roles_with_title` instead.
+    """
+    roles, _ = await generate_roles_with_title(problem, llm_provider=llm_provider)
+    return roles
+
+
+async def generate_roles_with_title(
+    problem: str, llm_provider: LLMProvider | None = None
+) -> tuple[list[RoleSuggestion], str]:
+    """Generate roles + a short_title headline in a single LLM call.
+
+    When QUORUM_TEST_MODE=true, returns 4 hardcoded mock roles and an empty
+    short_title (the route falls back to the deterministic summary).
+
     Otherwise uses a typed Pydantic AI agent (output_type=RoleSuggestionList)
     so the LLM response is validated and retried automatically — no manual
-    ``json.loads`` glue.
+    ``json.loads`` glue.  The short_title comes from the same payload, so
+    there is no extra round-trip.
 
     Item 9.3 swap: previously called ``provider.respond`` / ``provider.chat``
     with a free-text prompt, then stripped markdown fences and ``json.loads``.
@@ -238,7 +270,7 @@ async def generate_roles(
     path that calls respond/chat directly (see ``_generate_roles_legacy``).
     """
     if os.environ.get("QUORUM_TEST_MODE", "").lower() in ("true", "1", "yes"):
-        return [RoleSuggestion(**r) for r in _MOCK_ROLES]
+        return [RoleSuggestion(**r) for r in _MOCK_ROLES], ""
 
     if llm_provider is None:
         provider_name = os.environ.get("QUORUM_LLM_PROVIDER", "azure")
@@ -246,8 +278,10 @@ async def generate_roles(
 
     user_content = (
         f"Problem: {problem}\n\n"
-        "Return a RoleSuggestionList with 4-6 RoleSuggestion items, "
-        "each carrying a fully-authored persona."
+        "Return a RoleSuggestionList with 4-6 RoleSuggestion items "
+        "(each carrying a fully-authored persona) AND a top-level "
+        "short_title field (6-12 word punchy headline, Title Case, no "
+        "trailing punctuation)."
     )
 
     # Detect legacy test doubles (MagicMock stubs of .respond / .chat only)
@@ -267,7 +301,7 @@ async def generate_roles(
                 instructions=_ROLE_GENERATION_INSTRUCTIONS,
                 max_tokens=8192,
             )
-            return list(output.roles)
+            return list(output.roles), _sanitize_short_title(output.short_title)
         except ValueError:
             logger.warning(
                 "Typed-agent path failed for generate_roles; falling back to "
@@ -275,7 +309,30 @@ async def generate_roles(
                 exc_info=True,
             )
 
-    return await _generate_roles_legacy(problem, llm_provider)
+    # Legacy path doesn't surface short_title — caller falls back to the
+    # deterministic first-sentence summary.
+    roles = await _generate_roles_legacy(problem, llm_provider)
+    return roles, ""
+
+
+def _sanitize_short_title(raw: str) -> str:
+    """Clean up an LLM-produced short title.
+
+    Strips surrounding whitespace, leading/trailing quotation marks, and any
+    trailing punctuation other than '?' (questions stay questions).
+    """
+    if not raw:
+        return ""
+    text = raw.strip()
+    # Drop wrapping single/double/smart quotes that some models add.
+    for quote in ("\"", "'", "“", "”", "‘", "’"):
+        if text.startswith(quote) and text.endswith(quote) and len(text) > 1:
+            text = text[1:-1].strip()
+            break
+    # Drop trailing punctuation except question marks.
+    while text and text[-1] in ".,;:!":
+        text = text[:-1].rstrip()
+    return text
 
 
 def _provider_supports_run_typed(provider: LLMProvider) -> bool:

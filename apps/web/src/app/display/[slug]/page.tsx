@@ -138,10 +138,10 @@ export default function DisplayPage() {
           <Link
             href={`/event/${slug}`}
             title="Back to event"
-            className="text-xs text-white/40 transition-colors hover:text-white/70 inline-flex items-center gap-1 cursor-default hover:cursor-pointer"
+            className="text-xs text-white/70 hover:text-white border border-white/15 hover:border-white/50 rounded px-2 py-1 transition-colors inline-flex items-center gap-1.5 cursor-pointer"
           >
             <span aria-hidden="true">&#8617;</span>
-            PROJECTION MODE
+            <span className="uppercase tracking-widest">Back to event</span>
           </Link>
         </div>
       </header>

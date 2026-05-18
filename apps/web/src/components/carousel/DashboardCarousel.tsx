@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { QuorumHealthChart } from "@/components/dashboards/QuorumHealthChart";
+import { AgentDocumentDashboard } from "@/components/dashboards/AgentDocumentDashboard";
 import { AvatarPanel } from "@/components/avatar/AvatarPanel";
 
 export type CarouselMode = "multi-view" | "multi-quorum";
@@ -14,7 +15,7 @@ interface DashboardCarouselProps {
   intervalMs?: number;
 }
 
-type PanelType = "health" | "facilitator";
+type PanelType = "health" | "facilitator" | "documents";
 
 interface PanelConfig {
   key: string;
@@ -181,6 +182,8 @@ export function DashboardCarousel({
                 <div className="flex-1 min-h-0">
                   {panel.type === "facilitator" ? (
                     <AvatarPanel quorumId={panel.quorumId} showDirectionIndicator={false} enableEmotionTracking={false} />
+                  ) : panel.type === "documents" ? (
+                    <AgentDocumentDashboard quorumId={panel.quorumId} />
                   ) : (
                     <QuorumHealthChart quorumId={panel.quorumId} />
                   )}
@@ -206,15 +209,15 @@ function usePanelPairs(mode: CarouselMode, quorumIds: string[]): PanelConfig[][]
   if (mode === "multi-view") {
     const qId = quorumIds[0];
     return [
-      // Health Overview (dual health)
+      // Slide 1 — Health × Facilitator (headline view)
       [
-        { key: `${qId}-health-1`, quorumId: qId, label: "Health Overview", type: "health" },
-        { key: `${qId}-health-2`, quorumId: qId, label: "Role Activity", type: "health" },
+        { key: `${qId}-health-1`, quorumId: qId, label: "Quorum Health", type: "health" },
+        { key: "avatar", quorumId: qId, label: "AI Facilitator", type: "facilitator" },
       ],
-      // Avatar Facilitator + Health
+      // Slide 2 — Reference Documents × Health
       [
-        { key: "avatar", quorumId: qId, label: "Facilitator", type: "facilitator" },
-        { key: `${qId}-health-3`, quorumId: qId, label: "Health Overview", type: "health" },
+        { key: `${qId}-documents`, quorumId: qId, label: "Reference Documents", type: "documents" },
+        { key: `${qId}-health-2`, quorumId: qId, label: "Quorum Health", type: "health" },
       ],
     ];
   }

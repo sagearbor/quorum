@@ -91,7 +91,7 @@ export function DashboardInfo({ blurb, className = "" }: DashboardInfoProps) {
       {open && (
         <div
           role="dialog"
-          className="absolute right-0 top-6 z-50 w-80 rounded-md border border-white/10 bg-black/90 p-3 text-xs leading-relaxed text-white/80 shadow-xl backdrop-blur-md"
+          className="absolute right-0 top-6 z-50 w-[min(28rem,calc(100vw-2rem))] max-h-[70vh] overflow-auto rounded-md border border-white/10 bg-black/95 p-4 text-sm leading-relaxed text-white/85 shadow-xl backdrop-blur-md"
         >
           {blocks.map((block, bi) => {
             if (block.type === "p") {

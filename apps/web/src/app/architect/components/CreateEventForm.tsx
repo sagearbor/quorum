@@ -12,6 +12,7 @@ interface ExistingEvent {
   name: string;
   slug: string;
   created_at: string;
+  archived_at?: string | null;
 }
 
 export function CreateEventForm() {
@@ -25,15 +26,18 @@ export function CreateEventForm() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [existingEvents, setExistingEvents] = useState<ExistingEvent[]>([]);
+  const [showArchived, setShowArchived] = useState(false);
 
-  // Load existing events on mount
+  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+
+  // Load existing events on mount + whenever the archive filter flips
   useEffect(() => {
-    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-    fetch(`${apiBase}/events`)
+    const url = `${apiBase}/events${showArchived ? "?include_archived=true" : ""}`;
+    fetch(url)
       .then((r) => (r.ok ? r.json() : []))
       .then((data) => setExistingEvents(data ?? []))
       .catch(() => {});
-  }, []);
+  }, [apiBase, showArchived]);
 
   function selectExistingEvent(event: ExistingEvent) {
     setEventId(event.id);
@@ -41,11 +45,58 @@ export function CreateEventForm() {
     setStep(2);
   }
 
+  async function archiveEvent(event: ExistingEvent, archived: boolean) {
+    try {
+      const res = await fetch(`${apiBase}/events/${event.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ archived }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      setExistingEvents((prev) =>
+        prev.map((e) =>
+          e.id === event.id
+            ? { ...e, archived_at: archived ? new Date().toISOString() : null }
+            : e,
+        ),
+      );
+    } catch {
+      // Non-fatal: revert by re-fetching
+      fetch(`${apiBase}/events${showArchived ? "?include_archived=true" : ""}`)
+        .then((r) => (r.ok ? r.json() : []))
+        .then((data) => setExistingEvents(data ?? []))
+        .catch(() => {});
+    }
+  }
+
+  async function deleteEvent(event: ExistingEvent) {
+    if (
+      typeof window !== "undefined" &&
+      !window.confirm(
+        `Permanently delete "${event.name}"?\n\nAll quorums, contributions, and artifacts in this event will also be deleted. This cannot be undone.`,
+      )
+    ) {
+      return;
+    }
+    try {
+      const res = await fetch(`${apiBase}/events/${event.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok && res.status !== 204) throw new Error(`HTTP ${res.status}`);
+      setExistingEvents((prev) => prev.filter((e) => e.id !== event.id));
+    } catch {
+      // Re-fetch to recover from any partial state
+      fetch(`${apiBase}/events${showArchived ? "?include_archived=true" : ""}`)
+        .then((r) => (r.ok ? r.json() : []))
+        .then((data) => setExistingEvents(data ?? []))
+        .catch(() => {});
+    }
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setSubmitting(true);
-    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     try {
       const res = await fetch(`${apiBase}/events`, {
         method: "POST",
@@ -134,28 +185,91 @@ export function CreateEventForm() {
       <ArchitectMicButton onFormUpdate={handleVoiceFormUpdate} />
 
       {/* Existing events — pick one to add more quorums */}
-      {existingEvents.length > 0 && (
+      {(existingEvents.length > 0 || showArchived) && (
         <div>
-          <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100 mb-2">
-            Continue with an existing event
-          </h3>
-          <div className="space-y-1.5">
-            {existingEvents.slice(0, 5).map((ev) => (
-              <button
-                key={ev.id}
-                type="button"
-                onClick={() => selectExistingEvent(ev)}
-                className="w-full text-left flex items-center justify-between px-3 py-2.5 rounded-lg border border-gray-200 dark:border-gray-600 hover:border-indigo-300 dark:hover:border-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20 transition-colors"
-              >
-                <div>
-                  <span className="text-sm font-medium text-gray-900 dark:text-gray-100">{ev.name}</span>
-                  <span className="ml-2 text-xs text-gray-500 dark:text-gray-400">/{ev.slug}</span>
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-sm font-medium text-gray-900 dark:text-gray-100">
+              Continue with an existing event
+              <span className="ml-2 text-xs font-normal text-gray-400">
+                ({existingEvents.length})
+              </span>
+            </h3>
+            <label className="flex items-center gap-1.5 text-xs text-gray-500 dark:text-gray-400 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showArchived}
+                onChange={(e) => setShowArchived(e.target.checked)}
+                className="rounded border-gray-300 dark:border-gray-600 text-indigo-600 focus:ring-indigo-500"
+              />
+              Show archived
+            </label>
+          </div>
+          <div className="space-y-1.5 max-h-72 overflow-y-auto pr-1">
+            {existingEvents.map((ev) => {
+              const isArchived = !!ev.archived_at;
+              return (
+                <div
+                  key={ev.id}
+                  className={`flex items-center gap-1 px-3 py-2 rounded-lg border transition-colors ${
+                    isArchived
+                      ? "border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900 opacity-70"
+                      : "border-gray-200 dark:border-gray-600 hover:border-indigo-300 dark:hover:border-indigo-500 hover:bg-indigo-50 dark:hover:bg-indigo-900/20"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => selectExistingEvent(ev)}
+                    disabled={isArchived}
+                    className="flex-1 text-left flex items-center justify-between min-w-0 disabled:cursor-not-allowed"
+                  >
+                    <div className="min-w-0 flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                        {ev.name}
+                      </span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+                        /{ev.slug}
+                      </span>
+                      {isArchived && (
+                        <span className="text-[10px] uppercase tracking-wide font-semibold text-gray-400 flex-shrink-0">
+                          archived
+                        </span>
+                      )}
+                    </div>
+                    <span className="text-xs text-gray-400 dark:text-gray-500 ml-2 flex-shrink-0">
+                      {new Date(ev.created_at).toLocaleDateString()}
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => archiveEvent(ev, !isArchived)}
+                    aria-label={isArchived ? `Unarchive ${ev.name}` : `Archive ${ev.name}`}
+                    title={isArchived ? "Unarchive" : "Archive"}
+                    className="p-1.5 rounded text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 transition-colors flex-shrink-0"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="21 8 21 21 3 21 3 8" />
+                      <rect x="1" y="3" width="22" height="5" />
+                      <line x1="10" y1="12" x2="14" y2="12" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => deleteEvent(ev)}
+                    aria-label={`Delete ${ev.name}`}
+                    title="Delete (cascades to all quorums)"
+                    className="p-1.5 rounded text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 transition-colors flex-shrink-0"
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="3 6 5 6 21 6" />
+                      <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6" />
+                      <path d="M10 11v6" />
+                      <path d="M14 11v6" />
+                      <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+                    </svg>
+                  </button>
                 </div>
-                <span className="text-xs text-gray-400 dark:text-gray-500">
-                  {new Date(ev.created_at).toLocaleDateString()}
-                </span>
-              </button>
-            ))}
+              );
+            })}
           </div>
           <div className="relative my-4">
             <div className="absolute inset-0 flex items-center">

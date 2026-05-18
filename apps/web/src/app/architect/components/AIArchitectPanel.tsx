@@ -54,7 +54,14 @@ export function AIArchitectPanel() {
       const data = await res.json();
       setRoles(data.roles);
       if (!quorumTitle) {
-        setQuorumTitle(data.problem_summary);
+        // Prefer the LLM-authored short_title (6-12 word headline) when the
+        // backend produced one; fall back to the deterministic first-sentence
+        // problem_summary so the field is never empty after generation.
+        const candidate =
+          (typeof data.short_title === "string" && data.short_title.trim()) ||
+          data.problem_summary ||
+          "";
+        setQuorumTitle(candidate);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Generation failed");

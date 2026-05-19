@@ -122,7 +122,12 @@ type StateResponse = {
 
 const _stateInFlight = new Map<string, Promise<StateResponse>>();
 const _stateCache = new Map<string, { at: number; value: StateResponse }>();
-const STATE_CACHE_TTL_MS = 1500;
+// 10s TTL: long enough that the display-page carousel (25s rotation) reuses
+// the snapshot for the first dashboard or two in a cycle, short enough that
+// any user navigation between pages still refreshes. Live updates flow via
+// Supabase realtime once a dashboard mounts, so staleness only affects the
+// initial render snapshot.
+const STATE_CACHE_TTL_MS = 10_000;
 
 async function fetchQuorumState(quorumId: string): Promise<StateResponse> {
   const apiBase = getApiBase();

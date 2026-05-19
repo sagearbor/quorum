@@ -5,3 +5,7 @@ export { AgentAffinityGraphPanel } from "./AgentAffinityGraphPanel";
 export { AgentAffinityGraphSpring } from "./AgentAffinityGraphSpring";
 export { AgentAffinityGraphHeatmap } from "./AgentAffinityGraphHeatmap";
 export { AgentAffinityGraphRiver } from "./AgentAffinityGraphRiver";
+export { RoleCoverageMap } from "./RoleCoverageMap";
+export { ContributionTimeline } from "./ContributionTimeline";
+export { ConflictTopologyMap } from "./ConflictTopologyMap";
+export { DecisionWaterfall } from "./DecisionWaterfall";

@@ -51,10 +51,11 @@ describe("QuorumHealthChart", () => {
 
     expect(screen.getByText("Quorum Health")).toBeInTheDocument();
     expect(screen.getByText(String(Math.round(snapshot.healthScore)))).toBeInTheDocument();
+    // /100 corner label in the headline tile.
     expect(screen.getByText("/100")).toBeInTheDocument();
   });
 
-  it("renders the chart container", () => {
+  it("renders the radar chart container", () => {
     const snapshot = createMockSnapshot(0.5);
     render(
       <QuorumHealthChart
@@ -64,7 +65,33 @@ describe("QuorumHealthChart", () => {
       />,
     );
 
+    // Three-organ layout: ResponsiveContainer hosts the RadarChart.
     expect(screen.getByTestId("responsive-container")).toBeInTheDocument();
+    expect(screen.getByTestId("health-radar-wrap")).toBeInTheDocument();
+    // Activity sparkline is keyed by its aria-label.
+    expect(
+      screen.getByRole("img", { name: /Activity tempo over last 5 minutes/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("mounts the radar wrap and the activity tempo strip", () => {
+    const snapshot = createMockSnapshot(0.5);
+    render(
+      <QuorumHealthChart
+        quorumId="test-quorum"
+        staticHistory={snapshot.history}
+        staticScore={50}
+      />,
+    );
+
+    // Structural proof the three-organ layout mounted. Recharts uses an
+    // SVG-measurement layer that jsdom can't drive, so we don't assert on the
+    // polygon itself — the wrap test-id + the sparkline aria-label are the
+    // stable contract.
+    expect(screen.getByTestId("health-radar-wrap")).toBeInTheDocument();
+    expect(
+      screen.getByRole("img", { name: /Activity tempo over last 5 minutes/i }),
+    ).toBeInTheDocument();
   });
 
   it("applies green color when score exceeds threshold", () => {

@@ -124,6 +124,13 @@ export default function QuorumPage() {
   const searchParams = useSearchParams();
   const station = searchParams.get("station");
   const participantFromQuery = searchParams.get("participant");
+  /**
+   * Optional URL param to pre-select a role for this station — lets us hardcode
+   * a persona per laptop ("station 1 is the Ethicist, station 2 is the
+   * Clinician") without anyone touching a GUI.  Matches either role.id (uuid)
+   * or role.name (case-insensitive, URL-encoded).  Falls through if no match.
+   */
+  const roleParam = searchParams.get("role");
 
   const quorumId = params.id;
   const slug = params.slug;
@@ -411,6 +418,18 @@ export default function QuorumPage() {
     setFieldValues({});
     setSubmitSuccess(false);
   };
+
+  // Auto-select role from ?role=<id-or-name> URL param once roles are loaded.
+  // Lets Sophie hardcode "this laptop = this persona" without a GUI step —
+  // open 5 different URLs on 5 stations and each lands on its own role.
+  useEffect(() => {
+    if (currentRole || !roleParam || roles.length === 0) return;
+    const want = roleParam.trim().toLowerCase();
+    const match = roles.find(
+      (r) => r.id.toLowerCase() === want || r.name.toLowerCase() === want,
+    );
+    if (match) selectRole(match);
+  }, [roleParam, roles, currentRole]);
 
   const handleFieldChange = (fieldName: string, value: string) => {
     setFieldValues((prev) => ({ ...prev, [fieldName]: value }));

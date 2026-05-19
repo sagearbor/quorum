@@ -119,11 +119,15 @@ export async function getQuorums(
       const ids: string[] = await idsRes.json();
       if (!ids.length) return [];
 
+      // Event-landing cards only need quorum metadata + role pills + heat
+      // score. We call /state?slim=true so the backend skips serialising
+      // contributions (which can hit ~3MB on a long-running quorum and
+      // contribute nothing to the card render).
       const quorums = await Promise.all(
         ids.map(async (id) => {
           try {
             const [stateRes, rolesJson] = await Promise.all([
-              fetch(`${apiBase}/quorums/${id}/state`).then(r => r.ok ? r.json() : null),
+              fetch(`${apiBase}/quorums/${id}/state?slim=true`).then(r => r.ok ? r.json() : null),
               fetch(`${apiBase}/quorums/${id}/roles`).then(r => r.ok ? r.json() : []).catch(() => []),
             ]);
             if (!stateRes) return null;

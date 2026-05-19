@@ -183,6 +183,11 @@ vi.mock("@/lib/dataProvider", () => {
     // Presence (10.10) — no-op so usePresence mounts cleanly.
     getParticipants: vi.fn().mockResolvedValue([]),
     subscribeToParticipants: vi.fn().mockReturnValue(() => {}),
+    // A2A visibility — getA2ARequests / subscribeToQuorumA2ARequests are used
+    // by useQuorumLive (mounted via the page's A2A Activity tab). No-op so the
+    // hook can mount without surfacing a "not exported" error.
+    getA2ARequests: vi.fn().mockResolvedValue([]),
+    subscribeToQuorumA2ARequests: vi.fn().mockReturnValue(() => {}),
   };
 });
 

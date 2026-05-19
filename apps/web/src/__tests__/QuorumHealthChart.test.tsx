@@ -22,6 +22,7 @@ vi.mock("@/hooks/useQuorumLive", () => ({
     error: null,
     llmDeltas: {},
     llmRationales: [],
+    a2aEvents: [],
   }),
 }));
 

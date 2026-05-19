@@ -21,15 +21,17 @@ import { useAgentDocuments } from "@/hooks/useAgentDocuments";
 import { useA2ARequests } from "@/hooks/useA2ARequests";
 import type { StationMessage } from "@quorum/types";
 import { AgentActivityFeed } from "@/components/AgentActivityFeed";
+import { A2AActivityTab } from "@/components/A2AActivityTab";
 import { PresenceDots } from "@/components/PresenceDots";
 import { usePresence } from "@/hooks/usePresence";
+import { useQuorumLive } from "@/hooks/useQuorumLive";
 
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
 /** Tabs shown below the contribution form. */
-type PanelTab = "conversation" | "contributions" | "documents";
+type PanelTab = "conversation" | "contributions" | "documents" | "a2a";
 
 // ---------------------------------------------------------------------------
 // VoiceButton
@@ -297,6 +299,21 @@ export default function QuorumPage() {
   // A2A notifications for the current role — shows when other agents flag concerns
   const a2a = useA2ARequests(quorumId, currentRole?.id ?? "");
 
+  // Full A2A event stream for this quorum (every agent-to-agent ping, not
+  // only the ones directed at the current role). Powers the A2A Activity tab
+  // and chart markers.
+  const live = useQuorumLive(quorumId);
+  const a2aEvents = live.a2aEvents;
+
+  // Track the timestamp of the newest A2A event the user has already seen so
+  // we can render an "unread" counter badge on the A2A tab. Persisted only in
+  // memory — resetting on reload is fine; the badge is a recency hint, not a
+  // durable inbox.
+  const [a2aLastSeen, setA2aLastSeen] = useState<number>(0);
+  const a2aUnreadCount = a2aEvents.filter(
+    (e) => new Date(e.created_at).getTime() > a2aLastSeen
+  ).length;
+
   // Merge A2A notifications as synthetic "system" messages into the conversation
   // so the human always sees agent-to-agent activity without a separate UI panel.
   // We derive a stable merged array here; ConversationThread deduplicates by id.
@@ -316,6 +333,14 @@ export default function QuorumPage() {
   ].sort(
     (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
   );
+
+  // When the user opens the A2A Activity tab, mark all currently-known events
+  // as "seen" by snapping a2aLastSeen to now. Suppresses the unread badge.
+  useEffect(() => {
+    if (activeTab === "a2a") {
+      setA2aLastSeen(Date.now());
+    }
+  }, [activeTab, a2aEvents.length]);
 
   // Track whether the auto-greet has been sent for this station
   const greetingSentRef = useRef(false);
@@ -972,6 +997,7 @@ export default function QuorumPage() {
                 { id: "conversation", label: "Conversation" },
                 { id: "documents", label: "Documents" },
                 { id: "contributions", label: `Contributions (${contributions.length})` },
+                { id: "a2a", label: "A2A Activity" },
               ] as { id: PanelTab; label: string }[]
             ).map(({ id, label }) => (
               <button
@@ -1005,6 +1031,16 @@ export default function QuorumPage() {
                     )}
                   </>
                 )}
+                {/* A2A tab unread badge — counts every quorum-wide A2A event
+                    that has landed since the user last viewed this tab. */}
+                {id === "a2a" && activeTab !== "a2a" && a2aUnreadCount > 0 && (
+                  <span
+                    data-testid="a2a-tab-badge"
+                    className="ml-1.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-white text-[10px] font-bold leading-none align-middle"
+                  >
+                    {a2aUnreadCount}
+                  </span>
+                )}
               </button>
             ))}
           </div>
@@ -1031,6 +1067,14 @@ export default function QuorumPage() {
                 documents={documents}
                 loading={docsLoading}
               />
+            )}
+
+            {/* A2A Activity tab — chronological feed of every agent-to-agent
+                ping in this quorum (source → target, status, request, outcome).
+                Source data is `useQuorumLive(...).a2aEvents`, which is fetched
+                once + kept fresh via Supabase realtime. */}
+            {activeTab === "a2a" && (
+              <A2AActivityTab events={a2aEvents} roles={roles} />
             )}
 
             {/* Contributions tab */}

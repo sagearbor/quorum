@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -148,6 +149,13 @@ app = FastAPI(
 # every route.  Returns False (and logs) if logfire isn't installed — never
 # raises into the boot path.
 _configure_logfire(app)
+
+# GZip large JSON payloads.  The /quorums/{id}/state endpoint can serialise
+# 2-3 MB once a quorum has accumulated ~1000 contributions; gzipping drops
+# that to ~300 KB on the wire and shaves ~800ms off cold page loads from the
+# Vercel edge.  Threshold 1 KB skips tiny responses where compression
+# overhead would dominate.
+app.add_middleware(GZipMiddleware, minimum_size=1024)
 
 app.add_middleware(
     CORSMiddleware,

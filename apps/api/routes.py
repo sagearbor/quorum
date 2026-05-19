@@ -713,18 +713,58 @@ async def list_roles(quorum_id: str):
 # GET /quorums/{quorum_id}/state
 # ---------------------------------------------------------------------------
 @router.get("/quorums/{quorum_id}/state", response_model=QuorumStateResponse)
-async def get_quorum_state(quorum_id: str):
+async def get_quorum_state(quorum_id: str, slim: bool = False, limit: int | None = None):
+    """Full quorum state snapshot.
+
+    Query params:
+        slim:  When true, ``contributions`` is returned as an empty list and
+               ``health_score`` falls back to the persisted ``heat_score``
+               column. Used by the event-landing card grid which only needs
+               quorum metadata + roles, not the contribution history.
+               Cuts payload from ~3MB to ~1KB on a busy quorum.
+        limit: When set (and slim is false), only the most recent N
+               contributions are returned (still ordered oldest -> newest
+               in the response). Lets the quorum page bound the initial
+               render even on quorums with thousands of contributions —
+               older rows can be paged in later if/when needed.
+    """
     db = get_supabase()
 
     quorum = _fetch_single(db, "quorums", "id", quorum_id, label="Quorum")
 
-    contributions = (
+    if slim:
+        # Skip heavy joins entirely.  Roles are still needed so the consumer
+        # can render role pills on the event-landing card.
+        artifact_result = (
+            db.table("artifacts").select("id").eq("quorum_id", quorum_id).execute()
+        )
+        artifact = artifact_result.data[0] if artifact_result.data else None
+        roles = db.table("roles").select("id").eq("quorum_id", quorum_id).execute()
+        active_roles = [
+            {"role_id": r["id"], "participant_count": 0} for r in (roles.data or [])
+        ]
+        return QuorumStateResponse(
+            quorum=quorum.data,
+            contributions=[],
+            artifact=artifact,
+            health_score=float(quorum.data.get("heat_score") or 0),
+            active_roles=active_roles,
+        )
+
+    contribs_query = (
         db.table("contributions")
         .select("*")
         .eq("quorum_id", quorum_id)
-        .order("created_at")
-        .execute()
     )
+    if limit and limit > 0:
+        # Newest-first + limit, then reverse client-perceived order back to
+        # ascending so downstream code (which expects oldest -> newest) works
+        # unchanged.
+        contribs_query = contribs_query.order("created_at", desc=True).limit(limit)
+        contributions_data = list(reversed((contribs_query.execute()).data or []))
+    else:
+        contribs_query = contribs_query.order("created_at")
+        contributions_data = (contribs_query.execute()).data or []
 
     artifact_result = (
         db.table("artifacts").select("*").eq("quorum_id", quorum_id).execute()
@@ -735,7 +775,7 @@ async def get_quorum_state(quorum_id: str):
 
     # Compute active roles (distinct user_tokens per role)
     role_participants: dict[str, set[str]] = {}
-    for c in contributions.data:
+    for c in contributions_data:
         role_participants.setdefault(c["role_id"], set()).add(c["user_token"])
 
     active_roles = [
@@ -744,12 +784,12 @@ async def get_quorum_state(quorum_id: str):
     ]
 
     health_score, _ = calculate_health_score(
-        roles.data, contributions.data, artifact,
+        roles.data, contributions_data, artifact,
     )
 
     return QuorumStateResponse(
         quorum=quorum.data,
-        contributions=contributions.data,
+        contributions=contributions_data,
         artifact=artifact,
         health_score=health_score,
         active_roles=active_roles,

@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback } from "react";
-import type { HealthMetrics, HealthSnapshot, StreamContribution, StreamState } from "@quorum/types";
+import type { AgentRequest, HealthMetrics, HealthSnapshot, StreamContribution, StreamState } from "@quorum/types";
+import { getA2ARequests, subscribeToQuorumA2ARequests } from "@/lib/dataProvider";
 
 export interface LLMMetricRationale {
   ts: number;
@@ -22,6 +23,8 @@ export interface QuorumLiveState {
   llmDeltas: Record<string, number>;
   /** Recent rationale entries from `[scores-why: ...]` blocks. Newest last. */
   llmRationales: LLMMetricRationale[];
+  /** All A2A (agent-to-agent) requests for this quorum, newest first. */
+  a2aEvents: AgentRequest[];
 }
 
 const INITIAL_METRICS: HealthMetrics = {
@@ -42,7 +45,19 @@ const INITIAL_STATE: QuorumLiveState = {
   error: null,
   llmDeltas: {},
   llmRationales: [],
+  a2aEvents: [],
 };
+
+/** Merge an incoming A2A row into the events list (newest first, dedupe by id). */
+function mergeA2AEvent(prev: AgentRequest[], incoming: AgentRequest): AgentRequest[] {
+  const idx = prev.findIndex((r) => r.id === incoming.id);
+  if (idx >= 0) {
+    const next = prev.slice();
+    next[idx] = { ...next[idx], ...incoming };
+    return next;
+  }
+  return [incoming, ...prev].slice(0, 200);
+}
 
 function _coerceRationales(raw: unknown): LLMMetricRationale[] {
   if (!Array.isArray(raw)) return [];
@@ -93,6 +108,7 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
       // Mock stream doesn't produce LLM deltas — preserve prior values.
       llmDeltas: prev.llmDeltas,
       llmRationales: prev.llmRationales,
+      a2aEvents: prev.a2aEvents,
     }));
   }, []);
 
@@ -306,10 +322,32 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
 
     subscribe();
 
+    // A2A requests — fetch initial snapshot + subscribe to inserts/updates.
+    // Runs alongside the main Supabase channel; safe in test mode (no-op via
+    // dataProvider's isDemoMode guard).
+    let a2aUnsub: (() => void) | null = null;
+    getA2ARequests(quorumId)
+      .then((rows) => {
+        if (cancelled) return;
+        setState((prev) => ({ ...prev, a2aEvents: rows }));
+      })
+      .catch(() => {
+        /* non-fatal — keep empty list */
+      });
+    a2aUnsub = subscribeToQuorumA2ARequests(quorumId, (req) => {
+      if (cancelled) return;
+      setState((prev) => ({
+        ...prev,
+        a2aEvents: mergeA2AEvent(prev.a2aEvents, req),
+      }));
+    });
+
     return () => {
       cancelled = true;
       unsubRef.current?.();
       unsubRef.current = null;
+      a2aUnsub?.();
+      a2aUnsub = null;
     };
   }, [quorumId, handleUpdate]);
 

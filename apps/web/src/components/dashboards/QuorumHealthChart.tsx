@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   RadarChart,
   PolarGrid,
@@ -13,7 +14,7 @@ import { motion, useReducedMotion } from "framer-motion";
 import { useQuorumLive, type LLMMetricRationale } from "@/hooks/useQuorumLive";
 import { DashboardInfo } from "./DashboardInfo";
 import { ChartPointPopover } from "./ChartPointPopover";
-import type { HealthSnapshot, StreamContribution } from "@quorum/types";
+import type { AgentRequest, HealthSnapshot, StreamContribution } from "@quorum/types";
 
 /** Width (ms) of each tempo bucket in the activity sparkline. */
 const TEMPO_BUCKET_MS = 30_000;
@@ -91,6 +92,8 @@ interface QuorumHealthChartProps {
   staticRationales?: LLMMetricRationale[];
   /** Pre-computed contributions list for testing (bypasses hook). */
   staticContributions?: StreamContribution[];
+  /** Pre-computed A2A events for testing (bypasses hook). */
+  staticA2AEvents?: AgentRequest[];
 }
 
 /** Pick the accent color for a given composite score. */
@@ -139,6 +142,65 @@ function bucketContributions(
   return out;
 }
 
+/** Bucket A2A events into the same time grid as `bucketContributions`. The
+ *  resulting marker carries the dominant status color so a single bucket with
+ *  N pings can render as a small triangle on the sparkline. */
+export interface A2AMarker {
+  ts: number;
+  count: number;
+  /** Aggregate status: rejected > pending > completed (most attention-worthy wins). */
+  status: "pending" | "completed" | "rejected" | "none";
+  /** Bucket-aligned events so click handlers can show details. */
+  events: AgentRequest[];
+}
+
+function bucketA2AEvents(
+  events: AgentRequest[],
+  now: number,
+  bucketMs: number,
+  buckets: number,
+): A2AMarker[] {
+  const out: A2AMarker[] = [];
+  for (let i = buckets - 1; i >= 0; i--) {
+    const end = now - i * bucketMs;
+    out.push({ ts: end, count: 0, status: "none", events: [] });
+  }
+  for (const e of events) {
+    const t = Date.parse(e.created_at);
+    if (!Number.isFinite(t)) continue;
+    const ageMs = now - t;
+    if (ageMs < 0 || ageMs > buckets * bucketMs) continue;
+    const idx = buckets - 1 - Math.floor(ageMs / bucketMs);
+    if (idx < 0 || idx >= buckets) continue;
+    out[idx].count += 1;
+    out[idx].events.push(e);
+    // Roll the bucket's aggregate status. Priority is:
+    //   expired (rejected) > pending/acknowledged/processing > resolved (completed)
+    const prev = out[idx].status;
+    let next: A2AMarker["status"];
+    if (e.status === "expired") next = "rejected";
+    else if (
+      e.status === "pending" ||
+      e.status === "acknowledged" ||
+      e.status === "processing"
+    )
+      next = "pending";
+    else if (e.status === "resolved") next = "completed";
+    else next = prev === "none" ? "pending" : prev;
+
+    if (prev === "rejected") {
+      // keep
+    } else if (next === "rejected") {
+      out[idx].status = "rejected";
+    } else if (prev === "pending") {
+      // keep
+    } else {
+      out[idx].status = next;
+    }
+  }
+  return out;
+}
+
 export function QuorumHealthChart({
   quorumId,
   threshold = 75,
@@ -147,6 +209,7 @@ export function QuorumHealthChart({
   staticDeltas,
   staticRationales: _staticRationales,
   staticContributions,
+  staticA2AEvents,
 }: QuorumHealthChartProps) {
   const live = useQuorumLive(quorumId);
   const history = staticHistory ?? live.history;
@@ -154,6 +217,10 @@ export function QuorumHealthChart({
   const llmDeltas = staticDeltas ?? live.llmDeltas;
   const contributions: StreamContribution[] =
     staticContributions ?? live.recentContributions;
+  const a2aEvents: AgentRequest[] = useMemo(
+    () => staticA2AEvents ?? live.a2aEvents ?? [],
+    [staticA2AEvents, live.a2aEvents],
+  );
 
   const prefersReducedMotion = useReducedMotion();
 
@@ -161,6 +228,14 @@ export function QuorumHealthChart({
   const [popover, setPopover] = useState<{
     anchor: { x: number; y: number };
     timestamp: number;
+  } | null>(null);
+
+  // A2A marker popover — separate state so the layout doesn't conflict with
+  // the contribution-bar popover; clicking a triangle pops a tiny card that
+  // summarises the agent-to-agent pings in that bucket.
+  const [a2aPopover, setA2aPopover] = useState<{
+    anchor: { x: number; y: number };
+    events: AgentRequest[];
   } | null>(null);
 
   const contribsNear = useMemo(() => {
@@ -239,6 +314,14 @@ export function QuorumHealthChart({
     () => Math.max(1, ...tempo.map((b) => b.count)),
     [tempo],
   );
+
+  /** A2A markers — per-bucket aggregate so the audience can see WHEN agents
+   *  pinged each other on the same timeline as contribution tempo. */
+  const a2aMarkers = useMemo(() => {
+    const now =
+      history.length > 0 ? history[history.length - 1].timestamp : Date.now();
+    return bucketA2AEvents(a2aEvents, now, TEMPO_BUCKET_MS, TEMPO_BUCKETS);
+  }, [a2aEvents, history]);
 
   const accent = scoreColor(score, threshold);
   const roundedScore = Math.round(score);
@@ -439,12 +522,16 @@ export function QuorumHealthChart({
         </div>
         <TempoStrip
           buckets={tempo}
+          a2aMarkers={a2aMarkers}
           max={tempoMax}
           color={accent.hex}
           colorRgb={accent.rgb}
           pulse={!prefersReducedMotion}
           onPick={(bucketTs, clientX, clientY) =>
             setPopover({ anchor: { x: clientX, y: clientY }, timestamp: bucketTs })
+          }
+          onPickA2A={(events, clientX, clientY) =>
+            setA2aPopover({ anchor: { x: clientX, y: clientY }, events })
           }
         />
       </div>
@@ -460,6 +547,14 @@ export function QuorumHealthChart({
           onClose={() => setPopover(null)}
         />
       )}
+
+      {a2aPopover && (
+        <A2AMarkerPopover
+          anchor={a2aPopover.anchor}
+          events={a2aPopover.events}
+          onClose={() => setA2aPopover(null)}
+        />
+      )}
     </div>
   );
 }
@@ -472,14 +567,39 @@ export function QuorumHealthChart({
 
 interface TempoStripProps {
   buckets: TempoBucket[];
+  a2aMarkers?: A2AMarker[];
   max: number;
   color: string;
   colorRgb: string;
   pulse: boolean;
   onPick: (bucketTs: number, clientX: number, clientY: number) => void;
+  onPickA2A?: (events: AgentRequest[], clientX: number, clientY: number) => void;
 }
 
-function TempoStrip({ buckets, max, color, colorRgb, pulse, onPick }: TempoStripProps) {
+/** Marker color by aggregate bucket status. */
+function a2aMarkerColor(status: A2AMarker["status"]): string {
+  switch (status) {
+    case "pending":
+      return "#fbbf24"; // amber
+    case "completed":
+      return "#34d399"; // emerald
+    case "rejected":
+      return "#f87171"; // rose
+    default:
+      return "rgba(255,255,255,0.45)";
+  }
+}
+
+function TempoStrip({
+  buckets,
+  a2aMarkers = [],
+  max,
+  color,
+  colorRgb,
+  pulse,
+  onPick,
+  onPickA2A,
+}: TempoStripProps) {
   // SVG coords: 100 wide × 30 tall viewBox — bars stretch with preserveAspect.
   const W = 100;
   const H = 30;
@@ -525,6 +645,52 @@ function TempoStrip({ buckets, max, color, colorRgb, pulse, onPick }: TempoStrip
         strokeWidth={0.6}
         vectorEffect="non-scaling-stroke"
       />
+      {/* A2A markers — small downward triangles above each bucket that
+          contains agent-to-agent activity. Color by aggregate status. */}
+      {a2aMarkers.map((m, i) => {
+        if (m.count === 0) return null;
+        const x = i * slot + slot / 2;
+        const fill = a2aMarkerColor(m.status);
+        // Marker sits above the strip; pointer-events explicit on the path so
+        // click works even when the bar below has count=0 (no rect rendered).
+        const half = Math.min(1.6, slot * 0.32);
+        const yTop = 1.2;
+        const yBot = yTop + 2.6;
+        const path = `M ${x - half} ${yTop} L ${x + half} ${yTop} L ${x} ${yBot} Z`;
+        const labelStatus =
+          m.status === "rejected"
+            ? "rejected"
+            : m.status === "completed"
+              ? "completed"
+              : "pending";
+        return (
+          <g
+            key={`a2a-${i}`}
+            style={{ cursor: onPickA2A ? "pointer" : "default" }}
+            onClick={(e) => {
+              if (!onPickA2A) return;
+              onPickA2A(m.events, e.clientX, e.clientY);
+            }}
+            data-testid={`a2a-marker-${i}`}
+            aria-label={`${m.count} A2A ${labelStatus}`}
+          >
+            <title>
+              {m.count} agent-to-agent {m.count === 1 ? "request" : "requests"} ({labelStatus})
+              {m.events.length > 0 && m.events[0].from_role_id
+                ? ` — e.g. ${m.events[0].from_role_id.slice(0, 6)} → ${m.events[0].to_role_id.slice(0, 6)}`
+                : ""}
+            </title>
+            <path
+              d={path}
+              fill={fill}
+              stroke="#0b0b14"
+              strokeWidth={0.3}
+              opacity={0.95}
+              vectorEffect="non-scaling-stroke"
+            />
+          </g>
+        );
+      })}
       {/* Bars */}
       {buckets.map((b, i) => {
         const x = i * slot + (slot - barW) / 2;
@@ -561,4 +727,134 @@ function TempoStrip({ buckets, max, color, colorRgb, pulse, onPick }: TempoStrip
       })}
     </svg>
   );
+}
+
+/* ────────────────────────────────────────────────────────────────────────── *
+ * A2AMarkerPopover — lightweight floating card anchored to a clicked marker.
+ * Shows up to 3 A2A events from the same bucket: from→to roles, status, and
+ * truncated content. Clamped to the viewport so it never escapes the screen.
+ * ────────────────────────────────────────────────────────────────────────── */
+
+function statusColor(status: AgentRequest["status"]): string {
+  switch (status) {
+    case "expired":
+      return "#f87171";
+    case "resolved":
+      return "#34d399";
+    default:
+      return "#fbbf24";
+  }
+}
+
+interface A2AMarkerPopoverProps {
+  anchor: { x: number; y: number };
+  events: AgentRequest[];
+  onClose: () => void;
+}
+
+function A2AMarkerPopover({ anchor, events, onClose }: A2AMarkerPopoverProps) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  if (!mounted || typeof document === "undefined") return null;
+
+  // Clamp to viewport: prefer above-anchor; if there's no room, render below.
+  const W = 320;
+  const H = Math.min(220, 80 + events.length * 56);
+  const left = Math.max(8, Math.min(window.innerWidth - W - 8, anchor.x - W / 2));
+  const preferAbove = anchor.y > H + 16;
+  const top = preferAbove ? anchor.y - H - 12 : anchor.y + 14;
+
+  const visible = events.slice(0, 3);
+  const overflow = events.length - visible.length;
+
+  const node = (
+    <>
+      {/* Click-outside scrim */}
+      <div
+        onClick={onClose}
+        className="fixed inset-0 z-40"
+        style={{ background: "transparent" }}
+      />
+      <div
+        role="dialog"
+        data-testid="a2a-marker-popover"
+        style={{
+          position: "fixed",
+          left,
+          top,
+          width: W,
+          maxHeight: H,
+          zIndex: 50,
+        }}
+        className="rounded-xl border border-white/10 bg-slate-900/95 backdrop-blur-md text-white shadow-2xl p-3 overflow-y-auto"
+      >
+        <div className="flex items-center justify-between mb-2">
+          <span className="text-[10px] uppercase tracking-[0.2em] text-white/60">
+            Agent-to-agent · {events.length}
+          </span>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close"
+            className="text-white/50 hover:text-white/80 text-sm leading-none"
+          >
+            ×
+          </button>
+        </div>
+        <div className="space-y-2">
+          {visible.map((e) => (
+            <div
+              key={e.id}
+              className="rounded-lg bg-white/[0.04] border border-white/5 p-2"
+            >
+              <div className="flex items-center gap-1.5 text-[10px] mb-1">
+                <span className="px-1.5 py-0.5 rounded bg-white/10 text-white/80 font-medium">
+                  {e.from_role_id.slice(0, 6)}
+                </span>
+                <span className="text-white/40">→</span>
+                <span className="px-1.5 py-0.5 rounded bg-white/10 text-white/80 font-medium">
+                  {e.to_role_id.slice(0, 6)}
+                </span>
+                <span
+                  className="ml-auto inline-flex items-center px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wide"
+                  style={{
+                    background: `${statusColor(e.status)}22`,
+                    color: statusColor(e.status),
+                  }}
+                >
+                  {e.status}
+                </span>
+              </div>
+              <div className="text-[11px] text-white/80 leading-snug line-clamp-2">
+                {e.content}
+              </div>
+              {e.response && (
+                <div className="mt-1 text-[10px] text-emerald-300/90 line-clamp-2">
+                  ↳ {e.response}
+                </div>
+              )}
+            </div>
+          ))}
+          {overflow > 0 && (
+            <div className="text-[10px] text-white/50 px-1">
+              +{overflow} more — open the A2A Activity tab to see all events.
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+
+  // Portal so the popover escapes any overflow:hidden ancestor.
+  return createPortal(node, document.body);
 }

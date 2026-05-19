@@ -786,6 +786,81 @@ export function subscribeToA2ARequests(
   };
 }
 
+/**
+ * Fetch all A2A requests for a quorum (newest first). Used by the A2A Activity
+ * tab + Quorum Health chart markers so the audience can see every agent-to-
+ * agent ping that happened, not just the ones directed at the current role.
+ *
+ * Returns [] in demo mode (DemoEngine does not simulate A2A traffic).
+ */
+export async function getA2ARequests(
+  quorumId: string,
+  limit = 200
+): Promise<AgentRequest[]> {
+  if (isDemoMode()) return [];
+  try {
+    const { supabase } = await import("./supabase");
+    const { data, error } = await supabase
+      .from("agent_requests")
+      .select("*")
+      .eq("quorum_id", quorumId)
+      .order("created_at", { ascending: false })
+      .limit(limit);
+    if (error) throw error;
+    return (data ?? []) as AgentRequest[];
+  } catch (err) {
+    console.error("[dataProvider] getA2ARequests failed:", err);
+    return [];
+  }
+}
+
+/**
+ * Subscribe to ALL A2A requests in a quorum (INSERT + UPDATE), regardless of
+ * source/target role. Used by useQuorumLive so the dashboard can show chart
+ * markers and the A2A Activity tab updates in real time.
+ *
+ * No-op in demo mode.
+ */
+export function subscribeToQuorumA2ARequests(
+  quorumId: string,
+  handler: (request: AgentRequest, event: "INSERT" | "UPDATE") => void
+): () => void {
+  if (isDemoMode()) {
+    return () => {};
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let channel: any = null;
+
+  import("./supabase").then(({ supabase }) => {
+    channel = supabase
+      .channel(`a2a-quorum:${quorumId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "agent_requests",
+          filter: `quorum_id=eq.${quorumId}`,
+        },
+        (payload) => {
+          if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
+            handler(payload.new as AgentRequest, payload.eventType);
+          }
+        }
+      )
+      .subscribe();
+  });
+
+  return () => {
+    if (channel) {
+      import("./supabase").then(({ supabase }) => {
+        supabase.removeChannel(channel!);
+      });
+    }
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Facilitator narration (orchestrator-emitted WebSocket frame)
 // ---------------------------------------------------------------------------

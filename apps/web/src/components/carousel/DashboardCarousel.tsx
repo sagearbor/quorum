@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { motion } from "framer-motion";
 import { QuorumHealthChart } from "@/components/dashboards/QuorumHealthChart";
 import { AgentDocumentDashboard } from "@/components/dashboards/AgentDocumentDashboard";
+import { AgentAffinityGraphPanel } from "@/components/dashboards/AgentAffinityGraphPanel";
 import { AvatarPanel } from "@/components/avatar/AvatarPanel";
 import { useShowAvatars } from "@/hooks/useShowAvatars";
 
@@ -16,7 +17,7 @@ interface DashboardCarouselProps {
   intervalMs?: number;
 }
 
-type PanelType = "health" | "facilitator" | "documents";
+type PanelType = "health" | "facilitator" | "documents" | "affinity";
 
 interface PanelConfig {
   key: string;
@@ -187,6 +188,8 @@ export function DashboardCarousel({
                       <AvatarPanel quorumId={panel.quorumId} showDirectionIndicator={false} enableEmotionTracking={false} />
                     ) : panel.type === "documents" ? (
                       <AgentDocumentDashboard quorumId={panel.quorumId} />
+                    ) : panel.type === "affinity" ? (
+                      <AgentAffinityGraphPanel quorumId={panel.quorumId} />
                     ) : (
                       <QuorumHealthChart quorumId={panel.quorumId} />
                     )}
@@ -218,10 +221,15 @@ function usePanelPairs(mode: CarouselMode, quorumIds: string[]): PanelConfig[][]
         { key: `${qId}-health-1`, quorumId: qId, label: "Quorum Health", type: "health" },
         { key: "avatar", quorumId: qId, label: "AI Facilitator", type: "facilitator" },
       ],
-      // Slide 2 — Reference Documents × Health
+      // Slide 2 — Affinity (with view toggle) × Health
+      [
+        { key: `${qId}-affinity`, quorumId: qId, label: "Agent Affinity", type: "affinity" },
+        { key: `${qId}-health-2`, quorumId: qId, label: "Quorum Health", type: "health" },
+      ],
+      // Slide 3 — Reference Documents × Affinity
       [
         { key: `${qId}-documents`, quorumId: qId, label: "Reference Documents", type: "documents" },
-        { key: `${qId}-health-2`, quorumId: qId, label: "Quorum Health", type: "health" },
+        { key: `${qId}-affinity-2`, quorumId: qId, label: "Agent Affinity", type: "affinity" },
       ],
     ];
   }

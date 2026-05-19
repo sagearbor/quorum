@@ -1065,3 +1065,31 @@ def _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num, mode=
         quorum_id,
         mode,
     )
+
+    # Recompute heat_score so /display dashboards see autonomy progress live —
+    # mirrors the contribute() route's health block.  Without this, autonomy
+    # mode inserts contributions but the chart never UPDATEs the quorums row
+    # → no realtime event → flat lines on /display.
+    try:
+        from health import calculate_health_score
+
+        roles_data = db.table("roles").select("*").eq("quorum_id", quorum_id).execute()
+        contribs_data = (
+            db.table("contributions").select("*").eq("quorum_id", quorum_id).execute()
+        )
+        artifact_result = (
+            db.table("artifacts").select("*").eq("quorum_id", quorum_id).execute()
+        )
+        artifact = artifact_result.data[0] if artifact_result.data else None
+        health_score, metrics = calculate_health_score(
+            roles_data.data, contribs_data.data, artifact,
+        )
+        db.table("quorums").update(
+            {"heat_score": health_score, "metrics": metrics}
+        ).eq("id", quorum_id).execute()
+    except Exception:
+        logger.warning(
+            "autonomy_loop: heat_score recompute failed for quorum %s",
+            quorum_id,
+            exc_info=True,
+        )

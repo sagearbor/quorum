@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 interface DashboardInfoProps {
   /** Plain-language explanation rendered inside the popover. Supports basic
@@ -17,7 +18,31 @@ interface DashboardInfoProps {
  */
 export function DashboardInfo({ blurb, className = "" }: DashboardInfoProps) {
   const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [anchorRect, setAnchorRect] = useState<{ top: number; right: number } | null>(null);
   const containerRef = useRef<HTMLSpanElement | null>(null);
+
+  // Only render the portal on the client.
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Position the popover relative to the icon button, in viewport coords
+  // (so it escapes any overflow:hidden ancestor in the carousel panel).
+  useLayoutEffect(() => {
+    if (!open || !containerRef.current) return;
+    function reposition() {
+      const r = containerRef.current?.getBoundingClientRect();
+      if (r) setAnchorRect({ top: r.bottom + 6, right: window.innerWidth - r.right });
+    }
+    reposition();
+    window.addEventListener("resize", reposition);
+    window.addEventListener("scroll", reposition, true);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      window.removeEventListener("scroll", reposition, true);
+    };
+  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -88,10 +113,15 @@ export function DashboardInfo({ blurb, className = "" }: DashboardInfoProps) {
       >
         ?
       </button>
-      {open && (
+      {open && mounted && anchorRect && createPortal(
         <div
           role="dialog"
-          className="absolute right-0 top-6 z-50 w-[min(28rem,calc(100vw-2rem))] max-h-[70vh] overflow-auto rounded-md border border-white/10 bg-black/95 p-4 text-sm leading-relaxed text-white/85 shadow-xl backdrop-blur-md"
+          style={{
+            position: "fixed",
+            top: `${anchorRect.top}px`,
+            right: `${anchorRect.right}px`,
+          }}
+          className="z-[1000] w-[min(32rem,calc(100vw-2rem))] max-h-[70vh] overflow-auto rounded-md border border-white/10 bg-black/95 p-4 text-sm leading-relaxed text-white/85 shadow-xl backdrop-blur-md"
         >
           {blocks.map((block, bi) => {
             if (block.type === "p") {
@@ -109,7 +139,8 @@ export function DashboardInfo({ blurb, className = "" }: DashboardInfoProps) {
               </ul>
             );
           })}
-        </div>
+        </div>,
+        document.body,
       )}
     </span>
   );

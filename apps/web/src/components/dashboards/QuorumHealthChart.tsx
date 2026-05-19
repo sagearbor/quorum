@@ -25,11 +25,18 @@ const DELTA_LOOKBACK_MS = 30_000;
 const POPOVER_WINDOW_MS = TEMPO_BUCKET_MS / 2 + 1_000;
 
 const QUORUM_HEALTH_BLURB = `**Quorum Health — three-organ readout.** A single instrument showing where the quorum is, what shape it's in, and how alive the room feels.
-- **Headline (top).** The composite score 0-100 plus a 30-second delta (↑/↓/—). Color shifts amber → green as the score crosses the target threshold (75). This is the "where are we now" beacon.
-- **Radar (middle).** Five axes — **Completion, Consensus, Role Coverage, Critical Path, Path Clear** — each 0-100. The filled polygon's shape tells you at a glance whether the quorum is balanced or lopsided; a thin spike means one axis is dragging the rest down.
-- **Activity strip (bottom).** Conversation tempo: contributions per 30-second bucket over the last 5 minutes. Each spike is a turn. **Click a spike** to see the contributions that landed in that bucket.
+- **Headline (top).** Composite score 0-100 plus a 30-second delta (↑/↓/—). Color shifts amber → green as the score crosses the target threshold (75).
+- **Radar (middle).** Five axes 0-100 describing the quorum's deliberative state. Filled polygon = current values; dashed amber polygon = target.
+- **Activity strip (bottom).** Tempo of contributions per 30-second bucket over the last 5 minutes. **Click a spike** to see what landed in that bucket.
 
-**Live signals.** When **Live signals** is **ON** (default), AI agents pull the radar axes up or down based on what they detect in conversation (e.g. an IRB concern pulls **Path Clear** down). The headline delta reflects these modulated values. Toggle **OFF** to see the deterministic baseline only.`;
+**What each radar axis measures:**
+- **Completion** — fraction of the final artifact's sections that have content (or, before resolve, estimated from role coverage). Climbs as roles commit positions.
+- **Consensus** — authority-weighted role participation: higher-authority roles contributing have more weight. NOT a pure agreement measure on its own; LLM signals modulate this when agents detect disagreement.
+- **Role Coverage** — fraction of configured roles that have contributed at least once. Pure coverage count.
+- **Critical Path** — contribution density (contributions / (roles × 2)). Approximation of "are we close to having enough input to resolve."
+- **Path Clear** — inverse of unanswered single-occupant ("capacity = 1") roles. Drops when a high-priority single-person role hasn't yet weighed in.
+
+**Live signals.** When ON (default), agents emit per-axis deltas (±20 per turn, decayed) based on what they say in conversation — e.g. naming an IRB blocker pulls **Path Clear** down; resolving a conflict pulls **Consensus** up. Toggle OFF to see only the deterministic baseline.`;
 
 const LIVE_SIGNALS_STORAGE_KEY = "quorumLiveSignals";
 

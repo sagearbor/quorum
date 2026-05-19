@@ -1071,7 +1071,7 @@ def _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num, mode=
     # mode inserts contributions but the chart never UPDATEs the quorums row
     # → no realtime event → flat lines on /display.
     try:
-        from health import calculate_health_score
+        from health import calculate_health_score, fetch_activity_count
 
         roles_data = db.table("roles").select("*").eq("quorum_id", quorum_id).execute()
         contribs_data = (
@@ -1082,7 +1082,10 @@ def _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num, mode=
         )
         artifact = artifact_result.data[0] if artifact_result.data else None
         health_score, metrics = calculate_health_score(
-            roles_data.data, contribs_data.data, artifact,
+            roles_data.data,
+            contribs_data.data,
+            artifact,
+            activity_count=fetch_activity_count(db, quorum_id),
         )
         db.table("quorums").update(
             {"heat_score": health_score, "metrics": metrics}

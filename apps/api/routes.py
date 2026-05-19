@@ -30,7 +30,7 @@ from quorum_llm.metric_deltas import (
 # TODO: migrate to DatabaseProvider from db/factory.py
 from coordination.factory import get_coordination_backend
 from database import get_supabase
-from health import calculate_health_score
+from health import calculate_health_score, fetch_activity_count
 from llm import llm_provider
 from architect_agent import (
     RoleSuggestion,
@@ -479,7 +479,10 @@ async def contribute(quorum_id: str, body: ContributeRequest):
     artifact = artifact_result.data[0] if artifact_result.data else None
 
     health_score, metrics = calculate_health_score(
-        roles_data.data, all_contribs.data, artifact,
+        roles_data.data,
+        all_contribs.data,
+        artifact,
+        activity_count=fetch_activity_count(db, quorum_id),
     )
 
     # --- Parse human contribution text for [scores: ...] block too ---
@@ -1215,7 +1218,10 @@ async def ask_facilitator(quorum_id: str, station_id: str, body: AskRequest):
         artifact_result = db.table("artifacts").select("*").eq("quorum_id", quorum_id).execute()
         artifact = artifact_result.data[0] if artifact_result.data else None
         health_score, metrics = calculate_health_score(
-            roles_data.data, contribs_data.data, artifact,
+            roles_data.data,
+            contribs_data.data,
+            artifact,
+            activity_count=fetch_activity_count(db, quorum_id),
         )
         db.table("quorums").update(
             {"heat_score": health_score, "metrics": metrics}

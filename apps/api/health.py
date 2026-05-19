@@ -10,12 +10,46 @@ from __future__ import annotations
 from typing import Any
 
 
+def fetch_activity_count(db, quorum_id: str) -> int:
+    """Return total chat + insight activity count for a quorum.
+
+    Used to feed `calculate_health_score(activity_count=...)` so the chart
+    moves on every chat turn even though chats don't insert into the
+    contributions table.  Falls back to 0 on any error so a counter-fetch
+    failure never blocks a heat_score recompute.
+    """
+    try:
+        msgs = (
+            db.table("station_messages")
+            .select("id", count="exact")
+            .eq("quorum_id", quorum_id)
+            .execute()
+        )
+        return int(getattr(msgs, "count", None) or len(msgs.data or []))
+    except Exception:
+        return 0
+
+
 def calculate_health_score(
     roles: list[dict[str, Any]],
     contributions: list[dict[str, Any]],
     artifact: dict[str, Any] | None,
+    *,
+    activity_count: int = 0,
 ) -> tuple[float, dict[str, float]]:
     """Compute composite health score and individual metrics.
+
+    Args:
+        roles: All roles defined for the quorum.
+        contributions: Rows from the contributions table (structured submissions
+            and autonomy auto-contributions).
+        artifact: Final artifact row if /resolve has been called, else None.
+        activity_count: Total count of station_messages + agent_insights for the
+            quorum.  Chats and agent reflections don't write to ``contributions``
+            so without this signal the chart would be flat during live
+            conversation.  Each activity bumps ``completion_pct`` by ~1.5%
+            (capped at 100) so the chart moves visibly during a demo even
+            before any structured contributions land.
 
     Returns (score, metrics_dict) where score is 0-100.
     """
@@ -26,15 +60,19 @@ def calculate_health_score(
     covered = sum(1 for r in roles if r["id"] in contributing_role_ids)
     role_coverage_pct = (covered / total_roles * 100) if total_roles > 0 else 0.0
 
-    # --- completion_pct: based on artifact sections filled ---
+    # --- completion_pct: artifact sections filled, plus chat engagement bonus ---
     if artifact and artifact.get("sections"):
         sections = artifact["sections"]
         filled = sum(1 for s in sections if s.get("content", "").strip())
-        completion_pct = (filled / len(sections) * 100) if sections else 0.0
+        base_completion = (filled / len(sections) * 100) if sections else 0.0
     else:
         # No artifact yet — estimate from contribution density
         # Each role contributing at least once is ~progress toward completion
-        completion_pct = role_coverage_pct * 0.5
+        base_completion = role_coverage_pct * 0.5
+    # Each chat turn / agent insight adds 1.5% completion (capped) so the
+    # chart moves visibly during conversation, not only after the structured
+    # /resolve milestone.
+    completion_pct = min(100.0, base_completion + activity_count * 1.5)
 
     # --- consensus_score: authority-weighted agreement ---
     # Heuristic: if all covered roles contributed, consensus is high.

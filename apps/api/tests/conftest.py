@@ -143,7 +143,7 @@ def _install_quorum_llm_mock() -> None:
     sys.modules["quorum_llm"] = pkg
 
     # Sub-module stubs that are imported by name in various files
-    for sub in ("interface", "models", "factory", "providers.mock", "tier1", "affinity", "conversation"):
+    for sub in ("interface", "models", "factory", "providers.mock", "tier1", "affinity", "conversation", "metric_deltas"):
         full = f"quorum_llm.{sub}"
         if full not in sys.modules:
             stub = types.ModuleType(full)
@@ -247,6 +247,32 @@ def _install_quorum_llm_mock() -> None:
                 stub.build_system_message = _stub_build_system_message
                 stub.extract_tags_from_response = lambda text, tags=None: []
                 stub.summarize_history = lambda msgs, max_t, **kw: msgs[-5:]
+            elif sub == "metric_deltas":
+                # Stub for quorum_llm.metric_deltas — returns no-op deltas.
+                # Real parser lives in packages/llm/quorum_llm/metric_deltas.py
+                # and has its own dedicated tests.
+                def _stub_extract_score_deltas(text):
+                    return ({}, "")
+
+                def _stub_apply_deltas_to_running_total(existing, new_deltas, clamp=True):
+                    out = dict(existing or {})
+                    for k, v in (new_deltas or {}).items():
+                        prev = out.get(k, 0)
+                        nxt = prev + v
+                        if clamp:
+                            nxt = max(-100, min(100, nxt))
+                        out[k] = nxt
+                    return out
+
+                def _stub_append_rationale(rationales, deltas, why, ts=None, max_len=50):
+                    out = list(rationales or [])
+                    for metric, delta in (deltas or {}).items():
+                        out.append({"ts": ts or 0, "metric": metric, "delta": delta, "why": why})
+                    return out[-max_len:]
+
+                stub.extract_score_deltas = _stub_extract_score_deltas
+                stub.apply_deltas_to_running_total = _stub_apply_deltas_to_running_total
+                stub.append_rationale = _stub_append_rationale
             sys.modules[full] = stub
 
     # Also wire quorum_llm.providers as a package

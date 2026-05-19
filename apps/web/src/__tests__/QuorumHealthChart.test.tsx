@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { QuorumHealthChart } from "@/components/dashboards/QuorumHealthChart";
 import { createMockSnapshot } from "@/lib/mockStream";
+import type { HealthSnapshot } from "@quorum/types";
 
 // Mock useQuorumLive to avoid timers in render tests
 vi.mock("@/hooks/useQuorumLive", () => ({
@@ -19,6 +20,8 @@ vi.mock("@/hooks/useQuorumLive", () => ({
     artifact: null,
     connected: true,
     error: null,
+    llmDeltas: {},
+    llmRationales: [],
   }),
 }));
 
@@ -138,7 +141,82 @@ describe("QuorumHealthChart", () => {
         artifact: null,
         connected: false,
         error: "Supabase unavailable",
+        llmDeltas: {},
+        llmRationales: [],
       }),
     }));
+  });
+});
+
+describe("QuorumHealthChart — Live Signals toggle", () => {
+  beforeEach(() => {
+    try {
+      window.localStorage.clear();
+    } catch {
+      // ignore
+    }
+  });
+
+  /** Build a minimal one-point history with known metric values. */
+  function buildHistory(): HealthSnapshot[] {
+    return [
+      {
+        timestamp: Date.now(),
+        score: 60,
+        metrics: {
+          completion_pct: 50,
+          consensus_score: 60,
+          role_coverage_pct: 70,
+          critical_path_score: 80,
+          blocker_score: 90,
+        },
+      },
+    ];
+  }
+
+  it("defaults to ON and shows the live signals pill labeled ON", () => {
+    render(
+      <QuorumHealthChart
+        quorumId="t"
+        staticHistory={buildHistory()}
+        staticScore={60}
+        staticDeltas={{ consensus: -10, blockers: -5 }}
+      />,
+    );
+    expect(screen.getByText(/Live signals: ON/i)).toBeInTheDocument();
+    const btn = screen.getByRole("button", { name: /Live signals/i });
+    expect(btn.getAttribute("aria-pressed")).toBe("true");
+  });
+
+  it("toggling OFF persists to localStorage and updates label", () => {
+    render(
+      <QuorumHealthChart
+        quorumId="t"
+        staticHistory={buildHistory()}
+        staticScore={60}
+        staticDeltas={{ consensus: -10 }}
+      />,
+    );
+
+    const btn = screen.getByRole("button", { name: /Live signals/i });
+    expect(window.localStorage.getItem("quorumLiveSignals")).toBe("on");
+    fireEvent.click(btn);
+
+    expect(screen.getByText(/Live signals: OFF/i)).toBeInTheDocument();
+    expect(window.localStorage.getItem("quorumLiveSignals")).toBe("off");
+    expect(btn.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("respects OFF stored in localStorage on initial render", () => {
+    window.localStorage.setItem("quorumLiveSignals", "off");
+    render(
+      <QuorumHealthChart
+        quorumId="t"
+        staticHistory={buildHistory()}
+        staticScore={60}
+        staticDeltas={{ consensus: -10 }}
+      />,
+    );
+    expect(screen.getByText(/Live signals: OFF/i)).toBeInTheDocument();
   });
 });

@@ -14,7 +14,12 @@ import {
 } from "recharts";
 import { useQuorumLive, type LLMMetricRationale } from "@/hooks/useQuorumLive";
 import { DashboardInfo } from "./DashboardInfo";
-import type { HealthSnapshot } from "@quorum/types";
+import { ChartPointPopover } from "./ChartPointPopover";
+import type { HealthSnapshot, StreamContribution } from "@quorum/types";
+
+/** Time-window (ms) used by the chart popover to find contributions near a
+ *  clicked data point.  ±5s on either side per spec. */
+const POPOVER_WINDOW_MS = 5_000;
 
 const QUORUM_HEALTH_BLURB = `**Quorum Health Chart.** A live snapshot of how close this quorum is to producing its decision artifact.
 - **Composite** (blue ●) — overall score 0-100, weighted blend of the lines below.  Higher is better.  The dotted target line is the threshold for the quorum to finalize.
@@ -67,6 +72,8 @@ interface QuorumHealthChartProps {
   staticDeltas?: Record<string, number>;
   /** Pre-computed rationales for testing. */
   staticRationales?: LLMMetricRationale[];
+  /** Pre-computed contributions list for testing (bypasses hook). */
+  staticContributions?: StreamContribution[];
 }
 
 type MetricShape = "triangle" | "square" | "diamond" | "star" | "cross";
@@ -188,12 +195,32 @@ export function QuorumHealthChart({
   staticScore,
   staticDeltas,
   staticRationales,
+  staticContributions,
 }: QuorumHealthChartProps) {
   const live = useQuorumLive(quorumId);
   const history = staticHistory ?? live.history;
   const score = staticScore ?? live.healthScore;
   const llmDeltas = staticDeltas ?? live.llmDeltas;
   const llmRationales = staticRationales ?? live.llmRationales;
+  const contributions: StreamContribution[] =
+    staticContributions ?? live.recentContributions;
+
+  // Click-point popover state.  Anchored to where the user clicked in
+  // viewport space so it lines up regardless of overflow ancestors.
+  const [popover, setPopover] = useState<{
+    anchor: { x: number; y: number };
+    timestamp: number;
+  } | null>(null);
+
+  /** Find contributions within ±5s of the given timestamp. */
+  const contribsNear = useMemo(() => {
+    if (!popover) return [];
+    return contributions
+      .map((c) => ({ c, ts: new Date(c.created_at).getTime() }))
+      .filter(({ ts }) => Math.abs(ts - popover.timestamp) <= POPOVER_WINDOW_MS)
+      .sort((a, b) => Math.abs(a.ts - popover.timestamp) - Math.abs(b.ts - popover.timestamp))
+      .map(({ c }) => c);
+  }, [popover, contributions]);
 
   // Live Signals toggle — default ON, persisted in localStorage.
   const [liveSignalsOn, setLiveSignalsOn] = useState<boolean>(readInitialLiveSignals);
@@ -288,7 +315,23 @@ export function QuorumHealthChart({
       {/* Chart */}
       <div className="flex-1" style={{minHeight: "220px"}}>
         <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={data} margin={{ top: 5, right: 20, bottom: 5, left: 0 }}>
+          <LineChart
+            data={data}
+            margin={{ top: 5, right: 20, bottom: 5, left: 0 }}
+            onClick={(state: unknown, event: unknown) => {
+              // Recharts passes a state object with activePayload + a native
+              // event with clientX/Y.  Bail out gracefully if either is
+              // missing (e.g. clicking on empty chart whitespace).
+              const s = state as {
+                activePayload?: Array<{ payload?: { timestamp?: number } }>;
+              } | null;
+              const e = event as { clientX?: number; clientY?: number } | null;
+              const ts = s?.activePayload?.[0]?.payload?.timestamp;
+              if (typeof ts !== "number") return;
+              if (typeof e?.clientX !== "number" || typeof e?.clientY !== "number") return;
+              setPopover({ anchor: { x: e.clientX, y: e.clientY }, timestamp: ts });
+            }}
+          >
             <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.06)" />
             <XAxis
               dataKey="time"
@@ -429,6 +472,18 @@ export function QuorumHealthChart({
           </LineChart>
         </ResponsiveContainer>
       </div>
+
+      {/* Click-point popover — shows contributions near the clicked timestamp
+          with analyzer tags / rationale / delta strip.  Portaled to body so
+          it escapes overflow:hidden ancestors. */}
+      {popover && (
+        <ChartPointPopover
+          anchor={popover.anchor}
+          timestamp={popover.timestamp}
+          contributions={contribsNear}
+          onClose={() => setPopover(null)}
+        />
+      )}
     </div>
   );
 }

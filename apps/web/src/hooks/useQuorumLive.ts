@@ -137,20 +137,43 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
             { event: "*", schema: "public", table: "contributions", filter: `quorum_id=eq.${quorumId}` },
             (payload) => {
               if (cancelled) return;
-              if (payload.eventType === "INSERT") {
-                setState((prev) => ({
-                  ...prev,
-                  recentContributions: [
-                    ...prev.recentContributions.slice(-19),
-                    {
-                      id: payload.new.id,
-                      role_id: payload.new.role_id,
-                      role_name: payload.new.role_id, // Would need a join for real name
-                      content: payload.new.content,
-                      created_at: payload.new.created_at,
-                    },
-                  ],
-                }));
+              if (payload.eventType === "INSERT" || payload.eventType === "UPDATE") {
+                // Both events carry the row — UPDATE is used by the
+                // contribution analyzer to backfill analysis_tags / deltas
+                // / rationale moments after the initial INSERT.  We merge
+                // on id so a single row never appears twice.
+                setState((prev) => {
+                  const row = payload.new as Record<string, unknown>;
+                  const incoming = {
+                    id: String(row.id),
+                    role_id: String(row.role_id),
+                    role_name: String(row.role_id), // Would need a join for real name
+                    content: String(row.content ?? ""),
+                    created_at: String(row.created_at ?? new Date().toISOString()),
+                    analysis_tags: Array.isArray(row.analysis_tags)
+                      ? (row.analysis_tags as string[])
+                      : undefined,
+                    analysis_deltas:
+                      row.analysis_deltas && typeof row.analysis_deltas === "object"
+                        ? (row.analysis_deltas as Record<string, number>)
+                        : undefined,
+                    analysis_rationale:
+                      typeof row.analysis_rationale === "string"
+                        ? (row.analysis_rationale as string)
+                        : undefined,
+                  };
+                  const existingIdx = prev.recentContributions.findIndex(
+                    (c) => c.id === incoming.id,
+                  );
+                  let next;
+                  if (existingIdx >= 0) {
+                    next = prev.recentContributions.slice();
+                    next[existingIdx] = { ...next[existingIdx], ...incoming };
+                  } else {
+                    next = [...prev.recentContributions.slice(-19), incoming];
+                  }
+                  return { ...prev, recentContributions: next };
+                });
               }
             },
           )
@@ -246,12 +269,23 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
             // observed when the channel subscribes faster than the initial
             // fetch completes).
             history: prev.history.length > seedHistory.length ? prev.history : seedHistory,
-            recentContributions: contribs.slice(-20).map((c: Record<string, string>) => ({
-              id: c.id,
-              role_id: c.role_id,
-              role_name: c.role_id,
-              content: c.content,
-              created_at: c.created_at,
+            recentContributions: contribs.slice(-20).map((c: Record<string, unknown>) => ({
+              id: String(c.id),
+              role_id: String(c.role_id),
+              role_name: String(c.role_id),
+              content: String(c.content ?? ""),
+              created_at: String(c.created_at ?? ""),
+              analysis_tags: Array.isArray(c.analysis_tags)
+                ? (c.analysis_tags as string[])
+                : undefined,
+              analysis_deltas:
+                c.analysis_deltas && typeof c.analysis_deltas === "object"
+                  ? (c.analysis_deltas as Record<string, number>)
+                  : undefined,
+              analysis_rationale:
+                typeof c.analysis_rationale === "string"
+                  ? (c.analysis_rationale as string)
+                  : undefined,
             })),
             llmDeltas: initialDeltas,
             llmRationales: initialRationales,

@@ -21,6 +21,10 @@ from quorum_llm import (
     generate_artifact,
     synthesize_contributions,
 )
+from quorum_llm.contribution_analyzer import (
+    ContributionAnalysis,
+    analyze_contribution,
+)
 from quorum_llm.metric_deltas import (
     append_rationale,
     apply_deltas_to_running_total,
@@ -397,9 +401,11 @@ async def contribute(quorum_id: str, body: ContributeRequest):
     # (an attendee at the expo could otherwise pass a foreign role_id and
     # land contributions into another live quorum's artifact). Uses the
     # same supabase-py pattern as elsewhere in this file (maybe_single).
+    # We also pull name + authority_rank here so the Tier-2 analyzer doesn't
+    # have to re-query — saves one round trip per contribution.
     role_check = (
         db.table("roles")
-        .select("quorum_id")
+        .select("quorum_id, name, authority_rank")
         .eq("id", body.role_id)
         .maybe_single()
         .execute()
@@ -409,6 +415,8 @@ async def contribute(quorum_id: str, body: ContributeRequest):
             status_code=422,
             detail="role_id does not belong to this quorum",
         )
+    role_name = role_check.data.get("name") or ""
+    role_authority_rank = int(role_check.data.get("authority_rank") or 0)
 
     # Activate quorum on first contribution
     if quorum.data["status"] == "open":
@@ -435,6 +443,44 @@ async def contribute(quorum_id: str, body: ContributeRequest):
         "type": "contribution",
         "data": contrib_row,
     })
+
+    # --- Tier-2 contribution analyzer (LLM-scored tags + per-metric deltas) ---
+    # One structured-output call per contribution.  Replaces the stopword
+    # tag extractor for the chart-pill / chart-line path specifically.  If
+    # the LLM call fails (network, parse, budget) we log + fall through —
+    # the contribution is already persisted and the deterministic baseline
+    # health-score path below still runs.
+    contrib_analysis: ContributionAnalysis | None = None
+    try:
+        contrib_analysis = await analyze_contribution(
+            content=body.content or "",
+            role_name=role_name,
+            role_authority_rank=role_authority_rank,
+            llm_provider=llm_provider,
+        )
+        # Persist analysis on the contribution row so it surfaces in chart
+        # hover popovers and survives reloads.
+        try:
+            db.table("contributions").update({
+                "analysis_tags": list(contrib_analysis.tags),
+                "analysis_deltas": dict(contrib_analysis.score_deltas),
+                "analysis_rationale": contrib_analysis.rationale,
+            }).eq("id", contribution_id).execute()
+        except Exception:
+            logger.warning(
+                "contribute: failed to persist analysis for contribution=%s",
+                contribution_id,
+                exc_info=True,
+            )
+    except Exception:
+        logger.warning(
+            "contribute: contribution analyzer failed for quorum=%s role=%s; "
+            "falling through to deterministic baseline",
+            quorum_id,
+            body.role_id,
+            exc_info=True,
+        )
+        contrib_analysis = None
 
     # --- Resolve blocked_by dependencies ---
     await resolve_dependencies(quorum_id, body.role_id, db)
@@ -490,7 +536,22 @@ async def contribute(quorum_id: str, body: ContributeRequest):
     # facilitator manually annotate "this contribution introduced a blocker"
     # without firing an agent turn.  Mirrors the agent path: load → decay →
     # add → clamp → persist.
+    #
+    # The Tier-2 analyzer above ALSO produces deltas (LLM-scored) — these
+    # are the primary signal now.  We merge the two: analyzer first, then
+    # any explicit `[scores: ...]` block in the user content overrides
+    # on a per-metric basis.  This way the chart always moves on every
+    # contribution (analyzer), but a facilitator can still hand-annotate.
     user_deltas, user_why = extract_score_deltas(body.content or "")
+    analyzer_deltas: dict[str, float] = (
+        dict(contrib_analysis.score_deltas) if contrib_analysis else {}
+    )
+    analyzer_why: str | None = contrib_analysis.rationale if contrib_analysis else None
+    merged_deltas: dict[str, float] = dict(analyzer_deltas)
+    merged_deltas.update(user_deltas)  # explicit block wins per-key
+    # Rationale: prefer the user's explicit `[scores-why: ...]` if present,
+    # otherwise the analyzer's rationale.
+    merged_why: str | None = user_why or analyzer_why
     llm_deltas_running: dict[str, float] = {}
     llm_rationales: list[dict] = []
     try:
@@ -504,15 +565,15 @@ async def contribute(quorum_id: str, body: ContributeRequest):
         delta_data = (delta_row.data if delta_row else None) or {}
         existing_running = delta_data.get("llm_metric_deltas") or {}
         existing_rationales = delta_data.get("llm_metric_rationales") or []
-        if user_deltas:
+        if merged_deltas:
             llm_deltas_running = apply_deltas_to_running_total(
-                existing_running, user_deltas
+                existing_running, merged_deltas
             )
             llm_rationales = append_rationale(
                 existing_rationales,
                 ts=datetime.now(timezone.utc).isoformat(),
-                deltas=user_deltas,
-                why=user_why,
+                deltas=merged_deltas,
+                why=merged_why,
             )
         else:
             # No new deltas — preserve the existing accumulator so the
@@ -528,10 +589,10 @@ async def contribute(quorum_id: str, body: ContributeRequest):
     # Save health score + per-metric breakdown to quorum.  The `metrics`
     # column feeds the frontend's Postgres realtime subscription so the
     # secondary lines on the Quorum Health Chart update live too.  When the
-    # user contribution contained a [scores: ...] block, also persist the
-    # updated llm deltas + rationales in the same UPDATE.
+    # analyzer or a user-emitted [scores: ...] block produced deltas, also
+    # persist the updated llm deltas + rationales in the same UPDATE.
     update_payload: dict = {"heat_score": health_score, "metrics": metrics}
-    if user_deltas:
+    if merged_deltas:
         update_payload["llm_metric_deltas"] = llm_deltas_running
         update_payload["llm_metric_rationales"] = llm_rationales
     db.table("quorums").update(update_payload).eq("id", quorum_id).execute()

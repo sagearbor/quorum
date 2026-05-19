@@ -1,6 +1,6 @@
 "use client";
 
-import { useParams } from "next/navigation";
+import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { DashboardCarousel } from "@/components/carousel/DashboardCarousel";
@@ -18,7 +18,18 @@ interface RoleStatus {
 
 export default function DisplayPage() {
   const params = useParams<{ slug: string }>();
+  const searchParams = useSearchParams();
   const slug = params.slug;
+
+  // URL overrides for demo control:
+  //   ?mode=multi-view  → force the dashboards-rotating layout (default for 3+ quorums
+  //                       would be multi-quorum which only rotates health charts)
+  //   ?quorum=<id>      → restrict display to a single quorum (lets multi-view
+  //                       rotate all 7 dashboards over one quorum)
+  const modeParam = searchParams.get("mode");
+  const quorumFilter = searchParams.get("quorum");
+  const modeOverride =
+    modeParam === "multi-view" || modeParam === "multi-quorum" ? modeParam : undefined;
 
   const [quorumIds, setQuorumIds] = useState<string[]>([]);
 
@@ -29,7 +40,12 @@ export default function DisplayPage() {
         const res = await fetch(`/api/events/${slug}/quorum-ids`);
         if (res.ok) {
           const ids: string[] = await res.json();
-          if (ids.length > 0) { setQuorumIds(ids); return; }
+          if (ids.length > 0) {
+            // If ?quorum=<id> is set, restrict to that one (lets multi-view
+            // rotate all dashboards for a single quorum demo).
+            setQuorumIds(quorumFilter ? ids.filter((id) => id === quorumFilter) : ids);
+            return;
+          }
         }
       } catch { /* fall through */ }
       // API unavailable or no quorums yet — show empty state
@@ -38,7 +54,7 @@ export default function DisplayPage() {
     loadQuorums();
     const interval = setInterval(loadQuorums, 30_000);
     return () => clearInterval(interval);
-  }, [slug]);
+  }, [slug, quorumFilter]);
 
   const [roleStatuses, setRoleStatuses] = useState<RoleStatus[]>([]);
   const [unblockedIds, setUnblockedIds] = useState<Set<string>>(new Set());
@@ -194,6 +210,7 @@ export default function DisplayPage() {
         <DashboardCarousel
           eventSlug={slug}
           quorumIds={quorumIds}
+          mode={modeOverride}
           intervalMs={25_000}
         />
       </main>

@@ -5,6 +5,10 @@ import { motion } from "framer-motion";
 import { QuorumHealthChart } from "@/components/dashboards/QuorumHealthChart";
 import { AgentDocumentDashboard } from "@/components/dashboards/AgentDocumentDashboard";
 import { AgentAffinityGraphPanel } from "@/components/dashboards/AgentAffinityGraphPanel";
+import { RoleCoverageMap } from "@/components/dashboards/RoleCoverageMap";
+import { ContributionTimeline } from "@/components/dashboards/ContributionTimeline";
+import { ConflictTopologyMap } from "@/components/dashboards/ConflictTopologyMap";
+import { DecisionWaterfall } from "@/components/dashboards/DecisionWaterfall";
 import { AvatarPanel } from "@/components/avatar/AvatarPanel";
 import { useShowAvatars } from "@/hooks/useShowAvatars";
 
@@ -17,7 +21,15 @@ interface DashboardCarouselProps {
   intervalMs?: number;
 }
 
-type PanelType = "health" | "facilitator" | "documents" | "affinity";
+type PanelType =
+  | "health"
+  | "facilitator"
+  | "documents"
+  | "affinity"
+  | "role_coverage"
+  | "timeline"
+  | "conflict_topology"
+  | "decision_waterfall";
 
 interface PanelConfig {
   key: string;
@@ -190,6 +202,14 @@ export function DashboardCarousel({
                       <AgentDocumentDashboard quorumId={panel.quorumId} />
                     ) : panel.type === "affinity" ? (
                       <AgentAffinityGraphPanel quorumId={panel.quorumId} />
+                    ) : panel.type === "role_coverage" ? (
+                      <RoleCoverageMap quorumId={panel.quorumId} />
+                    ) : panel.type === "timeline" ? (
+                      <ContributionTimeline quorumId={panel.quorumId} />
+                    ) : panel.type === "conflict_topology" ? (
+                      <ConflictTopologyMap quorumId={panel.quorumId} />
+                    ) : panel.type === "decision_waterfall" ? (
+                      <DecisionWaterfall quorumId={panel.quorumId} />
                     ) : (
                       <QuorumHealthChart quorumId={panel.quorumId} />
                     )}
@@ -221,12 +241,22 @@ function usePanelPairs(mode: CarouselMode, quorumIds: string[]): PanelConfig[][]
         { key: `${qId}-health-1`, quorumId: qId, label: "Quorum Health", type: "health" },
         { key: "avatar", quorumId: qId, label: "AI Facilitator", type: "facilitator" },
       ],
-      // Slide 2 — Affinity (with view toggle) × Health
+      // Slide 2 — Affinity × Conflict Map (who works together vs. who clashes)
       [
         { key: `${qId}-affinity`, quorumId: qId, label: "Agent Affinity", type: "affinity" },
+        { key: `${qId}-conflict`, quorumId: qId, label: "Conflict Map", type: "conflict_topology" },
+      ],
+      // Slide 3 — Role Coverage × Decision Waterfall (who's covered, where decisions cascade)
+      [
+        { key: `${qId}-coverage`, quorumId: qId, label: "Role Coverage", type: "role_coverage" },
+        { key: `${qId}-waterfall`, quorumId: qId, label: "Decision Waterfall", type: "decision_waterfall" },
+      ],
+      // Slide 4 — Timeline × Health (chronological + composite recap)
+      [
+        { key: `${qId}-timeline`, quorumId: qId, label: "Contribution Timeline", type: "timeline" },
         { key: `${qId}-health-2`, quorumId: qId, label: "Quorum Health", type: "health" },
       ],
-      // Slide 3 — Reference Documents × Affinity
+      // Slide 5 — Documents × Affinity (evidence base + agent topology)
       [
         { key: `${qId}-documents`, quorumId: qId, label: "Reference Documents", type: "documents" },
         { key: `${qId}-affinity-2`, quorumId: qId, label: "Agent Affinity", type: "affinity" },

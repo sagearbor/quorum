@@ -108,8 +108,12 @@ function RoleDropdown({
               onClick={(e) => {
                 e.stopPropagation();
                 stationCounter++;
+                // Include ?role= so the quorum page auto-selects this role
+                // on landing — no GUI tap needed, and the URL is shareable
+                // (e.g. "open this on station laptop 2" lands directly on
+                // the assigned persona).
                 router.push(
-                  `/event/${slug}/quorum/${quorumId}?station=${stationCounter}`
+                  `/event/${slug}/quorum/${quorumId}?station=${stationCounter}&role=${encodeURIComponent(role.name)}`
                 );
               }}
               className="w-full text-left px-3 py-2 text-sm hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2"

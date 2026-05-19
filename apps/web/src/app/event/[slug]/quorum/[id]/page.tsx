@@ -13,6 +13,7 @@ import { enqueue } from "@/lib/offlineQueue";
 import type { Role, Contribution, ContributeRequest } from "@quorum/types";
 import { AvatarPanel } from "@/components/avatar/AvatarPanel";
 import { useShowAvatars } from "@/hooks/useShowAvatars";
+import { useAutoPromote } from "@/hooks/useAutoPromote";
 import { ConversationThread } from "@/components/conversation/ConversationThread";
 import { DocumentPanel } from "@/components/documents/DocumentPanel";
 import { useStationConversation } from "@/hooks/useStationConversation";
@@ -265,6 +266,9 @@ export default function QuorumPage() {
   // means cross-station audio bleed otherwise. User opts in via the Audio toggle.
   const [audioMuted, setAudioMuted] = useState(true);
   const { showAvatars } = useShowAvatars();
+  // Auto-promote toggle — persisted per-browser, mirrored to the
+  // ``quorums.auto_promote_chat`` column so process_agent_turn gates on it.
+  const { autoPromote, toggleAutoPromote } = useAutoPromote(quorumId);
 
   // Webcam availability — only enable emotion tracking when a camera is present.
   const [hasWebcam, setHasWebcam] = useState(false);
@@ -691,6 +695,35 @@ export default function QuorumPage() {
               )}
             </div>
             <div className="flex items-center gap-1.5 flex-shrink-0">
+              {/* Auto-promote toggle — pill with a status dot.  ON = agent
+                  chat turns flow into contributions when the analyzer scores
+                  them above the threshold (chart moves during conversation).
+                  OFF = chart only moves on explicit /contribute submissions. */}
+              <button
+                type="button"
+                onClick={toggleAutoPromote}
+                data-testid="auto-promote-toggle"
+                aria-pressed={autoPromote}
+                title={
+                  autoPromote
+                    ? "Auto-promote chat: ON — agent replies become contributions when contribution-worthy"
+                    : "Auto-promote chat: OFF — chart only moves on explicit Submit Contribution"
+                }
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                  autoPromote
+                    ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 dark:bg-emerald-500/10 dark:text-emerald-300"
+                    : "bg-gray-100 text-gray-500 hover:bg-gray-200 dark:bg-gray-800 dark:text-gray-400"
+                }`}
+              >
+                <span
+                  className={`inline-block w-1.5 h-1.5 rounded-full ${
+                    autoPromote ? "bg-emerald-500" : "bg-gray-400"
+                  }`}
+                  aria-hidden
+                />
+                <span className="hidden sm:inline">Auto-promote chat</span>
+                <span className="sm:hidden">Auto</span>
+              </button>
               <Link
                 href={`/display/${slug}`}
                 data-testid="dashboard-link"

@@ -664,6 +664,32 @@ async def _process_agent_turn_impl(
                 exc_info=True,
             )
 
+    # --- 11.7. Auto-promote contribution-worthy chat turns ----------------
+    # When ``quorums.auto_promote_chat`` is TRUE (default), score this reply
+    # with the Tier-2 contribution analyzer.  If the resulting deltas have a
+    # high enough magnitude (sum of abs ≥ threshold) we treat the reply as a
+    # committed contribution and insert a row into ``contributions`` so the
+    # chart moves on its own during conversation.  Best-effort: any failure
+    # here is logged but never unwinds the turn.
+    try:
+        await _maybe_auto_promote_contribution(
+            db=db,
+            quorum_id=quorum_id,
+            role_id=role_id,
+            role_name=role_name,
+            authority_rank=authority_rank,
+            reply_text=reply,
+            reply_tags=reply_tags,
+            llm_provider=llm_provider,
+        )
+    except Exception:
+        logger.warning(
+            "agent_engine: auto-promote failed for quorum=%s role=%s",
+            quorum_id,
+            role_id,
+            exc_info=True,
+        )
+
     # --- 12. Publish insight if reply is substantive (>50 chars) ---
     if len(reply.strip()) > 50:
         await _publish_insight(
@@ -1391,6 +1417,221 @@ async def _publish_insight(
         }))
     except Exception:
         logger.warning("agent_engine: failed to publish insight", exc_info=True)
+
+
+# ---------------------------------------------------------------------------
+# Auto-promote chat-turn contributions
+# ---------------------------------------------------------------------------
+#
+# When the per-quorum ``auto_promote_chat`` flag is TRUE we let the AI agent's
+# own reply become a ``contributions`` row whenever the reply is judged a
+# real commitment / position statement.  This lets an expo visitor just chat
+# and see the chart move — no need to find the structured form.
+#
+# Threshold: sum(|score_delta|) over all five canonical metrics ≥ 15. The
+# Tier-2 analyzer clamps each per-metric delta to [-20, +20] so 15 is
+# roughly "the LLM scored at least one meaningful nudge".  A small commitment
+# (e.g. "I'd like to think about this more") tends to score 0; a definite
+# stance ("we should require red-teaming") tends to score 15-40.
+#
+# This threshold can be raised by setting ``QUORUM_AUTO_PROMOTE_THRESHOLD``
+# in the environment.
+
+import os
+
+_DEFAULT_AUTO_PROMOTE_THRESHOLD = 15.0
+
+
+def _auto_promote_threshold() -> float:
+    """Resolve the contribution-worthy threshold (sum of |deltas|)."""
+    raw = os.getenv("QUORUM_AUTO_PROMOTE_THRESHOLD")
+    if raw:
+        try:
+            v = float(raw)
+            if v > 0:
+                return v
+        except (TypeError, ValueError):
+            pass
+    return _DEFAULT_AUTO_PROMOTE_THRESHOLD
+
+
+async def _maybe_auto_promote_contribution(
+    *,
+    db,
+    quorum_id: str,
+    role_id: str,
+    role_name: str,
+    authority_rank: int,
+    reply_text: str,
+    reply_tags: list[str],
+    llm_provider,
+) -> str | None:
+    """If the agent reply is contribution-worthy, insert a ``contributions`` row.
+
+    Steps:
+      1. Read ``quorums.auto_promote_chat`` (default TRUE).  Skip if FALSE.
+      2. Run the Tier-2 ``analyze_contribution`` analyzer over the reply.
+      3. If sum(|score_deltas|) ≥ threshold, INSERT a ``contributions`` row
+         with ``user_token = 'ai-agent'``, ``structured_fields = {}``,
+         ``tier_processed = 1``, plus the analyzer's tags/deltas/rationale on
+         the existing analysis_* columns from 20260519000001.
+      4. Apply the analyzer's deltas to the running ``llm_metric_deltas``
+         accumulator and persist.
+      5. Broadcast a ``contribution`` event so the chart picks up the row.
+
+    Returns the new contribution_id on promotion, or None when skipped.
+
+    Never raises — failures are logged and swallowed.
+    """
+    body = (reply_text or "").strip()
+    if not body:
+        return None
+
+    # --- 1. Flag check ------------------------------------------------------
+    try:
+        flag_row = await aexec(
+            db.table("quorums")
+            .select("auto_promote_chat, llm_metric_deltas, llm_metric_rationales")
+            .eq("id", quorum_id)
+            .maybe_single()
+        )
+        flag_data = (flag_row.data if flag_row else None) or {}
+    except Exception:
+        logger.debug(
+            "auto_promote: could not read auto_promote_chat flag for quorum=%s",
+            quorum_id,
+            exc_info=True,
+        )
+        flag_data = {}
+
+    # Default ON — the migration sets the column DEFAULT to true, but an older
+    # row that pre-dated the migration could surface as None; treat None as ON
+    # so the demo behaviour matches the migration intent.
+    auto_promote_enabled = flag_data.get("auto_promote_chat")
+    if auto_promote_enabled is False:
+        return None
+
+    # --- 2. Score the reply -------------------------------------------------
+    try:
+        # Lazy import: avoid pulling the analyzer at module import time so the
+        # API still boots when ``quorum_llm`` is partially stubbed in tests.
+        from quorum_llm.contribution_analyzer import analyze_contribution
+
+        analysis = await analyze_contribution(
+            content=body,
+            role_name=role_name or "unknown",
+            role_authority_rank=int(authority_rank or 0),
+            llm_provider=llm_provider,
+        )
+    except Exception:
+        logger.debug(
+            "auto_promote: analyzer failed for quorum=%s role=%s",
+            quorum_id,
+            role_id,
+            exc_info=True,
+        )
+        return None
+
+    score_deltas: dict[str, float] = dict(getattr(analysis, "score_deltas", {}) or {})
+    magnitude = sum(abs(float(v)) for v in score_deltas.values())
+    threshold = _auto_promote_threshold()
+
+    if magnitude < threshold:
+        logger.debug(
+            "auto_promote: skip (magnitude=%.2f < threshold=%.2f) for quorum=%s",
+            magnitude,
+            threshold,
+            quorum_id,
+        )
+        return None
+
+    # --- 3. Insert the contribution row ------------------------------------
+    contribution_id = str(uuid.uuid4())
+    analysis_tags = list(getattr(analysis, "tags", []) or [])
+    analysis_rationale = getattr(analysis, "rationale", "") or ""
+    row = {
+        "id": contribution_id,
+        "quorum_id": quorum_id,
+        "role_id": role_id,
+        "user_token": "ai-agent",
+        "content": body,
+        "structured_fields": {},
+        "tier_processed": 1,
+        # Persist analyzer output on the same columns the /contribute route
+        # uses (added in 20260519000001) so the chart popover audit trail
+        # works the same way for AI-promoted rows.
+        "analysis_tags": analysis_tags,
+        "analysis_deltas": score_deltas,
+        "analysis_rationale": analysis_rationale,
+    }
+    try:
+        await aexec(db.table("contributions").insert(row))
+    except Exception:
+        logger.warning(
+            "auto_promote: failed to insert contribution for quorum=%s role=%s",
+            quorum_id,
+            role_id,
+            exc_info=True,
+        )
+        return None
+
+    # --- 4. Apply the analyzer deltas to the running accumulator -----------
+    try:
+        existing_running = flag_data.get("llm_metric_deltas") or {}
+        existing_rationales = flag_data.get("llm_metric_rationales") or []
+        new_running = apply_deltas_to_running_total(existing_running, score_deltas)
+        new_rationales = append_rationale(
+            existing_rationales,
+            ts=_now_iso(),
+            deltas=score_deltas,
+            why=f"[auto] {analysis_rationale}" if analysis_rationale else "[auto] contribution-worthy chat turn",
+        )
+        await aexec(
+            db.table("quorums").update({
+                "llm_metric_deltas": new_running,
+                "llm_metric_rationales": new_rationales,
+            }).eq("id", quorum_id)
+        )
+    except Exception:
+        logger.warning(
+            "auto_promote: failed to update llm_metric_deltas for quorum=%s",
+            quorum_id,
+            exc_info=True,
+        )
+        new_running = {}
+        new_rationales = []
+
+    # --- 5. Broadcast so the frontend picks up the new contribution -------
+    try:
+        from ws_manager import manager  # type: ignore
+
+        await manager.broadcast(quorum_id, {
+            "type": "contribution",
+            "data": {**row, "auto_promoted": True},
+        })
+        await manager.broadcast(quorum_id, {
+            "type": "health_update",
+            "data": {
+                "llm_deltas": new_running,
+                "llm_rationales": new_rationales[-5:] if new_rationales else [],
+            },
+        })
+    except Exception:
+        logger.debug(
+            "auto_promote: ws broadcast failed for quorum=%s",
+            quorum_id,
+            exc_info=True,
+        )
+
+    logger.info(
+        "auto_promote: promoted chat turn -> contribution=%s "
+        "(quorum=%s role=%s magnitude=%.2f)",
+        contribution_id,
+        quorum_id,
+        role_id,
+        magnitude,
+    )
+    return contribution_id
 
 
 async def _notify_relevant_agents(

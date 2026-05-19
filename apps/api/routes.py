@@ -1744,6 +1744,36 @@ async def update_autonomy(quorum_id: str, body: dict):
 
 
 # ---------------------------------------------------------------------------
+# PATCH /quorums/{quorum_id}/auto-promote-chat
+# ---------------------------------------------------------------------------
+@router.patch("/quorums/{quorum_id}/auto-promote-chat")
+async def update_auto_promote_chat(quorum_id: str, body: dict):
+    """Toggle whether agent chat replies auto-promote into ``contributions``.
+
+    When enabled (the column default), ``process_agent_turn`` runs the Tier-2
+    analyzer on every agent reply; replies that score above the
+    contribution-worthy threshold land as new contribution rows so the chart
+    moves on its own during conversation.  See
+    ``agent_engine._maybe_auto_promote_contribution``.
+    """
+    raw = body.get("auto_promote_chat")
+    if not isinstance(raw, bool):
+        raise HTTPException(
+            status_code=422,
+            detail="auto_promote_chat must be a boolean",
+        )
+
+    db = get_supabase()
+    # Verify the quorum exists so we don't silently no-op on a typo'd id.
+    _fetch_single(db, "quorums", "id", quorum_id, select="id", label="Quorum")
+    db.table("quorums").update(
+        {"auto_promote_chat": raw}
+    ).eq("id", quorum_id).execute()
+
+    return {"quorum_id": quorum_id, "auto_promote_chat": raw}
+
+
+# ---------------------------------------------------------------------------
 # POST /sessions/participant — mint a participant on QR scan / laptop load
 # ---------------------------------------------------------------------------
 @router.post(

@@ -1,6 +1,10 @@
 """quorum_llm — Pluggable LLM provider package for Quorum."""
 
 from quorum_llm.budget import BudgetGuard, guarded_complete
+from quorum_llm.contribution_analyzer import (
+    ContributionAnalysis,
+    analyze_contribution,
+)
 from quorum_llm.factory import get_llm_provider
 from quorum_llm.interface import LLMProvider
 from quorum_llm.providers.mock import MockLLMProvider
@@ -50,6 +54,9 @@ __all__ = [
     "synthesize_contributions",
     "detect_conflicts",
     "generate_artifact",
+    # Contribution analyzer (Tier 2 per-contribution scoring)
+    "ContributionAnalysis",
+    "analyze_contribution",
     # Tier 1
     "extract_keywords",
     "deduplicate_contributions",

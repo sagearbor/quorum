@@ -143,7 +143,7 @@ def _install_quorum_llm_mock() -> None:
     sys.modules["quorum_llm"] = pkg
 
     # Sub-module stubs that are imported by name in various files
-    for sub in ("interface", "models", "factory", "providers.mock", "tier1", "affinity", "conversation", "metric_deltas"):
+    for sub in ("interface", "models", "factory", "providers.mock", "tier1", "affinity", "conversation", "metric_deltas", "contribution_analyzer"):
         full = f"quorum_llm.{sub}"
         if full not in sys.modules:
             stub = types.ModuleType(full)
@@ -273,6 +273,25 @@ def _install_quorum_llm_mock() -> None:
                 stub.extract_score_deltas = _stub_extract_score_deltas
                 stub.apply_deltas_to_running_total = _stub_apply_deltas_to_running_total
                 stub.append_rationale = _stub_append_rationale
+            elif sub == "contribution_analyzer":
+                # Stub for quorum_llm.contribution_analyzer — returns a
+                # deterministic-but-empty analysis.  Real impl lives in
+                # packages/llm/quorum_llm/contribution_analyzer.py and has
+                # its own dedicated tests; the API route tests just need
+                # the import to resolve.
+                from dataclasses import dataclass, field
+
+                @dataclass
+                class _ContributionAnalysis:
+                    tags: list = field(default_factory=lambda: ["mock", "stub", "analysis"])
+                    score_deltas: dict = field(default_factory=dict)
+                    rationale: str = "stub rationale"
+
+                async def _stub_analyze_contribution(content, role_name, role_authority_rank, llm_provider):
+                    return _ContributionAnalysis()
+
+                stub.ContributionAnalysis = _ContributionAnalysis
+                stub.analyze_contribution = _stub_analyze_contribution
             sys.modules[full] = stub
 
     # Also wire quorum_llm.providers as a package

@@ -1066,6 +1066,93 @@ def _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num, mode=
         mode,
     )
 
+    # --- Tier-2 contribution analyzer (mirror of routes.contribute) ---
+    # AI-driven auto-contributions get the same LLM scoring so the chart
+    # moves on every contribution regardless of source.  Best-effort: any
+    # failure logs + falls through.
+    try:
+        from datetime import datetime, timezone
+
+        from llm import llm_provider as _autonomy_llm_provider
+        from quorum_llm.contribution_analyzer import analyze_contribution
+        from quorum_llm.metric_deltas import (
+            append_rationale,
+            apply_deltas_to_running_total,
+        )
+
+        # We're in a sync function (called via aexec(lambda: ...)).  Spin up
+        # a dedicated event loop for this analyzer call — safer than
+        # asyncio.get_event_loop().run_until_complete which raises in 3.12+
+        # when the thread has no current loop.
+        _loop = asyncio.new_event_loop()
+        try:
+            analysis = _loop.run_until_complete(
+                analyze_contribution(
+                    content=combined[:2000],
+                    role_name=role.get("name") or "",
+                    role_authority_rank=int(role.get("authority_rank") or 0),
+                    llm_provider=_autonomy_llm_provider,
+                )
+            )
+        finally:
+            _loop.close()
+
+        # Persist analysis on the contribution row.
+        try:
+            db.table("contributions").update({
+                "analysis_tags": list(analysis.tags),
+                "analysis_deltas": dict(analysis.score_deltas),
+                "analysis_rationale": analysis.rationale,
+            }).eq("id", contribution_id).execute()
+        except Exception:
+            logger.warning(
+                "autonomy_loop: failed to persist analysis for contribution=%s",
+                contribution_id,
+                exc_info=True,
+            )
+
+        # Apply deltas to quorum running total.
+        if analysis.score_deltas:
+            try:
+                delta_row = (
+                    db.table("quorums")
+                    .select("llm_metric_deltas, llm_metric_rationales")
+                    .eq("id", quorum_id)
+                    .maybe_single()
+                    .execute()
+                )
+                delta_data = (delta_row.data if delta_row else None) or {}
+                existing_running = delta_data.get("llm_metric_deltas") or {}
+                existing_rationales = delta_data.get("llm_metric_rationales") or []
+                new_running = apply_deltas_to_running_total(
+                    existing_running, dict(analysis.score_deltas)
+                )
+                new_rationales = append_rationale(
+                    existing_rationales,
+                    ts=datetime.now(timezone.utc).isoformat(),
+                    deltas=dict(analysis.score_deltas),
+                    why=analysis.rationale,
+                )
+                db.table("quorums").update({
+                    "llm_metric_deltas": new_running,
+                    "llm_metric_rationales": new_rationales,
+                }).eq("id", quorum_id).execute()
+            except Exception:
+                logger.warning(
+                    "autonomy_loop: failed to persist llm_metric_deltas "
+                    "for quorum=%s",
+                    quorum_id,
+                    exc_info=True,
+                )
+    except Exception:
+        logger.warning(
+            "autonomy_loop: contribution analyzer failed for quorum=%s "
+            "role=%s; falling through",
+            quorum_id,
+            role.get("id"),
+            exc_info=True,
+        )
+
     # Recompute heat_score so /display dashboards see autonomy progress live —
     # mirrors the contribute() route's health block.  Without this, autonomy
     # mode inserts contributions but the chart never UPDATEs the quorums row

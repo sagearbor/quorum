@@ -199,6 +199,34 @@ def _canned_typed_output(output_type, prompt: str):
     if name == "RoleSuggestionList":
         return output_type.model_validate({"roles": _CANNED_ROLE_SUGGESTIONS})
 
+    if name == "ContributionAnalysis":
+        # Deterministic per-contribution analysis for tests.  Choose tags
+        # and deltas that depend on prompt content so different inputs get
+        # distinguishable outputs (helpful when asserting in tests).
+        lower = prompt.lower()
+        tags = ["analysis", "contribution", "quorum"]
+        if "irb" in lower or "safety" in lower or "ethics" in lower:
+            tags = ["safety", "irb_oversight", "ethics", "consent", "regulatory"]
+            deltas = {"consensus": -6.0, "blockers": -10.0, "completion": 4.0}
+            rationale = "IRB-flavoured contribution surfaces a safety concern."
+        elif "dosage" in lower or "dose" in lower:
+            tags = ["dosage", "pharmacology", "protocol", "treatment"]
+            deltas = {"completion": 6.0, "consensus": 2.0}
+            rationale = "Dosage detail moves the protocol toward resolution."
+        elif "block" in lower or "stuck" in lower or "stop" in lower:
+            tags = ["blocker", "delay", "risk", "escalation"]
+            deltas = {"blockers": -15.0, "critical_path": -8.0}
+            rationale = "Introduces a new blocker on the critical path."
+        else:
+            tags = ["contribution", "discussion", "input", "analysis"]
+            deltas = {"completion": 3.0, "role_coverage": 5.0}
+            rationale = "General contribution advances completion modestly."
+        return output_type.model_validate({
+            "tags": tags,
+            "score_deltas": deltas,
+            "rationale": rationale,
+        })
+
     return output_type.model_validate({})
 
 

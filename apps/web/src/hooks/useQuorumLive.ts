@@ -197,22 +197,39 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
         if (quorum && !cancelled) {
           const finalScore: number = quorum.heat_score ?? 0;
           const contribs = contributions ?? [];
-          // Build history by interpolating scores across contribution timestamps
+          // Prefer the real `metrics` jsonb on the row — written by the API on
+          // every /contribute and /ask and by the autonomy loop on each
+          // auto-contribution.  Falls back to INITIAL_METRICS if the column
+          // is empty (older rows from before the 20260518000003 migration).
+          const rowMetrics: HealthMetrics =
+            (quorum as Record<string, unknown>).metrics &&
+            typeof (quorum as Record<string, unknown>).metrics === "object"
+              ? ((quorum as Record<string, unknown>).metrics as HealthMetrics)
+              : { ...INITIAL_METRICS };
+          // Build history by interpolating scores across contribution timestamps.
+          // For metrics on intermediate points, we don't have time-series history
+          // in the DB so we use the current row metrics — secondary lines render
+          // as a flat baseline until live UPDATE events arrive.
           const seedHistory: HealthSnapshot[] = contribs.map((c: Record<string, unknown>, i: number) => {
             const frac = (i + 1) / Math.max(contribs.length, 1);
             const score = Math.round(finalScore * frac * 10) / 10;
             return {
               timestamp: new Date(c.created_at as string).getTime(),
               score,
-              metrics: {
-                role_coverage_pct: Math.round(Math.min(100, frac * 100 * 1.2) * 10) / 10,
-                completion_pct: Math.round(frac * 60 * 10) / 10,
-                consensus_score: Math.round(30 + frac * 20 * 10) / 10,
-                critical_path_score: 100,
-                blocker_score: 100,
-              },
+              metrics: rowMetrics,
             };
           });
+          // Ensure the chart always has at least one data point on load —
+          // otherwise Recharts renders an empty plot box even when heat_score
+          // is non-zero.  This shows the current state immediately, with new
+          // points appended via realtime UPDATEs as contributions/chats land.
+          if (seedHistory.length === 0) {
+            seedHistory.push({
+              timestamp: Date.now(),
+              score: finalScore,
+              metrics: rowMetrics,
+            });
+          }
           const initialDeltas = _coerceDeltas(
             (quorum as Record<string, unknown>).llm_metric_deltas,
           );
@@ -222,8 +239,13 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
           setState((prev) => ({
             ...prev,
             healthScore: finalScore,
+            metrics: rowMetrics,
             connected: true,
-            history: seedHistory,
+            // Don't clobber history if a realtime UPDATE has already appended
+            // points before this initial-seed setState fires (race condition
+            // observed when the channel subscribes faster than the initial
+            // fetch completes).
+            history: prev.history.length > seedHistory.length ? prev.history : seedHistory,
             recentContributions: contribs.slice(-20).map((c: Record<string, string>) => ({
               id: c.id,
               role_id: c.role_id,

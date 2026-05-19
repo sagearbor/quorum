@@ -21,6 +21,11 @@ from quorum_llm import (
     generate_artifact,
     synthesize_contributions,
 )
+from quorum_llm.metric_deltas import (
+    append_rationale,
+    apply_deltas_to_running_total,
+    extract_score_deltas,
+)
 
 # TODO: migrate to DatabaseProvider from db/factory.py
 from coordination.factory import get_coordination_backend
@@ -477,17 +482,66 @@ async def contribute(quorum_id: str, body: ContributeRequest):
         roles_data.data, all_contribs.data, artifact,
     )
 
+    # --- Parse human contribution text for [scores: ...] block too ---
+    # Rare in practice (most humans won't write the block), but lets a
+    # facilitator manually annotate "this contribution introduced a blocker"
+    # without firing an agent turn.  Mirrors the agent path: load → decay →
+    # add → clamp → persist.
+    user_deltas, user_why = extract_score_deltas(body.content or "")
+    llm_deltas_running: dict[str, float] = {}
+    llm_rationales: list[dict] = []
+    try:
+        delta_row = (
+            db.table("quorums")
+            .select("llm_metric_deltas, llm_metric_rationales")
+            .eq("id", quorum_id)
+            .maybe_single()
+            .execute()
+        )
+        delta_data = (delta_row.data if delta_row else None) or {}
+        existing_running = delta_data.get("llm_metric_deltas") or {}
+        existing_rationales = delta_data.get("llm_metric_rationales") or []
+        if user_deltas:
+            llm_deltas_running = apply_deltas_to_running_total(
+                existing_running, user_deltas
+            )
+            llm_rationales = append_rationale(
+                existing_rationales,
+                ts=datetime.now(timezone.utc).isoformat(),
+                deltas=user_deltas,
+                why=user_why,
+            )
+        else:
+            # No new deltas — preserve the existing accumulator so the
+            # broadcast still carries the latest cumulative reading.
+            llm_deltas_running = dict(existing_running)
+            llm_rationales = list(existing_rationales)
+    except Exception:
+        logger.debug(
+            "contribute: could not read llm_metric_deltas for quorum=%s",
+            quorum_id, exc_info=True,
+        )
+
     # Save health score + per-metric breakdown to quorum.  The `metrics`
     # column feeds the frontend's Postgres realtime subscription so the
-    # secondary lines on the Quorum Health Chart update live too.
-    db.table("quorums").update(
-        {"heat_score": health_score, "metrics": metrics}
-    ).eq("id", quorum_id).execute()
+    # secondary lines on the Quorum Health Chart update live too.  When the
+    # user contribution contained a [scores: ...] block, also persist the
+    # updated llm deltas + rationales in the same UPDATE.
+    update_payload: dict = {"heat_score": health_score, "metrics": metrics}
+    if user_deltas:
+        update_payload["llm_metric_deltas"] = llm_deltas_running
+        update_payload["llm_metric_rationales"] = llm_rationales
+    db.table("quorums").update(update_payload).eq("id", quorum_id).execute()
 
     # Broadcast health update
     await manager.broadcast(quorum_id, {
         "type": "health_update",
-        "data": {"score": health_score, "metrics": metrics},
+        "data": {
+            "score": health_score,
+            "metrics": metrics,
+            "llm_deltas": llm_deltas_running,
+            "llm_rationales": llm_rationales[-5:],
+        },
     })
 
     # --- Agent facilitator turn (optional — requires station_id) ---
@@ -1150,9 +1204,33 @@ async def ask_facilitator(quorum_id: str, station_id: str, body: AskRequest):
         db.table("quorums").update(
             {"heat_score": health_score, "metrics": metrics}
         ).eq("id", quorum_id).execute()
+        # The agent reply itself was processed by ``_apply_llm_metric_deltas``
+        # inside process_agent_turn (above), which has already persisted any
+        # new deltas + rationales.  Reload them here so the broadcast carries
+        # the current cumulative reading alongside the recomputed health
+        # score — same shape as the contribute() broadcast.
+        try:
+            delta_row = (
+                db.table("quorums")
+                .select("llm_metric_deltas, llm_metric_rationales")
+                .eq("id", quorum_id)
+                .maybe_single()
+                .execute()
+            )
+            delta_data = (delta_row.data if delta_row else None) or {}
+            llm_deltas_running = delta_data.get("llm_metric_deltas") or {}
+            llm_rationales = delta_data.get("llm_metric_rationales") or []
+        except Exception:
+            llm_deltas_running = {}
+            llm_rationales = []
         await manager.broadcast(quorum_id, {
             "type": "health_update",
-            "data": {"score": health_score, "metrics": metrics},
+            "data": {
+                "score": health_score,
+                "metrics": metrics,
+                "llm_deltas": llm_deltas_running,
+                "llm_rationales": llm_rationales[-5:],
+            },
         })
     except Exception:
         logger.warning(

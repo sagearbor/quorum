@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type ReactElement } from "react";
+import { useEffect, useMemo, useState, type ReactElement } from "react";
 import {
   LineChart,
   Line,
@@ -12,7 +12,7 @@ import {
   ReferenceLine,
   ResponsiveContainer,
 } from "recharts";
-import { useQuorumLive } from "@/hooks/useQuorumLive";
+import { useQuorumLive, type LLMMetricRationale } from "@/hooks/useQuorumLive";
 import { DashboardInfo } from "./DashboardInfo";
 import type { HealthSnapshot } from "@quorum/types";
 
@@ -22,7 +22,39 @@ const QUORUM_HEALTH_BLURB = `**Quorum Health Chart.** A live snapshot of how clo
 - **Consensus** (purple ■) — how aligned the roles are; drops when new conflicts are detected.
 - **Role Coverage** (green ◆) — how many of the configured roles have actually contributed.
 - **Critical Path** (orange ★) — health of the dependency chain; drops if a high-authority role is blocked.
-- **Path Clear** (pink ✚) — inverse of blocker count; lower means more decisions are stuck.`;
+- **Path Clear** (pink ✚) — inverse of blocker count; lower means more decisions are stuck.
+
+**Live signals.** When the **Live signals** toggle is **ON** (default), AI agent personas can pull these lines up or down based on what they detect during conversation — e.g. a flagged IRB issue pulls **Path Clear** down with a rationale shown on hover.  When **OFF**, the chart shows only the deterministic baseline counts and percentages.  Toggle the pill in the chart header to compare.`;
+
+/** Maps the displayed metric key (HealthMetrics) → short delta key emitted by
+ *  the LLM `[scores: ...]` block (see packages/llm/quorum_llm/metric_deltas.py). */
+const DELTA_KEY_BY_METRIC: Record<
+  "completion_pct" | "consensus_score" | "role_coverage_pct" | "critical_path_score" | "blocker_score",
+  string
+> = {
+  consensus_score: "consensus",
+  completion_pct: "completion",
+  role_coverage_pct: "role_coverage",
+  critical_path_score: "critical_path",
+  blocker_score: "blockers",
+};
+
+const LIVE_SIGNALS_STORAGE_KEY = "quorumLiveSignals";
+
+function readInitialLiveSignals(): boolean {
+  if (typeof window === "undefined") return true;
+  try {
+    const raw = window.localStorage.getItem(LIVE_SIGNALS_STORAGE_KEY);
+    if (raw == null) return true; // default ON
+    return raw === "on";
+  } catch {
+    return true;
+  }
+}
+
+function clamp01_100(n: number): number {
+  return Math.max(0, Math.min(100, n));
+}
 
 interface QuorumHealthChartProps {
   quorumId: string;
@@ -30,6 +62,11 @@ interface QuorumHealthChartProps {
   /** Pass pre-computed history for testing / storybook (bypasses hook) */
   staticHistory?: HealthSnapshot[];
   staticScore?: number;
+  /** Pre-computed LLM deltas for testing (bypasses hook). Short keys, e.g.
+   *  `{ consensus: -8, blockers: +5 }`. */
+  staticDeltas?: Record<string, number>;
+  /** Pre-computed rationales for testing. */
+  staticRationales?: LLMMetricRationale[];
 }
 
 type MetricShape = "triangle" | "square" | "diamond" | "star" | "cross";
@@ -149,10 +186,34 @@ export function QuorumHealthChart({
   threshold = 75,
   staticHistory,
   staticScore,
+  staticDeltas,
+  staticRationales,
 }: QuorumHealthChartProps) {
   const live = useQuorumLive(quorumId);
   const history = staticHistory ?? live.history;
   const score = staticScore ?? live.healthScore;
+  const llmDeltas = staticDeltas ?? live.llmDeltas;
+  const llmRationales = staticRationales ?? live.llmRationales;
+
+  // Live Signals toggle — default ON, persisted in localStorage.
+  const [liveSignalsOn, setLiveSignalsOn] = useState<boolean>(readInitialLiveSignals);
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      window.localStorage.setItem(LIVE_SIGNALS_STORAGE_KEY, liveSignalsOn ? "on" : "off");
+    } catch {
+      // ignore persistence errors (e.g. private-mode storage quota)
+    }
+  }, [liveSignalsOn]);
+
+  /** Apply the cumulative delta for a single metric, clamping to [0, 100].
+   *  Applied BEFORE the *10/10 rounding so the rendered value is correct. */
+  const modulate = (key: keyof typeof DELTA_KEY_BY_METRIC, raw: number): number => {
+    if (!liveSignalsOn) return Math.round(raw * 10) / 10;
+    const deltaKey = DELTA_KEY_BY_METRIC[key];
+    const delta = llmDeltas[deltaKey] ?? 0;
+    return Math.round(clamp01_100(raw + delta) * 10) / 10;
+  };
 
   const data: ChartDatum[] = useMemo(
     () =>
@@ -160,14 +221,25 @@ export function QuorumHealthChart({
         time: formatTime(s.timestamp),
         timestamp: s.timestamp,
         score: Math.round(s.score * 10) / 10,
-        completion_pct: Math.round(s.metrics.completion_pct * 10) / 10,
-        consensus_score: Math.round(s.metrics.consensus_score * 10) / 10,
-        role_coverage_pct: Math.round(s.metrics.role_coverage_pct * 10) / 10,
-        critical_path_score: Math.round(s.metrics.critical_path_score * 10) / 10,
-        blocker_score: Math.round(s.metrics.blocker_score * 10) / 10,
+        completion_pct: modulate("completion_pct", s.metrics.completion_pct),
+        consensus_score: modulate("consensus_score", s.metrics.consensus_score),
+        role_coverage_pct: modulate("role_coverage_pct", s.metrics.role_coverage_pct),
+        critical_path_score: modulate("critical_path_score", s.metrics.critical_path_score),
+        blocker_score: modulate("blocker_score", s.metrics.blocker_score),
       })),
-    [history],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [history, llmDeltas, liveSignalsOn],
   );
+
+  /** Most-recent rationale per short delta key. Used by tooltip when ON. */
+  const latestRationaleByKey = useMemo(() => {
+    const out: Record<string, LLMMetricRationale> = {};
+    for (const r of llmRationales) {
+      // newest last — overwrite to keep latest
+      out[r.metric] = r;
+    }
+    return out;
+  }, [llmRationales]);
 
   return (
     <div className="w-full h-full flex flex-col" style={{minHeight: 0}}>
@@ -177,6 +249,27 @@ export function QuorumHealthChart({
           <div className="flex items-center gap-1.5">
             <h3 className="text-sm font-semibold text-white/90">Quorum Health</h3>
             <DashboardInfo blurb={QUORUM_HEALTH_BLURB} />
+            <button
+              type="button"
+              onClick={() => setLiveSignalsOn((v) => !v)}
+              aria-pressed={liveSignalsOn}
+              title={
+                liveSignalsOn
+                  ? "Live signals ON — AI agents are modulating these lines based on conversation. Click to view deterministic baseline."
+                  : "Live signals OFF — showing deterministic baseline only. Click to enable AI modulation."
+              }
+              className="ml-1 inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-white/70 hover:bg-white/10 transition-colors"
+            >
+              <span
+                aria-hidden="true"
+                className="inline-block h-1.5 w-1.5 rounded-full"
+                style={{
+                  background: liveSignalsOn ? "#34d399" : "rgba(255,255,255,0.35)",
+                  boxShadow: liveSignalsOn ? "0 0 6px rgba(52,211,153,0.7)" : "none",
+                }}
+              />
+              <span>Live signals: {liveSignalsOn ? "ON" : "OFF"}</span>
+            </button>
           </div>
           <div
             className="transition-all duration-700 ease-out"
@@ -211,15 +304,59 @@ export function QuorumHealthChart({
               width={32}
             />
             <Tooltip
-              contentStyle={{
-                background: "rgba(15,15,25,0.95)",
-                border: "1px solid rgba(255,255,255,0.1)",
-                borderRadius: 8,
-                fontSize: 12,
-                color: "#fff",
-              }}
-              labelStyle={{ color: "rgba(255,255,255,0.5)" }}
               cursor={{ stroke: "rgba(255,255,255,0.15)", strokeWidth: 1 }}
+              content={({ active, payload, label }) => {
+                if (!active || !payload || payload.length === 0) return null;
+                // Mapping of label → metric short key, so we can look up rationale.
+                const labelToShortKey: Record<string, string> = {
+                  Completion: "completion",
+                  Consensus: "consensus",
+                  "Role Coverage": "role_coverage",
+                  "Critical Path": "critical_path",
+                  "Path Clear": "blockers",
+                };
+                return (
+                  <div
+                    style={{
+                      background: "rgba(15,15,25,0.95)",
+                      border: "1px solid rgba(255,255,255,0.1)",
+                      borderRadius: 8,
+                      fontSize: 12,
+                      color: "#fff",
+                      padding: "8px 10px",
+                      maxWidth: 280,
+                    }}
+                  >
+                    <div style={{ color: "rgba(255,255,255,0.5)", marginBottom: 4 }}>{label}</div>
+                    {payload.map((p, i) => {
+                      const name = String(p.name ?? "");
+                      const value = typeof p.value === "number" ? p.value : Number(p.value ?? 0);
+                      const shortKey = labelToShortKey[name];
+                      const rationale =
+                        liveSignalsOn && shortKey ? latestRationaleByKey[shortKey] : undefined;
+                      return (
+                        <div key={i} style={{ marginTop: i === 0 ? 0 : 2 }}>
+                          <span style={{ color: String(p.color ?? "#fff") }}>{name}</span>
+                          <span style={{ color: "rgba(255,255,255,0.85)" }}>: {value}</span>
+                          {rationale && rationale.delta !== 0 && (
+                            <div
+                              style={{
+                                color: "rgba(255,255,255,0.65)",
+                                fontSize: 11,
+                                marginLeft: 8,
+                                marginTop: 1,
+                              }}
+                            >
+                              {name}: {rationale.delta > 0 ? "+" : ""}
+                              {rationale.delta} — {rationale.why}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                );
+              }}
             />
             <Legend
               wrapperStyle={{ fontSize: 11, color: "rgba(255,255,255,0.6)" }}

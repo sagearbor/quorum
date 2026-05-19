@@ -3,6 +3,13 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import type { HealthMetrics, HealthSnapshot, StreamContribution, StreamState } from "@quorum/types";
 
+export interface LLMMetricRationale {
+  ts: number;
+  metric: string;
+  delta: number;
+  why: string;
+}
+
 export interface QuorumLiveState {
   healthScore: number;
   metrics: HealthMetrics;
@@ -11,6 +18,10 @@ export interface QuorumLiveState {
   artifact: { status: "draft" | "pending_ratification" | "final"; version: number } | null;
   connected: boolean;
   error: string | null;
+  /** Cumulative LLM-driven deltas per metric key (e.g. "consensus", "blockers"). */
+  llmDeltas: Record<string, number>;
+  /** Recent rationale entries from `[scores-why: ...]` blocks. Newest last. */
+  llmRationales: LLMMetricRationale[];
 }
 
 const INITIAL_METRICS: HealthMetrics = {
@@ -29,7 +40,34 @@ const INITIAL_STATE: QuorumLiveState = {
   artifact: null,
   connected: false,
   error: null,
+  llmDeltas: {},
+  llmRationales: [],
 };
+
+function _coerceRationales(raw: unknown): LLMMetricRationale[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((r): LLMMetricRationale | null => {
+      if (!r || typeof r !== "object") return null;
+      const rec = r as Record<string, unknown>;
+      const metric = typeof rec.metric === "string" ? rec.metric : null;
+      const delta = typeof rec.delta === "number" ? rec.delta : null;
+      const why = typeof rec.why === "string" ? rec.why : "";
+      const ts = typeof rec.ts === "number" ? rec.ts : 0;
+      if (metric == null || delta == null) return null;
+      return { ts, metric, delta, why };
+    })
+    .filter((x): x is LLMMetricRationale => x !== null);
+}
+
+function _coerceDeltas(raw: unknown): Record<string, number> {
+  if (!raw || typeof raw !== "object") return {};
+  const out: Record<string, number> = {};
+  for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+    if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+  }
+  return out;
+}
 
 function isTestMode(): boolean {
   return process.env.NEXT_PUBLIC_QUORUM_TEST_MODE === "true";
@@ -44,7 +82,7 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
   const unsubRef = useRef<(() => void) | null>(null);
 
   const handleUpdate = useCallback((update: StreamState) => {
-    setState({
+    setState((prev) => ({
       healthScore: update.healthScore,
       metrics: update.metrics,
       history: update.history,
@@ -52,7 +90,10 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
       artifact: update.artifact,
       connected: true,
       error: null,
-    });
+      // Mock stream doesn't produce LLM deltas — preserve prior values.
+      llmDeltas: prev.llmDeltas,
+      llmRationales: prev.llmRationales,
+    }));
   }, []);
 
   useEffect(() => {
@@ -131,11 +172,17 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
                   score: heatScore,
                   metrics: incomingMetrics,
                 };
+                // LLM-driven deltas + rationales (added by 20260518000004).
+                // Null/undefined → empty defaults so older rows still work.
+                const incomingDeltas = _coerceDeltas(payload.new.llm_metric_deltas);
+                const incomingRationales = _coerceRationales(payload.new.llm_metric_rationales);
                 return {
                   ...prev,
                   metrics: incomingMetrics,
                   healthScore: heatScore,
                   history: [...prev.history.slice(-59), snapshot],
+                  llmDeltas: incomingDeltas,
+                  llmRationales: incomingRationales,
                 };
               });
             },
@@ -166,6 +213,12 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
               },
             };
           });
+          const initialDeltas = _coerceDeltas(
+            (quorum as Record<string, unknown>).llm_metric_deltas,
+          );
+          const initialRationales = _coerceRationales(
+            (quorum as Record<string, unknown>).llm_metric_rationales,
+          );
           setState((prev) => ({
             ...prev,
             healthScore: finalScore,
@@ -178,6 +231,8 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
               content: c.content,
               created_at: c.created_at,
             })),
+            llmDeltas: initialDeltas,
+            llmRationales: initialRationales,
           }));
         }
 

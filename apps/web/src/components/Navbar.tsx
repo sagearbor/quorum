@@ -50,10 +50,10 @@ export function Navbar() {
           >
             Quorum
             <sub
-              className="text-[9px] font-mono font-normal text-gray-400 dark:text-gray-500 tracking-tighter -ml-0.5"
-              title="Live deploy commit — changes confirm new code is loaded"
+              className="text-[10px] font-mono font-normal text-gray-400 dark:text-gray-500 tracking-tight -ml-0.5"
+              title="App version — bump confirms a fresh deploy is loaded"
             >
-              {(process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA ?? "dev").slice(0, 7)}
+              v0.03
             </sub>
           </Link>
           <div className="flex items-center gap-1">

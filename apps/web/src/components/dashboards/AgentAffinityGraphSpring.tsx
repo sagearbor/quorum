@@ -79,6 +79,10 @@ interface RoleStatusRow {
   status?: string;
   contributions_count?: number;
   blocked_by_names?: string[];
+  authority_rank?: number;
+  /** Persona's persistent domain_tags (from agent_configs).  Used as the
+   *  baseline tag set so affinity has signal before any contributions arrive. */
+  domain_tags?: string[];
 }
 
 interface RoleNode {
@@ -86,6 +90,9 @@ interface RoleNode {
   name: string;
   authorityRank: number;
   color: string;
+  /** Persona's persistent domain_tags — used as the baseline tag set when
+   *  no contributions have arrived yet, so the spring sim has signal at t=0. */
+  domainTags: string[];
 }
 
 interface ContributionRow {
@@ -298,8 +305,9 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
         return {
           id: r.role_id,
           name: r.name,
-          authorityRank: meta?.authority_rank ?? 0,
+          authorityRank: meta?.authority_rank ?? r.authority_rank ?? 0,
           color: meta?.color || FALLBACK_COLORS[i % FALLBACK_COLORS.length],
+          domainTags: r.domain_tags ?? [],
         };
       });
       setRoles(built);
@@ -412,7 +420,17 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
   const radius = Math.min(PANEL_WIDTH, SPRING_PANEL_HEIGHT) / 2 - NODE_RADIUS - 20;
 
   const tagsByRole = useMemo(() => {
+    // Seed every role with its persistent domain_tags so the spring has a
+    // signal even before any contributions arrive.  Without this, a brand-new
+    // quorum shows roles frozen in the default ring and "Agent Affinity"
+    // reads as broken.  Contribution-derived tags are unioned on top so
+    // affinity sharpens as activity flows.
     const map = new Map<string, string[]>();
+    for (const r of roles) {
+      if (r.domainTags && r.domainTags.length > 0) {
+        map.set(r.id, [...r.domainTags]);
+      }
+    }
     for (const c of recentContribs) {
       const tags = extractTagsFromContent(c.content);
       if (tags.length === 0) continue;
@@ -421,7 +439,7 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
       map.set(c.role_id, merged);
     }
     return map;
-  }, [recentContribs]);
+  }, [roles, recentContribs]);
 
   const [targets, setTargets] = useState<Map<string, Vec2>>(new Map());
 

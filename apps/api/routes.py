@@ -726,6 +726,20 @@ async def get_role_status(quorum_id: str):
         db.table("contributions").select("*").eq("quorum_id", quorum_id).execute()
     )
 
+    # Fetch agent_configs so we can return each role's domain_tags + authority
+    # rank — the affinity views need domain_tags to compute meaningful
+    # similarity even before any contributions have arrived.
+    agent_configs = (
+        db.table("agent_configs")
+        .select("role_id, domain_tags")
+        .eq("quorum_id", quorum_id)
+        .execute()
+    )
+    tags_by_role: dict[str, list[str]] = {
+        cfg["role_id"]: cfg.get("domain_tags") or []
+        for cfg in (agent_configs.data or [])
+    }
+
     # Build role_id -> name lookup and contribution counts
     role_map = {r["id"]: r for r in roles.data}
     contrib_counts: dict[str, int] = {}
@@ -742,6 +756,8 @@ async def get_role_status(quorum_id: str):
             "status": role.get("status", "active"),
             "blocked_by_names": blocked_by_names,
             "contributions_count": contrib_counts.get(role["id"], 0),
+            "authority_rank": role.get("authority_rank", 1),
+            "domain_tags": tags_by_role.get(role["id"], []),
         })
 
     return result

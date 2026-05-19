@@ -35,6 +35,8 @@ interface Phase {
   title: string;
   body: string;
   tier?: 1 | 2 | 3 | null;
+  /** Short hover hint — which canvas element to watch for this phase */
+  watch: string;
 }
 
 const PHASES: Phase[] = [
@@ -45,6 +47,7 @@ const PHASES: Phase[] = [
     title: "An architect names the problem.",
     body: "One LLM call generates 4–6 roles — each with persona, authority rank, domain tags, and temperature. No N+1 round-trips.",
     tier: 3,
+    watch: "Watch: hub → roles burst",
   },
   {
     id: "stations",
@@ -53,6 +56,7 @@ const PHASES: Phase[] = [
     title: "People pair to roles.",
     body: "Scan a QR code at any station. Multiple humans rotate through stations during the event.",
     tier: null,
+    watch: "Watch: person glyphs light up",
   },
   {
     id: "contribution",
@@ -61,6 +65,7 @@ const PHASES: Phase[] = [
     title: "Structured input, live signals.",
     body: "Tier 1 keyword extraction runs deterministically (free). Tier 2 conflict detection fires when fields overlap (cheap). The health chart climbs in real time.",
     tier: 1,
+    watch: "Watch: roles → hub ingest + chart climb",
   },
   {
     id: "facilitator",
@@ -69,6 +74,7 @@ const PHASES: Phase[] = [
     title: "Chat freely, agents tag back.",
     body: "Each reply includes a [tags: …] block. Those tags grow the quorum's shared vocabulary and decide who talks to whom next.",
     tier: 2,
+    watch: "Watch: cyan replies surface tags",
   },
   {
     id: "a2a",
@@ -77,6 +83,7 @@ const PHASES: Phase[] = [
     title: "Overlap fires A2A pings.",
     body: "When one agent's tags overlap another agent's domain, they ping each other directly. Amber notifications surface the exchange to humans.",
     tier: 2,
+    watch: "Watch: amber arcs between roles",
   },
   {
     id: "synthesis",
@@ -85,6 +92,7 @@ const PHASES: Phase[] = [
     title: "One Tier-3 call closes the loop.",
     body: "POST /resolve fires a single GPT-4o synthesis over every contribution + agent exchange. Optimistic locking on the artifact write prevents lost updates.",
     tier: 3,
+    watch: "Watch: hub flares + spokes thicken inward",
   },
   {
     id: "artifact",
@@ -93,6 +101,7 @@ const PHASES: Phase[] = [
     title: "An audit-trailed decision.",
     body: "Downloadable. Versioned. Replayable. Plus a real-time dashboard of how the quorum got there.",
     tier: null,
+    watch: "Watch: document glyph emerges above hub",
   },
 ];
 
@@ -142,6 +151,169 @@ const A2A_EDGES: Array<[string, string]> = [
 function polar(angleDeg: number, radius: number) {
   const rad = (angleDeg * Math.PI) / 180;
   return { x: CX + Math.cos(rad) * radius, y: CY + Math.sin(rad) * radius };
+}
+
+/** Build the SVG path d-string for an A2A arc between two points. */
+function a2aPathD(pa: { x: number; y: number }, pb: { x: number; y: number }) {
+  // Quadratic control point bowed toward hub center (matches drawn arc)
+  const mx = (pa.x + pb.x) / 2;
+  const my = (pa.y + pb.y) / 2;
+  const cx = CX + (mx - CX) * 0.45;
+  const cy = CY + (my - CY) * 0.45;
+  return `M ${pa.x} ${pa.y} Q ${cx} ${cy} ${pb.x} ${pb.y}`;
+}
+
+// -----------------------------------------------------------------------------
+// Spring physics — gentle Hooke's law sim on the role ring
+// -----------------------------------------------------------------------------
+
+interface NodeState {
+  id: string;
+  /** Resting (anchor) position — the original ring slot */
+  ax: number;
+  ay: number;
+  /** Current position */
+  x: number;
+  y: number;
+  /** Velocity */
+  vx: number;
+  vy: number;
+}
+
+/**
+ * Custom hook: lightweight spring sim over the 6 role nodes.
+ *
+ * Each node is anchored to its ring position with a soft spring (so they
+ * drift back). When two roles are connected via an active A2A edge, an
+ * additional spring pulls them toward each other (rest length < ring chord).
+ *
+ * Returns `positions[role.id] = { x, y }` for the consumer to read.
+ * When `frozen` is true (e.g. reduce-motion or "all" mode), positions snap
+ * to anchors and the loop short-circuits.
+ */
+function useRoleSpringSim({
+  activeEdges,
+  frozen,
+}: {
+  activeEdges: Array<[string, string]>;
+  frozen: boolean;
+}) {
+  const [positions, setPositions] = useState<Record<string, { x: number; y: number }>>(() => {
+    const m: Record<string, { x: number; y: number }> = {};
+    for (const role of ROLES) {
+      const p = polar(role.angle, RING_R);
+      m[role.id] = { x: p.x, y: p.y };
+    }
+    return m;
+  });
+
+  // Mutable physics state — survives renders without triggering them
+  const stateRef = useRef<NodeState[]>(
+    ROLES.map((r) => {
+      const p = polar(r.angle, RING_R);
+      return { id: r.id, ax: p.x, ay: p.y, x: p.x, y: p.y, vx: 0, vy: 0 };
+    }),
+  );
+
+  const edgesRef = useRef(activeEdges);
+  edgesRef.current = activeEdges;
+  const frozenRef = useRef(frozen);
+  frozenRef.current = frozen;
+
+  useEffect(() => {
+    if (frozen) {
+      // Snap to anchors
+      for (const n of stateRef.current) {
+        n.x = n.ax;
+        n.y = n.ay;
+        n.vx = 0;
+        n.vy = 0;
+      }
+      const snap: Record<string, { x: number; y: number }> = {};
+      for (const n of stateRef.current) snap[n.id] = { x: n.x, y: n.y };
+      setPositions(snap);
+      return;
+    }
+
+    let raf = 0;
+    let lastEmit = 0;
+    const EMIT_MS = 1000 / 30; // 30fps for React state, sim still runs every frame
+    const ANCHOR_K = 0.012; // anchor spring stiffness (low = drifty)
+    const EDGE_K = 0.004; // A2A pull stiffness
+    const REST_FRAC = 0.55; // pull toward each other; rest length = REST_FRAC * default chord
+    const DAMPING = 0.86;
+    const MAX_DELTA = 14; // clamp displacement from anchor
+
+    const tick = (now: number) => {
+      const nodes = stateRef.current;
+      const edges = edgesRef.current;
+
+      // Anchor springs — pull each node back to its slot
+      for (const n of nodes) {
+        const dx = n.ax - n.x;
+        const dy = n.ay - n.y;
+        n.vx += dx * ANCHOR_K;
+        n.vy += dy * ANCHOR_K;
+      }
+
+      // Edge springs — A2A pairs pull together
+      for (const [a, b] of edges) {
+        const na = nodes.find((n) => n.id === a);
+        const nb = nodes.find((n) => n.id === b);
+        if (!na || !nb) continue;
+        const dxA = nb.ax - na.ax;
+        const dyA = nb.ay - na.ay;
+        const restLen = Math.hypot(dxA, dyA) * REST_FRAC;
+        const dx = nb.x - na.x;
+        const dy = nb.y - na.y;
+        const dist = Math.max(Math.hypot(dx, dy), 0.001);
+        const stretch = dist - restLen;
+        const ux = dx / dist;
+        const uy = dy / dist;
+        const f = stretch * EDGE_K;
+        na.vx += ux * f;
+        na.vy += uy * f;
+        nb.vx -= ux * f;
+        nb.vy -= uy * f;
+      }
+
+      // Integrate + damping + clamp
+      for (const n of nodes) {
+        n.vx *= DAMPING;
+        n.vy *= DAMPING;
+        n.x += n.vx;
+        n.y += n.vy;
+        // Clamp distance from anchor
+        const ddx = n.x - n.ax;
+        const ddy = n.y - n.ay;
+        const d = Math.hypot(ddx, ddy);
+        if (d > MAX_DELTA) {
+          const k = MAX_DELTA / d;
+          n.x = n.ax + ddx * k;
+          n.y = n.ay + ddy * k;
+          n.vx *= 0.5;
+          n.vy *= 0.5;
+        }
+      }
+
+      // Emit at ~30fps to React
+      if (now - lastEmit > EMIT_MS) {
+        const snap: Record<string, { x: number; y: number }> = {};
+        for (const n of nodes) snap[n.id] = { x: n.x, y: n.y };
+        setPositions(snap);
+        lastEmit = now;
+      }
+
+      if (!frozenRef.current) {
+        raf = requestAnimationFrame(tick);
+      }
+    };
+
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [frozen]);
+
+  return positions;
 }
 
 // -----------------------------------------------------------------------------
@@ -207,6 +379,20 @@ export function AboutExperience() {
     return new Set([activePhase.id]);
   }, [mode, activePhase.id]);
 
+  // Active A2A edges drive both the drawn arcs AND the spring pulls.
+  // When "all" mode is on, freeze the sim so the diagram reads as a clean ref.
+  // Reduce-motion also freezes.
+  const a2aOn = visible.has("a2a");
+  const physicsFrozen = mode === "all" || Boolean(reduceMotion);
+  const activeEdges = useMemo<Array<[string, string]>>(
+    () => (a2aOn ? A2A_EDGES : []),
+    [a2aOn],
+  );
+  const rolePositions = useRoleSpringSim({
+    activeEdges,
+    frozen: physicsFrozen,
+  });
+
   return (
     <div className="relative min-h-[calc(100vh-3rem)] overflow-hidden bg-[#06070a] text-stone-200">
       {/* --- Backdrop atmosphere -------------------------------------- */}
@@ -239,15 +425,24 @@ export function AboutExperience() {
         <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_360px] gap-8 items-start">
           {/* Diagram canvas */}
           <div className="relative aspect-[4/3] w-full rounded-2xl border border-stone-800/80 bg-gradient-to-br from-stone-950/80 via-[#0a0c12]/90 to-stone-950/40 overflow-hidden">
-            <DiagramCanvas visible={visible} activePhase={activePhase.id} mode={mode} />
+            <DiagramCanvas
+              visible={visible}
+              activePhase={activePhase.id}
+              mode={mode}
+              rolePositions={rolePositions}
+            />
 
             {/* Cost meter (bottom-left) */}
             <CostMeter activeTier={mode === "all" ? null : activePhase.tier ?? null} />
 
             {/* Mini chart (top-right inside canvas) */}
-            <MiniChart activePhase={activePhase.id} mode={mode} />
+            <MiniChart
+              activePhase={activePhase.id}
+              mode={mode}
+              phaseIndex={phaseIndex}
+            />
 
-            {/* Phase caption overlay */}
+            {/* Phase caption overlay — near-opaque so it reads cleanly */}
             <AnimatePresence mode="wait">
               {mode !== "all" && (
                 <motion.div
@@ -256,20 +451,37 @@ export function AboutExperience() {
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -8 }}
                   transition={{ duration: 0.45, ease: [0.22, 1, 0.36, 1] }}
-                  className="absolute bottom-6 left-6 right-6 md:right-auto md:max-w-[58%]"
+                  className="absolute bottom-20 left-5 right-5 md:right-auto md:max-w-[60%]"
                 >
-                  <div className="text-[10px] tracking-[0.32em] uppercase text-amber-300/80">
-                    {activePhase.eyebrow}
-                  </div>
-                  <div className="mt-2 font-serif text-2xl md:text-3xl text-stone-100 leading-tight">
-                    {activePhase.title}
-                  </div>
-                  <div className="mt-2 text-sm text-stone-400 leading-relaxed">
-                    {activePhase.body}
+                  <div className="rounded-xl border border-stone-800/90 bg-[#06070a]/95 backdrop-blur-sm px-5 py-4 shadow-[0_10px_40px_-12px_rgba(0,0,0,0.8)]">
+                    <div className="text-[10px] tracking-[0.32em] uppercase text-amber-300/90">
+                      {activePhase.eyebrow}
+                    </div>
+                    <div className="mt-2 font-serif text-2xl md:text-3xl text-stone-100 leading-tight">
+                      {activePhase.title}
+                    </div>
+                    <div className="mt-2 text-sm text-stone-300 leading-relaxed">
+                      {activePhase.body}
+                    </div>
                   </div>
                 </motion.div>
               )}
             </AnimatePresence>
+
+            {/* In-canvas floating controls (always visible alongside the visual) */}
+            <FloatingControls
+              mode={mode}
+              phaseIndex={phaseIndex}
+              onPrev={() => {
+                if (mode === "auto") setMode("manual");
+                retreat();
+              }}
+              onNext={() => {
+                if (mode === "auto") setMode("manual");
+                advance();
+              }}
+              onTogglePlay={() => setMode((m) => (m === "auto" ? "manual" : "auto"))}
+            />
           </div>
 
           {/* Phase rail (right column) */}
@@ -282,21 +494,6 @@ export function AboutExperience() {
             }}
           />
         </div>
-
-        {/* Controls (sit under the hero) */}
-        <Controls
-          mode={mode}
-          phaseIndex={phaseIndex}
-          onPrev={() => {
-            if (mode === "auto") setMode("manual");
-            retreat();
-          }}
-          onNext={() => {
-            if (mode === "auto") setMode("manual");
-            advance();
-          }}
-          onTogglePlay={() => setMode((m) => (m === "auto" ? "manual" : "auto"))}
-        />
       </section>
 
       {/* --- Long-form prose below ------------------------------------ */}
@@ -325,10 +522,14 @@ interface DiagramProps {
   visible: Set<PhaseId>;
   activePhase: PhaseId;
   mode: Mode;
+  rolePositions: Record<string, { x: number; y: number }>;
 }
 
-function DiagramCanvas({ visible, activePhase, mode }: DiagramProps) {
+function DiagramCanvas({ visible, activePhase, mode, rolePositions }: DiagramProps) {
   // Roles always render — they're the backbone of the diagram
+  const synthActive = activePhase === "synthesis" || mode === "all";
+  const artifactActive = activePhase === "artifact" || mode === "all";
+
   return (
     <svg
       viewBox="0 0 800 720"
@@ -361,6 +562,30 @@ function DiagramCanvas({ visible, activePhase, mode }: DiagramProps) {
           <stop offset="50%" stopColor="rgba(251,191,36,0.85)" />
           <stop offset="100%" stopColor="rgba(251,191,36,0)" />
         </linearGradient>
+        {/* Reusable A2A path definitions — referenced by pulse animateMotion */}
+        {A2A_EDGES.map(([a, b], i) => {
+          const ra = ROLES.find((r) => r.id === a)!;
+          const rb = ROLES.find((r) => r.id === b)!;
+          const fallbackA = polar(ra.angle, RING_R);
+          const fallbackB = polar(rb.angle, RING_R);
+          const pa = rolePositions[a] ?? fallbackA;
+          const pb = rolePositions[b] ?? fallbackB;
+          // Pull arc endpoints slightly inward (matches drawn arc start/end)
+          const shrink = (
+            p: { x: number; y: number },
+            anchor: { x: number; y: number },
+          ) => {
+            const dx = anchor.x - p.x;
+            const dy = anchor.y - p.y;
+            const d = Math.hypot(dx, dy) || 1;
+            return { x: p.x + (dx / d) * 10, y: p.y + (dy / d) * 10 };
+          };
+          const start = shrink(pa, { x: CX, y: CY });
+          const end = shrink(pb, { x: CX, y: CY });
+          return (
+            <path key={`a2a-path-${i}`} id={`a2aPath-${i}`} d={a2aPathD(start, end)} />
+          );
+        })}
       </defs>
 
       {/* dot grid */}
@@ -371,18 +596,26 @@ function DiagramCanvas({ visible, activePhase, mode }: DiagramProps) {
       <circle cx={CX} cy={CY} r={RING_R} fill="none" stroke="rgba(231,229,228,0.07)" />
       <circle cx={CX} cy={CY} r={RING_R - 60} fill="none" stroke="rgba(231,229,228,0.04)" strokeDasharray="1 8" />
 
-      {/* spokes from hub to each role */}
+      {/* spokes from hub to each role — thicken during synthesis */}
       {ROLES.map((role) => {
-        const p = polar(role.angle, RING_R);
+        const fallback = polar(role.angle, RING_R);
+        const p = rolePositions[role.id] ?? fallback;
         return (
-          <line
+          <motion.line
             key={`spoke-${role.id}`}
             x1={CX}
             y1={CY}
             x2={p.x}
             y2={p.y}
             stroke="rgba(231,229,228,0.08)"
-            strokeWidth={1}
+            initial={false}
+            animate={{
+              strokeWidth: synthActive ? 1.8 : 1,
+              stroke: synthActive
+                ? "rgba(251,191,36,0.45)"
+                : "rgba(231,229,228,0.08)",
+            }}
+            transition={{ duration: 0.6 }}
           />
         );
       })}
@@ -392,14 +625,22 @@ function DiagramCanvas({ visible, activePhase, mode }: DiagramProps) {
         A2A_EDGES.map(([a, b], i) => {
           const ra = ROLES.find((r) => r.id === a)!;
           const rb = ROLES.find((r) => r.id === b)!;
-          const pa = polar(ra.angle, RING_R - 10);
-          const pb = polar(rb.angle, RING_R - 10);
-          // Quadratic control point bowed toward hub center
-          const mx = (pa.x + pb.x) / 2;
-          const my = (pa.y + pb.y) / 2;
-          const cx = CX + (mx - CX) * 0.45;
-          const cy = CY + (my - CY) * 0.45;
-          const d = `M ${pa.x} ${pa.y} Q ${cx} ${cy} ${pb.x} ${pb.y}`;
+          const fallbackA = polar(ra.angle, RING_R);
+          const fallbackB = polar(rb.angle, RING_R);
+          const pa = rolePositions[a] ?? fallbackA;
+          const pb = rolePositions[b] ?? fallbackB;
+          const shrink = (
+            p: { x: number; y: number },
+            anchor: { x: number; y: number },
+          ) => {
+            const dx = anchor.x - p.x;
+            const dy = anchor.y - p.y;
+            const d = Math.hypot(dx, dy) || 1;
+            return { x: p.x + (dx / d) * 10, y: p.y + (dy / d) * 10 };
+          };
+          const start = shrink(pa, { x: CX, y: CY });
+          const end = shrink(pb, { x: CX, y: CY });
+          const d = a2aPathD(start, end);
           return (
             <motion.path
               key={`a2a-${i}`}
@@ -414,10 +655,39 @@ function DiagramCanvas({ visible, activePhase, mode }: DiagramProps) {
           );
         })}
 
-      {/* Hub */}
+      {/* Hub — pulses bright amber during synthesis */}
       <g filter="url(#softGlow)">
-        <circle cx={CX} cy={CY} r={HUB_R + 28} fill="url(#hubGrad)" />
-        <circle cx={CX} cy={CY} r={HUB_R} fill="rgba(15,15,18,0.95)" stroke="rgba(251,191,36,0.55)" strokeWidth={1.2} />
+        <motion.circle
+          cx={CX}
+          cy={CY}
+          r={HUB_R + 28}
+          fill="url(#hubGrad)"
+          initial={false}
+          animate={{
+            scale: synthActive ? [1, 1.12, 1.04] : 1,
+            opacity: synthActive ? [0.7, 1, 0.85] : 0.7,
+          }}
+          transition={{
+            duration: synthActive ? 1.4 : 0.6,
+            repeat: synthActive ? Infinity : 0,
+            repeatType: "reverse",
+          }}
+          style={{ transformOrigin: `${CX}px ${CY}px`, transformBox: "fill-box" } as React.CSSProperties}
+        />
+        <motion.circle
+          cx={CX}
+          cy={CY}
+          r={HUB_R}
+          fill="rgba(15,15,18,0.95)"
+          initial={false}
+          animate={{
+            stroke: synthActive
+              ? "rgba(252,211,77,0.95)"
+              : "rgba(251,191,36,0.55)",
+            strokeWidth: synthActive ? 1.8 : 1.2,
+          }}
+          transition={{ duration: 0.5 }}
+        />
         <text
           x={CX}
           y={CY - 4}
@@ -441,19 +711,90 @@ function DiagramCanvas({ visible, activePhase, mode }: DiagramProps) {
         </text>
       </g>
 
-      {/* Role nodes */}
-      {ROLES.map((role) => (
-        <RoleGlyph
-          key={role.id}
-          role={role}
-          mode={mode}
-          activePhase={activePhase}
-        />
-      ))}
+      {/* Artifact glyph — appears above hub during the artifact phase */}
+      <AnimatePresence>
+        {artifactActive && (
+          <ArtifactGlyph key="artifact-glyph" />
+        )}
+      </AnimatePresence>
 
-      {/* Animated pulses traveling along spokes / edges */}
-      <PulseLayer activePhase={activePhase} mode={mode} />
+      {/* Role nodes */}
+      {ROLES.map((role) => {
+        const fallback = polar(role.angle, RING_R);
+        const pos = rolePositions[role.id] ?? fallback;
+        return (
+          <RoleGlyph
+            key={role.id}
+            role={role}
+            mode={mode}
+            activePhase={activePhase}
+            pos={pos}
+          />
+        );
+      })}
+
+      {/* Animated pulses traveling along edges / arcs */}
+      <PulseLayer
+        activePhase={activePhase}
+        mode={mode}
+        rolePositions={rolePositions}
+      />
     </svg>
+  );
+}
+
+// -----------------------------------------------------------------------------
+
+function ArtifactGlyph() {
+  // A small document/envelope glyph that emerges above the hub.
+  // Positioned at (CX, CY - HUB_R - 36).
+  const ox = CX;
+  const oy = CY - HUB_R - 38;
+  return (
+    <motion.g
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -8 }}
+      transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
+      style={{ transformBox: "fill-box" } as React.CSSProperties}
+    >
+      {/* glow */}
+      <motion.circle
+        cx={ox}
+        cy={oy + 12}
+        r={28}
+        fill="rgba(251,191,36,0.12)"
+        animate={{ opacity: [0.5, 0.9, 0.5] }}
+        transition={{ duration: 2.2, repeat: Infinity, ease: "easeInOut" }}
+      />
+      {/* document rectangle */}
+      <rect
+        x={ox - 16}
+        y={oy - 2}
+        width="32"
+        height="40"
+        rx="2.5"
+        fill="rgba(15,15,18,0.95)"
+        stroke="rgba(252,211,77,0.85)"
+        strokeWidth="1.3"
+      />
+      {/* folded corner */}
+      <path
+        d={`M ${ox + 8} ${oy - 2} L ${ox + 16} ${oy + 6} L ${ox + 8} ${oy + 6} Z`}
+        fill="rgba(252,211,77,0.18)"
+        stroke="rgba(252,211,77,0.85)"
+        strokeWidth="1"
+      />
+      {/* text lines */}
+      <line x1={ox - 11} y1={oy + 12} x2={ox + 7} y2={oy + 12} stroke="rgba(231,229,228,0.55)" strokeWidth="1" strokeLinecap="round" />
+      <line x1={ox - 11} y1={oy + 18} x2={ox + 11} y2={oy + 18} stroke="rgba(231,229,228,0.4)" strokeWidth="1" strokeLinecap="round" />
+      <line x1={ox - 11} y1={oy + 24} x2={ox + 9} y2={oy + 24} stroke="rgba(231,229,228,0.4)" strokeWidth="1" strokeLinecap="round" />
+      <line x1={ox - 11} y1={oy + 30} x2={ox + 5} y2={oy + 30} stroke="rgba(231,229,228,0.3)" strokeWidth="1" strokeLinecap="round" />
+      {/* tiny "AUDIT" tag */}
+      <text x={ox} y={oy - 8} textAnchor="middle" fontSize="6" letterSpacing="2" fill="rgba(252,211,77,0.85)">
+        AUDIT
+      </text>
+    </motion.g>
   );
 }
 
@@ -463,12 +804,13 @@ function RoleGlyph({
   role,
   mode,
   activePhase,
+  pos,
 }: {
   role: RoleNode;
   mode: Mode;
   activePhase: PhaseId;
+  pos: { x: number; y: number };
 }) {
-  const p = polar(role.angle, RING_R);
   const colors = RANK_COLORS[role.rank];
   // The person glyph "lights up" only on stations + contribution + facilitator phases
   const personActive: boolean = Boolean(
@@ -479,29 +821,35 @@ function RoleGlyph({
         activePhase === "facilitator"),
   );
 
-  // Where the person sits — offset further out along the spoke
+  // Where the person sits — offset further out along the spoke (anchor-based).
+  // Use the anchor angle so persons don't jitter along with the spring sim.
   const personP = polar(role.angle, RING_R + 70);
 
   return (
     <g>
-      {/* Role pill node */}
-      <g transform={`translate(${p.x} ${p.y})`}>
-        <circle r={26} fill={colors.fill} stroke={colors.ring} strokeWidth={1.4} />
-        <circle r={32} fill="none" stroke={colors.ring} strokeOpacity={0.25} strokeWidth={1} strokeDasharray="2 4" />
-        {/* rank dots inside */}
-        {Array.from({ length: role.rank }).map((_, i) => (
-          <circle
-            key={i}
-            cx={(i - (role.rank - 1) / 2) * 6}
-            cy={0}
-            r={1.6}
-            fill={colors.text}
-          />
-        ))}
-      </g>
+      {/* Role pill node — animated position from the spring sim */}
+      <motion.g
+        animate={{ x: pos.x, y: pos.y }}
+        transition={{ type: "tween", duration: 0 }}
+      >
+        <g>
+          <circle r={26} fill={colors.fill} stroke={colors.ring} strokeWidth={1.4} />
+          <circle r={32} fill="none" stroke={colors.ring} strokeOpacity={0.25} strokeWidth={1} strokeDasharray="2 4" />
+          {/* rank dots inside */}
+          {Array.from({ length: role.rank }).map((_, i) => (
+            <circle
+              key={i}
+              cx={(i - (role.rank - 1) / 2) * 6}
+              cy={0}
+              r={1.6}
+              fill={colors.text}
+            />
+          ))}
+        </g>
+      </motion.g>
 
-      {/* Role name label — placed outboard */}
-      <RoleLabel role={role} cx={p.x} cy={p.y} colors={colors} />
+      {/* Role name label — anchored to original ring slot (labels don't jitter) */}
+      <RoleLabel role={role} colors={colors} />
 
       {/* Person glyph (SVG) — only on roles with hasPerson */}
       {role.hasPerson && (
@@ -523,21 +871,22 @@ function RoleGlyph({
 
 function RoleLabel({
   role,
-  cx,
-  cy,
   colors,
 }: {
   role: RoleNode;
-  cx: number;
-  cy: number;
   colors: { text: string };
 }) {
+  // Labels anchor to the original ring slot, not the live spring position,
+  // so labels stay readable as nodes vibrate.
+  const anchor = polar(role.angle, RING_R);
+  const cx = anchor.x;
+  const cy = anchor.y;
   // Anchor + offset depends on which side of the hub the role is on
   const right = cx > CX + 6;
   const left = cx < CX - 6;
   const labelX = right ? cx + 36 : left ? cx - 36 : cx;
   const labelY = cy;
-  const anchor: "start" | "end" | "middle" = right ? "start" : left ? "end" : "middle";
+  const textAnchor: "start" | "end" | "middle" = right ? "start" : left ? "end" : "middle";
 
   // Two lines: name + domain tags
   return (
@@ -545,7 +894,7 @@ function RoleLabel({
       <text
         x={labelX}
         y={labelY - 2}
-        textAnchor={anchor}
+        textAnchor={textAnchor}
         fontSize="11"
         letterSpacing="0.5"
         fontFamily="ui-sans-serif, system-ui"
@@ -556,7 +905,7 @@ function RoleLabel({
       <text
         x={labelX}
         y={labelY + 12}
-        textAnchor={anchor}
+        textAnchor={textAnchor}
         fontSize="8.5"
         letterSpacing="1.5"
         fontFamily="ui-monospace, monospace"
@@ -594,19 +943,55 @@ function PersonGlyph({ cx, cy, active }: { cx: number; cy: number; active: boole
 // PulseLayer — small dots travelling along edges according to active phase
 // -----------------------------------------------------------------------------
 
-function PulseLayer({ activePhase, mode }: { activePhase: PhaseId; mode: Mode }) {
-  // For each phase, choose which edges have pulses + their direction + color
-  // Edges: "spoke" (role↔hub), "a2a" (role↔role), "person" (person↔role)
+function PulseLayer({
+  activePhase,
+  mode,
+  rolePositions,
+}: {
+  activePhase: PhaseId;
+  mode: Mode;
+  rolePositions: Record<string, { x: number; y: number }>;
+}) {
+  // Linear (straight-line) pulses: hub↔role, person↔role
+  const linearPulses = useMemo(
+    () => phaseLinearPulses(activePhase, mode, rolePositions),
+    [activePhase, mode, rolePositions],
+  );
 
-  // Build pulse descriptors per phase
-  const pulses = useMemo(() => phasePulses(activePhase, mode), [activePhase, mode]);
+  // Curved A2A pulses — follow the same bezier as the drawn arc.
+  // Toggled on whenever a2a edges are visible.
+  const showA2A = activePhase === "a2a" || mode === "all";
 
   return (
     <g>
-      {pulses.map((pulse, i) => {
+      {linearPulses.map((pulse, i) => {
         const { key, ...rest } = pulse;
         return <Pulse key={`${key}-${i}`} {...rest} />;
       })}
+
+      {showA2A &&
+        A2A_EDGES.map((_, i) => (
+          <CurvedPulse
+            key={`curved-a2a-${i}`}
+            pathId={`a2aPath-${i}`}
+            color="rgba(251,191,36,0.95)"
+            radius={3.3}
+            duration={1.6}
+            delay={i * 0.25}
+          />
+        ))}
+      {showA2A &&
+        A2A_EDGES.map((_, i) => (
+          <CurvedPulse
+            key={`curved-a2a-rev-${i}`}
+            pathId={`a2aPath-${i}`}
+            color="rgba(251,191,36,0.7)"
+            radius={2.6}
+            duration={1.6}
+            delay={i * 0.25 + 0.8}
+            reverse
+          />
+        ))}
     </g>
   );
 }
@@ -621,13 +1006,22 @@ interface PulseSpec {
   delay: number;
 }
 
-function phasePulses(activePhase: PhaseId, mode: Mode): PulseSpec[] {
+/**
+ * Linear pulses only — A2A curved pulses live on their own SVG paths via mpath.
+ */
+function phaseLinearPulses(
+  activePhase: PhaseId,
+  mode: Mode,
+  rolePositions: Record<string, { x: number; y: number }>,
+): PulseSpec[] {
   const out: PulseSpec[] = [];
+  const posFor = (id: string, angle: number) =>
+    rolePositions[id] ?? polar(angle, RING_R);
 
   // SETUP: hub → all roles (single LLM call dispatching roles)
   if (activePhase === "setup" || mode === "all") {
     ROLES.forEach((role, i) => {
-      const p = polar(role.angle, RING_R);
+      const p = posFor(role.id, role.angle);
       out.push({
         key: `setup-${role.id}`,
         from: { x: CX, y: CY },
@@ -643,7 +1037,7 @@ function phasePulses(activePhase: PhaseId, mode: Mode): PulseSpec[] {
   // STATIONS / CONTRIBUTION: person → role (teal)
   if (activePhase === "stations" || activePhase === "contribution" || mode === "all") {
     ROLES.filter((r) => r.hasPerson).forEach((role, i) => {
-      const rolePt = polar(role.angle, RING_R);
+      const rolePt = posFor(role.id, role.angle);
       const personPt = polar(role.angle, RING_R + 70);
       out.push({
         key: `human-${role.id}`,
@@ -666,7 +1060,7 @@ function phasePulses(activePhase: PhaseId, mode: Mode): PulseSpec[] {
     ROLES.forEach((role, i) => {
       // Only some roles fire per cycle
       if (i % 2 === (activePhase === "facilitator" ? 1 : 0)) {
-        const p = polar(role.angle, RING_R);
+        const p = posFor(role.id, role.angle);
         out.push({
           key: `ingest-${role.id}-${activePhase}`,
           from: { x: p.x, y: p.y },
@@ -682,39 +1076,10 @@ function phasePulses(activePhase: PhaseId, mode: Mode): PulseSpec[] {
     });
   }
 
-  // A2A: pulses traveling along the A2A curves, both directions
-  if (activePhase === "a2a" || mode === "all") {
-    A2A_EDGES.forEach(([a, b], i) => {
-      const ra = ROLES.find((r) => r.id === a)!;
-      const rb = ROLES.find((r) => r.id === b)!;
-      const pa = polar(ra.angle, RING_R - 10);
-      const pb = polar(rb.angle, RING_R - 10);
-      // Use linear approximation for pulse path (close enough — visually amber)
-      out.push({
-        key: `a2a-${a}-${b}`,
-        from: pa,
-        to: pb,
-        color: "rgba(251,191,36,0.95)",
-        radius: 3.3,
-        duration: 1.5,
-        delay: i * 0.25,
-      });
-      out.push({
-        key: `a2a-${b}-${a}`,
-        from: pb,
-        to: pa,
-        color: "rgba(251,191,36,0.7)",
-        radius: 2.6,
-        duration: 1.5,
-        delay: i * 0.25 + 0.75,
-      });
-    });
-  }
-
   // SYNTHESIS: every role → hub, slow, violet
   if (activePhase === "synthesis" || mode === "all") {
     ROLES.forEach((role, i) => {
-      const p = polar(role.angle, RING_R);
+      const p = posFor(role.id, role.angle);
       out.push({
         key: `synth-${role.id}`,
         from: { x: p.x, y: p.y },
@@ -727,7 +1092,22 @@ function phasePulses(activePhase: PhaseId, mode: Mode): PulseSpec[] {
     });
   }
 
-  // ARTIFACT: hub outward (single ring expansion via separate g; pulses skipped)
+  // ARTIFACT: a few hub-outward sparkles
+  if (activePhase === "artifact" || mode === "all") {
+    [0, 2, 4].forEach((i) => {
+      const role = ROLES[i];
+      const p = posFor(role.id, role.angle);
+      out.push({
+        key: `artifact-${role.id}`,
+        from: { x: CX, y: CY },
+        to: { x: p.x, y: p.y },
+        color: "rgba(252,211,77,0.85)",
+        radius: 2.4,
+        duration: 2.0,
+        delay: 0.4 + i * 0.18,
+      });
+    });
+  }
 
   return out;
 }
@@ -752,6 +1132,56 @@ function Pulse({ from, to, color, radius, duration, delay }: Omit<PulseSpec, "ke
         times: [0, 0.1, 0.85, 1],
       }}
     />
+  );
+}
+
+/**
+ * Curved pulse: a dot that traverses an existing SVG <path> via animateMotion.
+ *
+ * We use SVG's native animateMotion + mpath here because Framer Motion doesn't
+ * natively animate along a path. animateMotion is well-supported and means the
+ * dot literally follows the same bezier the arc was drawn with — no straight
+ * lines, no math duplication.
+ */
+function CurvedPulse({
+  pathId,
+  color,
+  radius,
+  duration,
+  delay,
+  reverse = false,
+}: {
+  pathId: string;
+  color: string;
+  radius: number;
+  duration: number;
+  delay: number;
+  reverse?: boolean;
+}) {
+  return (
+    <g>
+      <circle r={radius} fill={color} opacity={0}>
+        <animateMotion
+          dur={`${duration}s`}
+          begin={`${delay}s`}
+          repeatCount="indefinite"
+          keyPoints={reverse ? "1;0" : "0;1"}
+          keyTimes="0;1"
+          calcMode="linear"
+        >
+          <mpath href={`#${pathId}`} />
+        </animateMotion>
+        {/* fade-in / fade-out keyframes synced to the motion duration */}
+        <animate
+          attributeName="opacity"
+          values="0;1;1;0"
+          keyTimes="0;0.12;0.85;1"
+          dur={`${duration}s`}
+          begin={`${delay}s`}
+          repeatCount="indefinite"
+        />
+      </circle>
+    </g>
   );
 }
 
@@ -801,9 +1231,18 @@ function CostMeter({ activeTier }: { activeTier: 1 | 2 | 3 | null }) {
 
 // =============================================================================
 // MiniChart — decorative health chart, dips during a2a/synthesis
+// Progressively reveals as phases advance.
 // =============================================================================
 
-function MiniChart({ activePhase, mode }: { activePhase: PhaseId; mode: Mode }) {
+function MiniChart({
+  activePhase,
+  mode,
+  phaseIndex,
+}: {
+  activePhase: PhaseId;
+  mode: Mode;
+  phaseIndex: number;
+}) {
   // Two wavy paths. They climb during contribution; one dips during a2a; both spike at synthesis.
   const dipped = activePhase === "a2a" || activePhase === "synthesis";
   // Static path data — we just shift opacity / dash to simulate movement
@@ -813,6 +1252,14 @@ function MiniChart({ activePhase, mode }: { activePhase: PhaseId; mode: Mode }) 
   const variance = dipped
     ? "M 0 22 C 18 24 30 32 50 38 C 70 44 92 38 110 30 C 122 24 132 24 140 22"
     : "M 0 22 C 20 21 35 18 55 16 C 80 14 100 12 140 10";
+
+  // How much of the chart is "drawn so far" — phase 0 = ~14%, phase 6 = 100%.
+  // In "all" mode, show the whole chart.
+  const lastIdx = PHASES.length - 1; // 6
+  const reveal =
+    mode === "all"
+      ? 1
+      : Math.max(0.14, (phaseIndex + 1) / (lastIdx + 1));
 
   // Live signals: a small ticking dot on the top line
   return (
@@ -829,6 +1276,19 @@ function MiniChart({ activePhase, mode }: { activePhase: PhaseId; mode: Mode }) 
       <svg viewBox="0 0 140 48" className="w-full h-12">
         <line x1="0" y1="46" x2="140" y2="46" stroke="rgba(231,229,228,0.1)" strokeWidth="0.5" />
         <line x1="0" y1="2" x2="140" y2="2" stroke="rgba(231,229,228,0.05)" strokeWidth="0.5" />
+        {/* Progressive reveal marker — a soft vertical line at the current frontier */}
+        <motion.line
+          x1={0}
+          x2={0}
+          y1={2}
+          y2={46}
+          stroke="rgba(252,211,77,0.5)"
+          strokeWidth="0.8"
+          strokeDasharray="1 2"
+          initial={false}
+          animate={{ x1: reveal * 140, x2: reveal * 140 }}
+          transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+        />
         <motion.path
           d={consensus}
           fill="none"
@@ -836,9 +1296,9 @@ function MiniChart({ activePhase, mode }: { activePhase: PhaseId; mode: Mode }) 
           strokeWidth="1.2"
           strokeLinecap="round"
           initial={false}
-          animate={{ pathLength: 1 }}
-          transition={{ duration: 1.6, ease: "easeOut" }}
-          key={`c-${activePhase}-${mode}`}
+          animate={{ pathLength: reveal, opacity: 1 }}
+          transition={{ duration: 0.9, ease: "easeOut" }}
+          style={{ pathLength: reveal } as React.CSSProperties}
         />
         <motion.path
           d={variance}
@@ -847,9 +1307,9 @@ function MiniChart({ activePhase, mode }: { activePhase: PhaseId; mode: Mode }) 
           strokeWidth="1.2"
           strokeLinecap="round"
           initial={false}
-          animate={{ pathLength: 1 }}
-          transition={{ duration: 1.6, ease: "easeOut" }}
-          key={`v-${activePhase}-${mode}-${dipped ? "d" : "u"}`}
+          animate={{ pathLength: reveal, opacity: 1 }}
+          transition={{ duration: 0.9, ease: "easeOut" }}
+          key={`v-${dipped ? "d" : "u"}`}
         />
       </svg>
       <div className="flex justify-between text-[8px] text-stone-600 font-mono mt-0.5">
@@ -887,6 +1347,8 @@ function PhaseRail({
               <button
                 type="button"
                 onClick={() => onPick(p.index)}
+                title={p.watch}
+                aria-label={`${p.eyebrow} — ${p.title}. ${p.watch}.`}
                 className={`group w-full text-left transition-colors duration-300 ${
                   active ? "text-stone-100" : visited ? "text-stone-400" : "text-stone-600"
                 }`}
@@ -908,6 +1370,16 @@ function PhaseRail({
                     {p.title}
                   </span>
                 </div>
+                {/* Watch hint — visible when active, hover-revealed otherwise */}
+                <div
+                  className={`mt-1 ml-11 text-[10px] tracking-[0.18em] uppercase font-mono transition-opacity duration-300 ${
+                    active
+                      ? "text-amber-300/80 opacity-100"
+                      : "text-stone-500 opacity-0 group-hover:opacity-100"
+                  }`}
+                >
+                  {p.watch}
+                </div>
                 {active && (
                   <motion.div
                     layoutId="phaseRailBar"
@@ -925,10 +1397,10 @@ function PhaseRail({
 }
 
 // =============================================================================
-// Controls — manual stepper + dots
+// FloatingControls — pinned inside the canvas so they're always visible
 // =============================================================================
 
-function Controls({
+function FloatingControls({
   mode,
   phaseIndex,
   onPrev,
@@ -941,50 +1413,65 @@ function Controls({
   onNext: () => void;
   onTogglePlay: () => void;
 }) {
+  // In "all" mode, show a slimmer hint bar (no prev/next/play).
   if (mode === "all") {
     return (
-      <div className="mt-6 text-center text-[10px] tracking-[0.32em] uppercase text-stone-600">
-        — full system view — press <kbd className="px-1.5 py-0.5 mx-0.5 rounded bg-stone-900 border border-stone-800 font-mono text-[9px] text-stone-400">←</kbd>{" "}
-        <kbd className="px-1.5 py-0.5 mx-0.5 rounded bg-stone-900 border border-stone-800 font-mono text-[9px] text-stone-400">→</kbd>{" "}
-        to step through phases —
+      <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10">
+        <div className="rounded-full border border-stone-800/80 bg-[#06070a]/85 backdrop-blur px-4 py-1.5 text-[10px] tracking-[0.28em] uppercase text-stone-500 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.8)]">
+          full system view ·{" "}
+          <kbd className="px-1 py-0.5 mx-0.5 rounded bg-stone-900 border border-stone-800 font-mono text-[9px] text-stone-400">←</kbd>
+          <kbd className="px-1 py-0.5 mx-0.5 rounded bg-stone-900 border border-stone-800 font-mono text-[9px] text-stone-400">→</kbd>{" "}
+          step phases
+        </div>
       </div>
     );
   }
   return (
-    <div className="mt-6 flex items-center justify-center gap-4">
-      <button
-        type="button"
-        onClick={onPrev}
-        aria-label="Previous phase"
-        className="w-8 h-8 rounded-full border border-stone-800 text-stone-400 hover:text-amber-200 hover:border-amber-700 transition-colors flex items-center justify-center"
-      >
-        ◀
-      </button>
-      <button
-        type="button"
-        onClick={onTogglePlay}
-        aria-label={mode === "auto" ? "Pause autoplay" : "Resume autoplay"}
-        className="px-4 h-8 rounded-full border border-stone-800 text-stone-400 hover:text-amber-200 hover:border-amber-700 transition-colors flex items-center gap-2 text-[10px] uppercase tracking-[0.28em]"
-      >
-        {mode === "auto" ? "❚❚ pause" : "▶ play"}
-      </button>
-      <button
-        type="button"
-        onClick={onNext}
-        aria-label="Next phase"
-        className="w-8 h-8 rounded-full border border-stone-800 text-stone-400 hover:text-amber-200 hover:border-amber-700 transition-colors flex items-center justify-center"
-      >
-        ▶
-      </button>
-      <div className="ml-2 flex items-center gap-1.5">
-        {PHASES.map((p, i) => (
-          <div
-            key={p.id}
-            className={`h-1 rounded-full transition-all duration-500 ${
-              i === phaseIndex ? "w-6 bg-amber-300" : "w-1 bg-stone-700"
-            }`}
-          />
-        ))}
+    <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 pointer-events-none">
+      <div className="flex flex-col items-center gap-1.5 pointer-events-auto">
+        <div className="flex items-center gap-3 rounded-full border border-stone-800/80 bg-[#06070a]/85 backdrop-blur px-3 py-1.5 shadow-[0_8px_24px_-12px_rgba(0,0,0,0.8)]">
+          <button
+            type="button"
+            onClick={onPrev}
+            aria-label="Previous phase"
+            className="w-7 h-7 rounded-full border border-stone-800 text-stone-400 hover:text-amber-200 hover:border-amber-700 transition-colors flex items-center justify-center text-[11px]"
+          >
+            ◀
+          </button>
+          <button
+            type="button"
+            onClick={onTogglePlay}
+            aria-label={mode === "auto" ? "Pause autoplay" : "Resume autoplay"}
+            className="px-3 h-7 rounded-full border border-stone-800 text-stone-400 hover:text-amber-200 hover:border-amber-700 transition-colors flex items-center gap-2 text-[10px] uppercase tracking-[0.24em]"
+          >
+            {mode === "auto" ? "❚❚ pause" : "▶ play"}
+          </button>
+          <button
+            type="button"
+            onClick={onNext}
+            aria-label="Next phase"
+            className="w-7 h-7 rounded-full border border-stone-800 text-stone-400 hover:text-amber-200 hover:border-amber-700 transition-colors flex items-center justify-center text-[11px]"
+          >
+            ▶
+          </button>
+          <div className="ml-1 flex items-center gap-1">
+            {PHASES.map((p, i) => (
+              <div
+                key={p.id}
+                className={`h-1 rounded-full transition-all duration-500 ${
+                  i === phaseIndex ? "w-5 bg-amber-300" : "w-1 bg-stone-700"
+                }`}
+              />
+            ))}
+          </div>
+        </div>
+        <div className="text-[9px] font-mono tracking-[0.18em] uppercase text-stone-600">
+          <kbd className="px-1 py-0.5 mx-0.5 rounded bg-stone-900/70 border border-stone-800 text-stone-500">space</kbd>{" "}
+          play/pause ·{" "}
+          <kbd className="px-1 py-0.5 mx-0.5 rounded bg-stone-900/70 border border-stone-800 text-stone-500">←</kbd>
+          <kbd className="px-1 py-0.5 mx-0.5 rounded bg-stone-900/70 border border-stone-800 text-stone-500">→</kbd>{" "}
+          step
+        </div>
       </div>
     </div>
   );

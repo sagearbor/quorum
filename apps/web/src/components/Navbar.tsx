@@ -16,6 +16,11 @@ export function Navbar() {
   const [dark, setDark] = useState(false);
   const { showAvatars, toggleAvatars } = useShowAvatars();
 
+  // /display is the projector view — always dark by design, avatars and
+  // dark-mode toggles would be confusing there because the page bg ignores
+  // them.  Hide both controls on display routes.
+  const isDisplayRoute = pathname?.startsWith("/display") ?? false;
+
   // Initialize from <html> class or localStorage
   useEffect(() => {
     const stored = localStorage.getItem("quorum-dark");
@@ -41,9 +46,15 @@ export function Navbar() {
         <div className="flex items-center gap-6">
           <Link
             href="/"
-            className="text-sm font-bold tracking-tight text-gray-900 dark:text-white"
+            className="text-sm font-bold tracking-tight text-gray-900 dark:text-white inline-flex items-baseline gap-1"
           >
             Quorum
+            <sub
+              className="text-[9px] font-mono font-normal text-gray-400 dark:text-gray-500 tracking-tighter -ml-0.5"
+              title="Live deploy commit — changes confirm new code is loaded"
+            >
+              {(process.env.NEXT_PUBLIC_VERCEL_GIT_COMMIT_SHA ?? "dev").slice(0, 7)}
+            </sub>
           </Link>
           <div className="flex items-center gap-1">
             {NAV_ITEMS.map((item) => {
@@ -66,6 +77,7 @@ export function Navbar() {
         </div>
 
         <div className="flex items-center gap-1">
+        {!isDisplayRoute && (<>
         {/* Avatar visibility toggle */}
         <button
           type="button"
@@ -96,6 +108,7 @@ export function Navbar() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
           )}
         </button>
+        </>)}
         </div>
       </div>
     </nav>

@@ -3,13 +3,15 @@
 import { useEffect, useState, useCallback } from "react";
 
 const STORAGE_KEY = "quorumShowAvatars";
+const CUSTOM_EVENT = "quorum-show-avatars-changed";
 
 /**
  * Global avatar visibility toggle.
  *
  * Default ON for existing users (opt-out, not opt-in).  Persisted in
- * localStorage and synchronised across tabs via the `storage` event so that
- * flipping the toggle in the navbar updates every open page instantly.
+ * localStorage.  Cross-tab sync uses the native `storage` event; SAME-tab
+ * sync uses a custom `quorum-show-avatars-changed` event because `storage`
+ * does not fire in the originating tab.
  *
  * Pages that render avatars MUST conditionally omit the entire <AvatarPanel>
  * div when this is false — never just blank/hide it, since a leftover layout
@@ -37,14 +39,28 @@ export function useShowAvatars(): {
         setShowAvatarsState(e.newValue !== "false");
       }
     }
+    function onCustom(e: Event) {
+      const detail = (e as CustomEvent<boolean>).detail;
+      if (typeof detail === "boolean") setShowAvatarsState(detail);
+    }
     window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    window.addEventListener(CUSTOM_EVENT, onCustom as EventListener);
+    return () => {
+      window.removeEventListener("storage", onStorage);
+      window.removeEventListener(CUSTOM_EVENT, onCustom as EventListener);
+    };
   }, []);
 
   const setShowAvatars = useCallback((next: boolean) => {
     setShowAvatarsState(next);
     try {
       window.localStorage.setItem(STORAGE_KEY, next ? "true" : "false");
+    } catch {
+      // ignore
+    }
+    // Notify every other useShowAvatars instance mounted in this tab.
+    try {
+      window.dispatchEvent(new CustomEvent<boolean>(CUSTOM_EVENT, { detail: next }));
     } catch {
       // ignore
     }

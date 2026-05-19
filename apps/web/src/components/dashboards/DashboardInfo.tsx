@@ -19,7 +19,7 @@ interface DashboardInfoProps {
 export function DashboardInfo({ blurb, className = "" }: DashboardInfoProps) {
   const [open, setOpen] = useState(false);
   const [mounted, setMounted] = useState(false);
-  const [anchorRect, setAnchorRect] = useState<{ top: number; right: number } | null>(null);
+  const [anchorRect, setAnchorRect] = useState<{ top: number; left: number; maxWidth: number } | null>(null);
   const containerRef = useRef<HTMLSpanElement | null>(null);
 
   // Only render the portal on the client.
@@ -33,7 +33,17 @@ export function DashboardInfo({ blurb, className = "" }: DashboardInfoProps) {
     if (!open || !containerRef.current) return;
     function reposition() {
       const r = containerRef.current?.getBoundingClientRect();
-      if (r) setAnchorRect({ top: r.bottom + 6, right: window.innerWidth - r.right });
+      if (!r) return;
+      const vw = window.innerWidth;
+      // Popover width: prefer 32rem (512px), but clamp to viewport - 16px margin.
+      const maxWidth = Math.min(512, vw - 16);
+      // Try to right-align popover with the icon (so it grows leftward from the icon).
+      let left = r.right - maxWidth;
+      // Clamp to at least 8px from the left edge so it never goes off-screen.
+      if (left < 8) left = 8;
+      // And never let the right edge of the popover spill off the right edge.
+      if (left + maxWidth > vw - 8) left = Math.max(8, vw - 8 - maxWidth);
+      setAnchorRect({ top: r.bottom + 6, left, maxWidth });
     }
     reposition();
     window.addEventListener("resize", reposition);
@@ -119,9 +129,10 @@ export function DashboardInfo({ blurb, className = "" }: DashboardInfoProps) {
           style={{
             position: "fixed",
             top: `${anchorRect.top}px`,
-            right: `${anchorRect.right}px`,
+            left: `${anchorRect.left}px`,
+            width: `${anchorRect.maxWidth}px`,
           }}
-          className="z-[1000] w-[min(32rem,calc(100vw-2rem))] max-h-[70vh] overflow-auto rounded-md border border-white/10 bg-black/95 p-4 text-sm leading-relaxed text-white/85 shadow-xl backdrop-blur-md"
+          className="z-[1000] max-h-[70vh] overflow-auto rounded-md border border-white/10 bg-black/95 p-4 text-sm leading-relaxed text-white/85 shadow-xl backdrop-blur-md"
         >
           {blocks.map((block, bi) => {
             if (block.type === "p") {

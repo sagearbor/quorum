@@ -100,6 +100,66 @@ function getApiBase(): string | null {
 }
 
 // ---------------------------------------------------------------------------
+// /state in-flight dedupe + tiny cache
+//
+// getQuorum() and getContributions() both call GET /quorums/{id}/state.  On
+// the quorum page they fire in the same Promise.all() during initial load,
+// which - before this dedupe - kicked off two independent ~1.2s requests
+// for the same 2.9MB payload.  We keep an in-flight map keyed by quorumId
+// so concurrent callers share one response, and a short-lived (1500ms)
+// cache so the second sequential call from the same page render reuses
+// the first.  TTL stays well under any realistic user-perceptible
+// staleness window - dashboards subscribe via Supabase realtime once
+// loaded, so the cache only papers over the initial render double-fetch.
+// ---------------------------------------------------------------------------
+type StateResponse = {
+  quorum: Record<string, unknown>;
+  contributions: unknown[];
+  artifact: unknown;
+  health_score?: number;
+  active_roles?: unknown[];
+} | null;
+
+const _stateInFlight = new Map<string, Promise<StateResponse>>();
+const _stateCache = new Map<string, { at: number; value: StateResponse }>();
+// 10s TTL: long enough that the display-page carousel (25s rotation) reuses
+// the snapshot for the first dashboard or two in a cycle, short enough that
+// any user navigation between pages still refreshes. Live updates flow via
+// Supabase realtime once a dashboard mounts, so staleness only affects the
+// initial render snapshot.
+const STATE_CACHE_TTL_MS = 10_000;
+
+async function fetchQuorumState(quorumId: string): Promise<StateResponse> {
+  const apiBase = getApiBase();
+  if (!apiBase) return null;
+
+  const cached = _stateCache.get(quorumId);
+  if (cached && Date.now() - cached.at < STATE_CACHE_TTL_MS) {
+    return cached.value;
+  }
+
+  const inflight = _stateInFlight.get(quorumId);
+  if (inflight) return inflight;
+
+  const p = (async () => {
+    try {
+      const res = await fetch(`${apiBase}/quorums/${quorumId}/state`);
+      if (!res.ok) return null;
+      const value = (await res.json()) as StateResponse;
+      _stateCache.set(quorumId, { at: Date.now(), value });
+      return value;
+    } catch {
+      return null;
+    } finally {
+      _stateInFlight.delete(quorumId);
+    }
+  })();
+
+  _stateInFlight.set(quorumId, p);
+  return p;
+}
+
+// ---------------------------------------------------------------------------
 // Quorum data
 // ---------------------------------------------------------------------------
 
@@ -119,11 +179,15 @@ export async function getQuorums(
       const ids: string[] = await idsRes.json();
       if (!ids.length) return [];
 
+      // Event-landing cards only need quorum metadata + role pills + heat
+      // score. We call /state?slim=true so the backend skips serialising
+      // contributions (which can hit ~3MB on a long-running quorum and
+      // contribute nothing to the card render).
       const quorums = await Promise.all(
         ids.map(async (id) => {
           try {
             const [stateRes, rolesJson] = await Promise.all([
-              fetch(`${apiBase}/quorums/${id}/state`).then(r => r.ok ? r.json() : null),
+              fetch(`${apiBase}/quorums/${id}/state?slim=true`).then(r => r.ok ? r.json() : null),
               fetch(`${apiBase}/quorums/${id}/roles`).then(r => r.ok ? r.json() : []).catch(() => []),
             ]);
             if (!stateRes) return null;
@@ -192,7 +256,7 @@ export async function getQuorum(
   if (apiBase) {
     try {
       const [stateRes, rolesJson] = await Promise.all([
-        fetch(`${apiBase}/quorums/${quorumId}/state`).then(r => r.ok ? r.json() : null),
+        fetchQuorumState(quorumId),
         fetch(`${apiBase}/quorums/${quorumId}/roles`).then(r => r.ok ? r.json() : []).catch(() => []),
       ]);
       if (!stateRes) return null;
@@ -272,10 +336,8 @@ export async function getContributions(
   const apiBase = getApiBase();
   if (apiBase) {
     try {
-      const res = await fetch(`${apiBase}/quorums/${quorumId}/state`);
-      if (!res.ok) return [];
-      const state = await res.json();
-      return state.contributions ?? [];
+      const state = await fetchQuorumState(quorumId);
+      return (state?.contributions ?? []) as DemoContribution[];
     } catch { return []; }
   }
 
@@ -304,10 +366,8 @@ export async function getArtifact(
   const apiBase = getApiBase();
   if (apiBase) {
     try {
-      const res = await fetch(`${apiBase}/quorums/${quorumId}/state`);
-      if (!res.ok) return null;
-      const state = await res.json();
-      return state.artifact ?? null;
+      const state = await fetchQuorumState(quorumId);
+      return (state?.artifact ?? null) as DemoArtifact | null;
     } catch { return null; }
   }
 

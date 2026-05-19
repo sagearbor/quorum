@@ -1,10 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { motion } from "framer-motion";
 import { QuorumHealthChart } from "@/components/dashboards/QuorumHealthChart";
 import { AgentDocumentDashboard } from "@/components/dashboards/AgentDocumentDashboard";
 import { AvatarPanel } from "@/components/avatar/AvatarPanel";
+import { useShowAvatars } from "@/hooks/useShowAvatars";
 
 export type CarouselMode = "multi-view" | "multi-quorum";
 
@@ -24,17 +25,6 @@ interface PanelConfig {
   type: PanelType;
 }
 
-const slideVariants = {
-  enter: { x: "-100%", opacity: 0 },
-  center: { x: 0, opacity: 1 },
-  exit: { x: "100%", opacity: 0 },
-};
-
-const slideTransition = {
-  x: { type: "spring" as const, stiffness: 200, damping: 30 },
-  opacity: { duration: 0.3 },
-};
-
 const INTERVAL_OPTIONS = [15_000, 25_000, 45_000, 60_000];
 const INTERVAL_LABELS = ["15s", "25s", "45s", "60s"];
 
@@ -51,9 +41,17 @@ export function DashboardCarousel({
   const [activeInterval, setActiveInterval] = useState(intervalMs);
   const [paused, setPaused] = useState(false);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const { showAvatars } = useShowAvatars();
 
-  // Build panel pairs based on mode
-  const panelPairs = usePanelPairs(mode, quorumIds);
+  // Build panel pairs based on mode, then filter out facilitator-only slides
+  // when the global avatar toggle is off so the carousel doesn't show empty
+  // boxes where the avatar used to live.
+  const rawPanelPairs = usePanelPairs(mode, quorumIds);
+  const panelPairs = showAvatars
+    ? rawPanelPairs
+    : rawPanelPairs.filter((pair) => !pair.every((p) => p.type === "facilitator"))
+        .map((pair) => pair.filter((p) => p.type !== "facilitator"))
+        .filter((pair) => pair.length > 0);
   const totalSlides = panelPairs.length;
 
   const advance = useCallback(() => {
@@ -101,8 +99,6 @@ export function DashboardCarousel({
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [advance, retreat]);
-
-  const currentPair = panelPairs[slideIndex % Math.max(panelPairs.length, 1)] ?? [];
 
   return (
     <div className="w-full h-full flex flex-col">
@@ -161,43 +157,51 @@ export function DashboardCarousel({
         )}
       </div>
 
-      {/* Dual-panel area */}
-      <div className="flex-1 min-h-0 px-6 pb-4">
-        <AnimatePresence mode="popLayout">
-          <motion.div
-            key={slideIndex}
-            variants={slideVariants}
-            initial="enter"
-            animate="center"
-            exit="exit"
-            transition={slideTransition}
-            className="grid grid-cols-2 gap-6 h-full"
-          >
-            {currentPair.map((panel) => (
-              <div
-                key={panel.key}
-                className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-4 flex flex-col overflow-hidden"
-              >
-                <div className="text-xs text-white/40 mb-2 truncate">{panel.label}</div>
-                <div className="flex-1 min-h-0">
-                  {panel.type === "facilitator" ? (
-                    <AvatarPanel quorumId={panel.quorumId} showDirectionIndicator={false} enableEmotionTracking={false} />
-                  ) : panel.type === "documents" ? (
-                    <AgentDocumentDashboard quorumId={panel.quorumId} />
-                  ) : (
-                    <QuorumHealthChart quorumId={panel.quorumId} />
-                  )}
+      {/* Dual-panel area — every pair stays mounted so panel data hooks don't
+          re-fetch on rotation.  Only opacity (and a tiny x-offset for motion
+          feel) changes between active/inactive.  Eliminates the "loading…"
+          flash on every carousel tick. */}
+      <div className="flex-1 min-h-0 px-6 pb-4 relative">
+        {panelPairs.map((pair, idx) => {
+          const isActive = idx === slideIndex % Math.max(panelPairs.length, 1);
+          return (
+            <motion.div
+              key={`pair-${idx}`}
+              initial={false}
+              animate={{
+                opacity: isActive ? 1 : 0,
+                x: isActive ? 0 : 20,
+              }}
+              transition={{ duration: 0.4, ease: "easeOut" }}
+              className={`grid grid-cols-2 gap-6 absolute inset-0 px-6 pb-4 ${isActive ? "z-10" : "z-0 pointer-events-none"}`}
+              aria-hidden={!isActive}
+            >
+              {pair.map((panel) => (
+                <div
+                  key={panel.key}
+                  className="bg-white/[0.03] border border-white/[0.06] rounded-xl p-4 flex flex-col overflow-hidden"
+                >
+                  <div className="text-xs text-white/40 mb-2 truncate">{panel.label}</div>
+                  <div className="flex-1 min-h-0">
+                    {panel.type === "facilitator" ? (
+                      <AvatarPanel quorumId={panel.quorumId} showDirectionIndicator={false} enableEmotionTracking={false} />
+                    ) : panel.type === "documents" ? (
+                      <AgentDocumentDashboard quorumId={panel.quorumId} />
+                    ) : (
+                      <QuorumHealthChart quorumId={panel.quorumId} />
+                    )}
+                  </div>
                 </div>
-              </div>
-            ))}
-            {/* If only one panel in pair, fill second slot */}
-            {currentPair.length === 1 && (
-              <div className="bg-white/[0.02] border border-white/[0.04] rounded-xl flex items-center justify-center text-white/20 text-sm">
-                Awaiting next quorum…
-              </div>
-            )}
-          </motion.div>
-        </AnimatePresence>
+              ))}
+              {/* If only one panel in pair, fill second slot */}
+              {pair.length === 1 && (
+                <div className="bg-white/[0.02] border border-white/[0.04] rounded-xl flex items-center justify-center text-white/20 text-sm">
+                  Awaiting next quorum…
+                </div>
+              )}
+            </motion.div>
+          );
+        })}
       </div>
     </div>
   );

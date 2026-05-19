@@ -12,6 +12,7 @@ import {
 import { enqueue } from "@/lib/offlineQueue";
 import type { Role, Contribution, ContributeRequest } from "@quorum/types";
 import { AvatarPanel } from "@/components/avatar/AvatarPanel";
+import { useShowAvatars } from "@/hooks/useShowAvatars";
 import { ConversationThread } from "@/components/conversation/ConversationThread";
 import { DocumentPanel } from "@/components/documents/DocumentPanel";
 import { useStationConversation } from "@/hooks/useStationConversation";
@@ -263,6 +264,7 @@ export default function QuorumPage() {
   // Audio (TTS + mic) is OFF by default — small expo room with multiple stations
   // means cross-station audio bleed otherwise. User opts in via the Audio toggle.
   const [audioMuted, setAudioMuted] = useState(true);
+  const { showAvatars } = useShowAvatars();
 
   // Webcam availability — only enable emotion tracking when a camera is present.
   const [hasWebcam, setHasWebcam] = useState(false);
@@ -499,7 +501,8 @@ export default function QuorumPage() {
 
   return (
     <div className="min-h-screen flex flex-col lg:flex-row">
-      {/* Left panel: Avatar facilitator */}
+      {/* Left panel: Avatar facilitator — hidden globally via Navbar avatar toggle */}
+      {showAvatars && (
       <div className="lg:w-1/3 lg:min-h-screen bg-slate-900 p-4 flex flex-col">
         <div className="flex items-center justify-between mb-3">
           <Link
@@ -563,6 +566,7 @@ export default function QuorumPage() {
           />
         </div>
       </div>
+      )}
 
       {/* Right panel: Quorum interaction */}
       <div className="flex-1 p-4 sm:p-6 max-w-2xl flex flex-col min-h-screen lg:min-h-0">

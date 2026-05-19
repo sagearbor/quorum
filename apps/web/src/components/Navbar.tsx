@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { useShowAvatars } from "@/hooks/useShowAvatars";
 
 const NAV_ITEMS = [
   { href: "/events", label: "Events" },
@@ -13,6 +14,7 @@ const NAV_ITEMS = [
 export function Navbar() {
   const pathname = usePathname();
   const [dark, setDark] = useState(false);
+  const { showAvatars, toggleAvatars } = useShowAvatars();
 
   // Initialize from <html> class or localStorage
   useEffect(() => {
@@ -63,6 +65,23 @@ export function Navbar() {
           </div>
         </div>
 
+        <div className="flex items-center gap-1">
+        {/* Avatar visibility toggle */}
+        <button
+          type="button"
+          onClick={toggleAvatars}
+          className="p-1.5 rounded-lg transition-colors text-gray-500 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 relative"
+          title={showAvatars ? "Hide avatars" : "Show avatars"}
+          aria-label="Toggle avatar visibility"
+          aria-pressed={showAvatars}
+        >
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="8" r="4" />
+            <path d="M4 21a8 8 0 0 1 16 0" />
+            {!showAvatars && <line x1="3" y1="3" x2="21" y2="21" stroke="currentColor" strokeWidth="2.2" />}
+          </svg>
+        </button>
+
         {/* Dark mode toggle */}
         <button
           type="button"
@@ -77,6 +96,7 @@ export function Navbar() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
           )}
         </button>
+        </div>
       </div>
     </nav>
   );

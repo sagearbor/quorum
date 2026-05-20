@@ -778,20 +778,34 @@ async def _run_autonomy_round(
     quorum_title = (quorum_data.data or {}).get("title", "this problem")
     quorum_desc = (quorum_data.data or {}).get("description", "")
 
-    # Get recent insights to inform the proactive prompt
+    # Get recent insights to inform the proactive prompt.  We pull the last
+    # 10 (not 3) so the LLM has a real "what's already been said" window —
+    # otherwise it tends to re-state the most recent insight every tick,
+    # which fans out to dupe A2A broadcasts and a noisy chat.
     recent_insights = await aexec(
         db.table("agent_insights")
-        .select("content, tags")
+        .select("content, tags, source_role_id")
         .eq("quorum_id", quorum_id)
         .order("created_at", desc=True)
-        .limit(3)
+        .limit(10)
     )
 
     insight_context = ""
+    novelty_constraint = ""
     if recent_insights.data:
-        insight_summaries = [i["content"][:100] for i in recent_insights.data]
-        insight_context = "\n\nRecent developments:\n" + "\n".join(
-            f"- {s}" for s in insight_summaries
+        insight_summaries = [i["content"][:140] for i in recent_insights.data]
+        insight_context = (
+            "\n\nInsights ALREADY raised in this quorum (most recent first — do "
+            "NOT repeat or paraphrase any of these):\n"
+            + "\n".join(f"- {s}" for s in insight_summaries)
+        )
+        novelty_constraint = (
+            "\n\nIMPORTANT: Read the list above carefully. Your job is to add "
+            "something GENUINELY NEW — a different angle, a missing constraint, "
+            "a stakeholder no one has named, a concrete next step, a question "
+            "that hasn't been asked.  If you cannot think of a genuinely new "
+            "contribution this round, say so briefly in one sentence rather "
+            "than restating prior points."
         )
 
     # Different prompt strategies based on round number and autonomy
@@ -807,18 +821,19 @@ async def _run_autonomy_round(
         # Early rounds: build on each other's insights
         proactive_prompt = (
             f"Continue working on '{quorum_title}'. "
-            f"{insight_context}\n\n"
-            "Based on the current state of discussion, what new insights can you contribute "
-            "from your role's perspective? If you see conflicts or gaps, flag them."
+            f"{insight_context}{novelty_constraint}\n\n"
+            "From your role's perspective, contribute one specific new insight, "
+            "conflict, or gap that has NOT been mentioned above."
         )
     else:
         # Later rounds: drive toward resolution
         proactive_prompt = (
             f"The quorum '{quorum_title}' is progressing. "
-            f"{insight_context}\n\n"
-            "Assess the current state of progress. Identify any remaining gaps, "
-            "propose concrete next steps, and work toward a resolution. "
-            "If you need input from another role, request it explicitly."
+            f"{insight_context}{novelty_constraint}\n\n"
+            "Assess what is still missing.  Either: (a) propose a concrete next "
+            "step that has not already been raised above, (b) flag a remaining "
+            "gap, or (c) request input from another role by name.  Do not "
+            "re-summarize prior insights."
         )
 
     # --- Dispatch the role-agent turn ---

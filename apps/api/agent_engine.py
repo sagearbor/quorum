@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from quorum_llm.affinity import (
     compute_tag_affinity,
@@ -1712,10 +1712,60 @@ async def _notify_relevant_agents(
         )
         return
 
-    # Insert one A2A request per relevant agent
+    # Dedupe window: the autonomy loop publishes the same insight every tick
+    # while underlying state is unchanged.  Without a guard a 5-minute room
+    # can collect 50+ identical fan-outs to the same target.  We compare on
+    # the first 200 chars of the insight body, scoped to (quorum, from, to)
+    # within the last _A2A_DEDUPE_WINDOW_MIN minutes.
+    _A2A_DEDUPE_WINDOW_MIN = 10
+    dedupe_cutoff = (
+        datetime.now(timezone.utc) - timedelta(minutes=_A2A_DEDUPE_WINDOW_MIN)
+    ).isoformat()
+    insight_key = (insight_content or "").strip()[:200]
+
+    # Insert one A2A request per relevant agent (skipping recent duplicates).
     for agent in relevant:
         target_role_id = agent["role_id"]
         score = agent["affinity_score"]
+
+        # ---- Fix A: dedupe guard ------------------------------------------
+        # Look up the last few same-route notifications in the window.  If
+        # any has matching content, skip the insert silently.  Cost: one
+        # indexed query per recipient per insight (cheap, runs only when
+        # autonomy ≥ 0.1 anyway).
+        try:
+            recent = await aexec(
+                db.table("agent_requests")
+                .select("content")
+                .eq("quorum_id", quorum_id)
+                .eq("from_role_id", from_role_id)
+                .eq("to_role_id", target_role_id)
+                .eq("request_type", "doc_edit_notify")
+                .gte("created_at", dedupe_cutoff)
+                .order("created_at", desc=True)
+                .limit(5)
+            )
+            recent_rows = recent.data or []
+        except Exception:
+            recent_rows = []  # Best-effort: never block the broadcast on lookup failure.
+
+        is_dupe = False
+        for row in recent_rows:
+            prior = (row.get("content") or "")
+            # The stored content prefixes a header before the insight body —
+            # use `in` so we match regardless of header drift.
+            if insight_key and insight_key in prior:
+                is_dupe = True
+                break
+        if is_dupe:
+            logger.debug(
+                "_notify_relevant_agents: skipping dupe to role=%s in quorum=%s",
+                target_role_id,
+                quorum_id,
+            )
+            continue
+        # -------------------------------------------------------------------
+
         try:
             await aexec(db.table("agent_requests").insert({
                 "id": str(uuid.uuid4()),

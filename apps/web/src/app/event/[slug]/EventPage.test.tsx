@@ -166,31 +166,18 @@ describe("EventPage", () => {
     });
   });
 
-  it("shows role dropdown on quorum cards with roles", async () => {
+  it("renders role pills as direct station links on quorum cards", async () => {
     render(<EventPage />);
     await waitFor(() =>
-      expect(screen.getByTestId("role-dropdown-q-001")).toBeInTheDocument()
+      expect(screen.getByTestId("role-pill-r-001")).toBeInTheDocument()
     );
-    // q-002 has no roles, should not have dropdown
-    expect(screen.queryByTestId("role-dropdown-q-002")).not.toBeInTheDocument();
-  });
-
-  it("opens role menu and navigates with station param on role selection", async () => {
-    render(<EventPage />);
-    await waitFor(() =>
-      expect(screen.getByTestId("role-dropdown-q-001")).toBeInTheDocument()
-    );
-
-    // Open the dropdown
-    fireEvent.click(screen.getByTestId("role-dropdown-q-001"));
-    await waitFor(() =>
-      expect(screen.getByTestId("role-menu-q-001")).toBeInTheDocument()
-    );
-
-    // Select a role
-    fireEvent.click(screen.getByTestId("role-option-r-001"));
-    expect(mockPush).toHaveBeenCalledWith(
-      expect.stringMatching(/^\/event\/duke-expo-2026\/quorum\/q-001\?station=\d+$/)
+    // The role pill is now an anchor whose href encodes both the station
+    // number and the role name — clicking it lands the user on the quorum
+    // page with the persona pre-selected.
+    const pill = screen.getByTestId("role-pill-r-001");
+    expect(pill.tagName).toBe("A");
+    expect(pill.getAttribute("href")).toMatch(
+      /^\/event\/duke-expo-2026\/quorum\/q-001\?station=\d+&role=/,
     );
   });
 });

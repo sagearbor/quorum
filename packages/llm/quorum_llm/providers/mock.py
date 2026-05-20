@@ -199,6 +199,67 @@ def _canned_typed_output(output_type, prompt: str):
     if name == "RoleSuggestionList":
         return output_type.model_validate({"roles": _CANNED_ROLE_SUGGESTIONS})
 
+    if name == "PositionSnapshot":
+        # Deterministic before/after snapshot for tests.  We mine the prompt
+        # for any contribution IDs (formatted as `- [<id>] (...)`) so the
+        # mock returns drivers that pass the post-call validator's
+        # known-contribution-ids check.  This also keeps tests honest: if a
+        # test forgets to pass contributions, drivers come back empty.
+        import re as _re
+        ids_in_prompt = _re.findall(r"^- \[([^\]]+)\] ", prompt, _re.MULTILINE)
+        is_initial = "STAGE = initial" in prompt
+        first_id = ids_in_prompt[0] if ids_in_prompt else None
+        second_id = (
+            ids_in_prompt[1] if len(ids_in_prompt) > 1 else first_id
+        )
+        # Even on initial-stage the mock emits changed=true on one row so we
+        # can verify that the post-call validator clamps it to False.
+        aspects = [
+            {
+                "field": "scope",
+                "before": "Broad protocol with multiple endpoints",
+                "after": "Focused on primary safety endpoint",
+                "changed": True,
+                "drivers": [first_id] if first_id else [],
+            },
+            {
+                "field": "cadence",
+                "before": "Quarterly reviews",
+                "after": "6-week safety checkpoints",
+                "changed": True,
+                "drivers": [first_id, second_id] if first_id else [],
+            },
+            {
+                "field": "consent_requirement",
+                "before": "Standard consent form",
+                "after": "Expanded consent with monthly re-affirmation",
+                "changed": True,
+                # Intentionally include one bogus ID so the post-call
+                # validator's "drop unknown drivers" path is exercised by
+                # tests that pass real contribution IDs.
+                "drivers": (
+                    [first_id, "bogus-id-does-not-exist"] if first_id else ["bogus-id-does-not-exist"]
+                ),
+            },
+        ]
+        payload = {
+            "summary_sentences": [
+                "The group is converging on a safety-first protocol design.",
+                "Authority hierarchy resolved cadence in favor of the IRB.",
+                "Open questions remain around enrollment criteria.",
+            ],
+            "headline": (
+                "Initial framing recorded" if is_initial
+                else "Group adopts IRB-led safety cadence"
+            ),
+            "key_aspects": aspects,
+            "unresolved": [
+                "Enrollment criteria for vulnerable populations",
+                "DSMB stopping-rule thresholds",
+            ],
+        }
+        return output_type.model_validate(payload)
+
     if name == "ContributionAnalysis":
         # Deterministic per-contribution analysis for tests.  Choose tags
         # and deltas that depend on prompt content so different inputs get

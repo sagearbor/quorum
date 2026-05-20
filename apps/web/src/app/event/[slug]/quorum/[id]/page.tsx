@@ -253,6 +253,9 @@ export default function QuorumPage() {
   /** This quorum's 1-indexed position within its event (used for the "#N" prefix
    *  in the sticky header so visitors can tell sister quorums apart). */
   const [quorumPosition, setQuorumPosition] = useState<number | null>(null);
+  /** Quorum status — drives whether the Resolve button is enabled / labeled. */
+  const [quorumStatus, setQuorumStatus] = useState<string>("open");
+  const [resolving, setResolving] = useState(false);
   const [autonomyLevel, setAutonomyLevel] = useState<number>(0);
   const [showAutonomyControl, setShowAutonomyControl] = useState(false);
   const [showAgentActivity, setShowAgentActivity] = useState(false);
@@ -412,6 +415,7 @@ export default function QuorumPage() {
         setQuorumTitle(quorum.title);
         setQuorumDescription(quorum.description);
         setAutonomyLevel(quorum.autonomy_level ?? 0);
+        setQuorumStatus(quorum.status ?? "open");
       }
       setRoles(qRoles as Role[]);
       setContributions(qContribs as Contribution[]);
@@ -785,6 +789,73 @@ export default function QuorumPage() {
                 />
                 <span className="hidden sm:inline">Auto-promote chat</span>
                 <span className="sm:hidden">Auto</span>
+              </button>
+              {/* Resolve button — locks the quorum and triggers Tier-3 synthesis,
+                  which writes the final artifact + the `final_position` snapshot
+                  the Before/After tab reads from.  Confirmation gate prevents
+                  accidental clicks; backend returns 409 if already resolved. */}
+              <button
+                type="button"
+                data-testid="resolve-button"
+                onClick={async () => {
+                  if (quorumStatus === "resolved") {
+                    alert("This quorum is already resolved.");
+                    return;
+                  }
+                  if (
+                    !window.confirm(
+                      "Resolve this quorum?\n\n• Locks contributions\n• Triggers Tier-3 synthesis (one LLM call)\n• Populates the Before / After tab\n\nCannot be undone.",
+                    )
+                  ) {
+                    return;
+                  }
+                  setResolving(true);
+                  try {
+                    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+                    const res = await fetch(`${apiBase}/quorums/${quorumId}/resolve`, {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ sign_off_token: "manual-resolve" }),
+                    });
+                    if (res.ok) {
+                      setQuorumStatus("resolved");
+                      setActiveTab("resolution");
+                    } else if (res.status === 409) {
+                      setQuorumStatus("resolved");
+                      alert("Quorum was already resolved. Switching to Before / After.");
+                      setActiveTab("resolution");
+                    } else {
+                      const detail = await res.json().catch(() => null);
+                      alert(`Resolve failed (HTTP ${res.status}): ${detail?.detail ?? "unknown error"}`);
+                    }
+                  } catch (err) {
+                    alert(`Resolve failed: ${err instanceof Error ? err.message : String(err)}`);
+                  } finally {
+                    setResolving(false);
+                  }
+                }}
+                disabled={resolving || quorumStatus === "resolved"}
+                className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
+                  quorumStatus === "resolved"
+                    ? "bg-emerald-50 text-emerald-700 cursor-default"
+                    : resolving
+                      ? "bg-amber-50 text-amber-700 cursor-wait"
+                      : "bg-amber-500 text-white hover:bg-amber-600 cursor-pointer"
+                }`}
+                title={
+                  quorumStatus === "resolved"
+                    ? "Already resolved"
+                    : resolving
+                      ? "Synthesizing artifact…"
+                      : "Lock contributions and generate the final artifact"
+                }
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                <span className="hidden sm:inline">
+                  {quorumStatus === "resolved" ? "Resolved" : resolving ? "Resolving…" : "Resolve"}
+                </span>
               </button>
               <Link
                 href={`/display/${slug}`}

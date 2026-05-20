@@ -120,6 +120,55 @@ def extract_tags_from_text(
     return collected
 
 
+def _tokenize_tag(tag: str) -> set[str]:
+    """Split a canonical tag into its constituent word tokens.
+
+    Architect-defined domain tags (e.g. ``"policy_compliance"``) are typically
+    compound, while reply-extracted tags (e.g. ``"policy"``) are single words.
+    Splitting on underscore lets us find the underlying word-level overlap
+    that exact-string Jaccard misses entirely.
+
+    Tokens shorter than 3 characters are dropped to avoid noise (``"of"``,
+    ``"a"``, ``"ai"`` would otherwise produce spurious matches).
+    """
+    return {w for w in canonicalize_tag(tag).split("_") if len(w) >= 3}
+
+
+def compute_tag_relevance(tags_a: list[str], tags_b: list[str]) -> float:
+    """Asymmetric word-level overlap score, in ``[0.0, 1.0]``.
+
+    This is the *demo-time* relevance metric used by :func:`find_relevant_agents`
+    to drive A2A fan-out.  It differs from :func:`compute_tag_affinity` in two
+    ways designed for the realistic vocabulary mismatch we see in production:
+
+    1. Tags are tokenized on underscore first, so ``"policy"`` and
+       ``"policy_compliance"`` share the word ``"policy"`` and contribute to
+       the overlap.
+    2. The denominator is the smaller of the two word sets (overlap
+       coefficient), so a *small but high-signal* source set (e.g. 6 reply
+       tags) isn't penalized for matching against a *large* domain set
+       (e.g. 14 architect-defined tags).
+
+    Returns ``0.0`` when either side has no usable word tokens.
+    """
+    if not tags_a or not tags_b:
+        return 0.0
+
+    words_a: set[str] = set()
+    for t in tags_a:
+        words_a.update(_tokenize_tag(t))
+    words_b: set[str] = set()
+    for t in tags_b:
+        words_b.update(_tokenize_tag(t))
+
+    if not words_a or not words_b:
+        return 0.0
+
+    overlap = len(words_a & words_b)
+    denom = min(len(words_a), len(words_b))
+    return overlap / denom
+
+
 def find_relevant_agents(
     source_tags: list[str],
     all_agents: list[dict],
@@ -137,10 +186,16 @@ def find_relevant_agents(
     An ``affinity_score`` key is injected into each returned dict so callers
     can act on the score without recomputing it.
 
+    Scoring uses :func:`compute_tag_relevance` (word-level overlap coefficient)
+    rather than strict-Jaccard exact-string match — in practice reply-extracted
+    tags (short, generic) almost never exact-match architect-defined domain
+    tags (long, compound), so exact-Jaccard returned ~0.0 for nearly every
+    realistic insight and A2A fan-out never fired.
+
     Args:
         source_tags:  Tags from the source event (insight, document edit, etc.).
         all_agents:   List of agent dicts with ``role_id`` and ``domain_tags``.
-        threshold:    Minimum Jaccard similarity to include an agent (default 0.2).
+        threshold:    Minimum relevance score to include an agent (default 0.2).
 
     Returns:
         Filtered, sorted list of agent dicts augmented with ``affinity_score``.
@@ -149,7 +204,7 @@ def find_relevant_agents(
 
     for agent in all_agents:
         agent_tags: list[str] = agent.get("domain_tags") or []
-        score = compute_tag_affinity(source_tags, agent_tags)
+        score = compute_tag_relevance(source_tags, agent_tags)
         if score >= threshold:
             # Return a copy so we don't mutate the caller's data
             augmented = dict(agent)

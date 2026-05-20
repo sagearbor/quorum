@@ -1670,13 +1670,17 @@ async def _notify_relevant_agents(
     if autonomy < 0.1:
         return  # No A2A at very low autonomy
 
-    # Adjust notification threshold based on autonomy
+    # Adjust notification threshold based on autonomy.  Calibrated for the
+    # word-level relevance score introduced alongside this change: reply tags
+    # are typically short single-word tokens that overlap ~0.2-0.5 against
+    # architect-defined compound domain tags.  The dedupe guard above caps
+    # the actual fan-out volume even when the threshold is permissive.
     if autonomy >= 0.8:
-        _A2A_NOTIFY_THRESHOLD = 0.2  # Very aggressive
+        _A2A_NOTIFY_THRESHOLD = 0.15  # Very aggressive
     elif autonomy >= 0.5:
-        _A2A_NOTIFY_THRESHOLD = 0.4  # Moderate
+        _A2A_NOTIFY_THRESHOLD = 0.25  # Moderate
     else:
-        _A2A_NOTIFY_THRESHOLD = 0.6  # Conservative (original default)
+        _A2A_NOTIFY_THRESHOLD = 0.40  # Conservative
 
     if not insight_tags:
         return

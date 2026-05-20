@@ -13,7 +13,12 @@ interface EnrichedQuorum extends Quorum {
   roles: Role[];
 }
 
-/** Track how many stations have been opened per role across the page. */
+/** Track how many stations have been opened per role across the page.
+ *  Still used by the legacy RoleDropdown component below — kept exported via
+ *  module scope so existing tests + the dropdown's URL-building logic keep
+ *  working.  The dropdown is no longer rendered on cards (role pills are now
+ *  themselves clickable links), but the function is retained for now to
+ *  minimise blast radius.  Safe to delete in a follow-up commit. */
 let stationCounter = 0;
 
 function HeatBadge({ score }: { score: number }) {
@@ -188,47 +193,30 @@ function QuorumCard({
         </div>
       </button>
 
+      {/* Role pills double as direct station links — clicking one opens that
+          role at its own station number, with the role pre-selected.  This is
+          the per-laptop expo flow: one click per station, no dropdown step. */}
       {roles.length > 0 && (
         <div className="flex flex-wrap gap-1.5 mt-3">
-          {roles.map((role) => (
-            <span
+          {roles.map((role, i) => (
+            <Link
               key={role.id}
+              href={`/event/${slug}/quorum/${quorum.id}?station=${i + 1}&role=${encodeURIComponent(role.name)}`}
               data-testid={`role-pill-${role.id}`}
-              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium"
+              title={`Open ${role.name} at Station ${i + 1}`}
+              className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium hover:ring-1 hover:ring-current transition-all cursor-pointer"
               style={{
                 backgroundColor: `${role.color ?? "#6b7280"}18`,
                 color: role.color ?? "#6b7280",
               }}
             >
+              <span className="opacity-60 mr-0.5 font-mono">{i + 1}.</span>
               {role.name}
               <PresenceDots
                 roleId={role.id}
                 presence={presence}
                 className="ml-1"
               />
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Role selection dropdown */}
-      <RoleDropdown
-        roles={roles}
-        slug={slug}
-        quorumId={quorum.id}
-        router={router}
-      />
-
-      {/* Direct station links */}
-      {roles.length > 0 && (
-        <div className="mt-2 flex flex-wrap gap-1">
-          {roles.map((_, i) => (
-            <Link
-              key={i}
-              href={`/event/${slug}/quorum/${quorum.id}?station=${i + 1}`}
-              className="text-[10px] px-2 py-1 rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-indigo-50 dark:hover:bg-indigo-900/30 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors"
-            >
-              Station {i + 1}
             </Link>
           ))}
         </div>

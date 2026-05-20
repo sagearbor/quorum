@@ -839,22 +839,14 @@ async def _run_autonomy_round(
     # --- Dispatch the role-agent turn ---
     # Preferred path: A2A SDK so it goes through /message:send and we get end-
     # to-end confirmation that the LF A2A 1.0 wire format actually works on
-    # our own infrastructure. Fallback to direct process_agent_turn ONLY when
-    # the A2A call never reached the server (transport error, no endpoint
-    # registered, etc.) — that keeps the demo responsive without a running
-    # uvicorn / agent_endpoints table.
-    #
-    # CRITICAL: do NOT fall back when ``a2a_result`` is non-None but the reply
-    # extraction returned None.  Non-None means the server-side handler ran
-    # ``process_agent_turn`` (which persisted a chat message + ran the LLM);
-    # falling back would invoke ``process_agent_turn`` AGAIN, producing a
-    # duplicate chat message and double-billing the LLM call.  We tolerate
-    # a missing log/broadcast in that edge case rather than duplicating work.
+    # our own infrastructure. Fallback to direct process_agent_turn when A2A
+    # returns None (no endpoint registered, transport error, HTTP 5xx after
+    # retries) — that keeps the demo responsive without a running uvicorn /
+    # agent_endpoints table.
     reply: str | None = None
     msg_id: str | None = None
     tags: list[str] = []
     dispatch_path = "direct"
-    a2a_executed_serverside = False  # True if /message:send actually ran
     try:
         from quorum_a2a.a2a_client import A2AClient
 
@@ -872,27 +864,17 @@ async def _run_autonomy_round(
             },
         )
         if a2a_result is not None:
-            # Server-side already ran process_agent_turn + persisted the chat
-            # message + made the LLM call.  Mark this so we never double-fire.
-            a2a_executed_serverside = True
             # Pull the reply text out of the SendMessageResponse. The server
             # wraps the agent reply in a Task.history Message + an Artifact.
             reply = _extract_a2a_reply(a2a_result)
             dispatch_path = "a2a"
-            if reply is None:
-                logger.warning(
-                    "autonomy: A2A server-side executed for role=%s but reply "
-                    "extraction failed — NOT falling back to direct to avoid "
-                    "duplicate chat message + double LLM bill.",
-                    role.get("id"),
-                )
     except Exception:
         logger.debug("autonomy: A2A dispatch raised", exc_info=True)
 
-    if reply is None and not a2a_executed_serverside:
-        # Direct fallback — only safe when A2A truly never reached the server.
-        # Preserves all existing behaviour (persistence, tag extraction,
-        # paused-sentinel handling) at the cost of bypassing the A2A wire format.
+    if reply is None:
+        # Direct fallback — preserves all existing behaviour (persistence,
+        # tag extraction, paused-sentinel handling) at the cost of bypassing
+        # the A2A wire format.
         try:
             reply, msg_id, tags = await process_agent_turn(
                 quorum_id=quorum_id,

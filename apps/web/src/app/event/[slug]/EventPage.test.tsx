@@ -189,8 +189,10 @@ describe("EventPage", () => {
 
     // Select a role
     fireEvent.click(screen.getByTestId("role-option-r-001"));
+    // The dropdown URL now also encodes ?role= so the destination page can
+    // auto-select the persona without a second tap (landed in PR #58).
     expect(mockPush).toHaveBeenCalledWith(
-      expect.stringMatching(/^\/event\/duke-expo-2026\/quorum\/q-001\?station=\d+$/)
+      expect.stringMatching(/^\/event\/duke-expo-2026\/quorum\/q-001\?station=\d+(&role=.+)?$/)
     );
   });
 });

@@ -14,6 +14,7 @@ import { useQuorumLive } from "@/hooks/useQuorumLive";
 import { IdleScene, type IdleSceneHandle } from "./IdleScene";
 import { resolveArchetype } from "./archetypes/resolveArchetype";
 import { ARCHETYPES, resolveGlbUrl } from "./archetypes/archetypes";
+import { useAvatarChoice, resolveRandomAvatar } from "@/hooks/useAvatarChoice";
 import { subscribeToFacilitator } from "@/lib/dataProvider";
 import { VisionTracker } from "./VisionTracker";
 import { ObservationStrip } from "./ObservationStrip";
@@ -100,11 +101,24 @@ export function AvatarPanel({
       ? liveState.recentContributions[0].role_name
       : undefined);
 
+  // Global user preference: "random" (default) | "match_role" | <glb url>.
+  // - "random"     → deterministic-random based on role name (stable per session)
+  // - "match_role" → existing resolveArchetype behaviour
+  // - "/avatars/..." → that specific GLB for every role
+  const { avatarChoice } = useAvatarChoice();
+
   const glbUrl = useMemo(() => {
-    const archetypeId = resolveArchetype(effectiveRoleName ?? "");
-    const archetype = ARCHETYPES[archetypeId];
-    return resolveGlbUrl(archetype);
-  }, [effectiveRoleName]);
+    if (avatarChoice === "match_role") {
+      const archetypeId = resolveArchetype(effectiveRoleName ?? "");
+      const archetype = ARCHETYPES[archetypeId];
+      return resolveGlbUrl(archetype);
+    }
+    if (avatarChoice === "random") {
+      return resolveRandomAvatar(effectiveRoleName);
+    }
+    // Treat anything else as a literal GLB URL.
+    return avatarChoice;
+  }, [avatarChoice, effectiveRoleName]);
 
   // Synthesis text: the avatar speaks the orchestrator's per-round narration
   // (checklist 11.3). The narration comes in as a WebSocket frame

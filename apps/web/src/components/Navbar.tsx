@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useShowAvatars } from "@/hooks/useShowAvatars";
+import { useAvatarChoice, AVAILABLE_AVATARS } from "@/hooks/useAvatarChoice";
 
 interface NavItem {
   href: string;
@@ -36,6 +37,7 @@ export function Navbar() {
   const pathname = usePathname();
   const [dark, setDark] = useState(false);
   const { showAvatars, toggleAvatars } = useShowAvatars();
+  const { avatarChoice, setAvatarChoice } = useAvatarChoice();
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
 
@@ -190,6 +192,26 @@ export function Navbar() {
 
         <div className="flex items-center gap-1">
         {!isDisplayRoute && (<>
+        {/* Avatar choice dropdown — Random (default), Match role, or pick by name. */}
+        {showAvatars && (
+          <select
+            value={avatarChoice}
+            onChange={(e) => setAvatarChoice(e.target.value)}
+            className="text-xs bg-transparent text-gray-600 dark:text-gray-400 border border-gray-200 dark:border-gray-700 rounded-md px-1.5 py-1 max-w-[140px] focus:outline-none focus:ring-1 focus:ring-indigo-400"
+            title="Choose which avatar the facilitator uses"
+            aria-label="Avatar choice"
+            data-testid="navbar-avatar-choice"
+          >
+            <option value="random">Random</option>
+            <option value="match_role">Match role</option>
+            {AVAILABLE_AVATARS.map((a) => (
+              <option key={a.url} value={a.url}>
+                {a.label}
+              </option>
+            ))}
+          </select>
+        )}
+
         {/* Avatar visibility toggle */}
         <button
           type="button"

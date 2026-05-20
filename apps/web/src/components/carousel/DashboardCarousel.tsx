@@ -14,9 +14,16 @@ import { useShowAvatars } from "@/hooks/useShowAvatars";
 
 export type CarouselMode = "multi-view" | "multi-quorum";
 
+/** Map from quorum_id → human-readable title.  Used to label multi-quorum
+ *  slides with the actual quorum name + position (e.g. "#2 · AI Scribes…")
+ *  instead of an opaque "Quorum 2".  Optional — falls back to ordinal-only. */
+export type QuorumTitleMap = Record<string, string>;
+
 interface DashboardCarouselProps {
   eventSlug: string;
   quorumIds: string[];
+  /** Optional id → title map; if supplied, multi-quorum labels include the title. */
+  titlesById?: QuorumTitleMap;
   mode?: CarouselMode;
   intervalMs?: number;
 }
@@ -44,6 +51,7 @@ const INTERVAL_LABELS = ["15s", "25s", "45s", "60s"];
 export function DashboardCarousel({
   eventSlug,
   quorumIds,
+  titlesById,
   mode: modeProp,
   intervalMs = 25_000,
 }: DashboardCarouselProps) {
@@ -59,7 +67,7 @@ export function DashboardCarousel({
   // Build panel pairs based on mode, then filter out facilitator-only slides
   // when the global avatar toggle is off so the carousel doesn't show empty
   // boxes where the avatar used to live.
-  const rawPanelPairs = usePanelPairs(mode, quorumIds);
+  const rawPanelPairs = usePanelPairs(mode, quorumIds, titlesById);
   const panelPairs = showAvatars
     ? rawPanelPairs
     : rawPanelPairs.filter((pair) => !pair.every((p) => p.type === "facilitator"))
@@ -230,7 +238,23 @@ export function DashboardCarousel({
   );
 }
 
-function usePanelPairs(mode: CarouselMode, quorumIds: string[]): PanelConfig[][] {
+/** Format a multi-quorum slide label: "#N · <Title>" (truncated). */
+function formatQuorumLabel(
+  position: number,
+  quorumId: string,
+  titlesById?: QuorumTitleMap,
+): string {
+  const title = titlesById?.[quorumId];
+  if (!title) return `Quorum ${position}`;
+  const trimmed = title.length > 38 ? title.slice(0, 35) + "…" : title;
+  return `#${position} · ${trimmed}`;
+}
+
+function usePanelPairs(
+  mode: CarouselMode,
+  quorumIds: string[],
+  titlesById?: QuorumTitleMap,
+): PanelConfig[][] {
   if (quorumIds.length === 0) return [];
 
   if (mode === "multi-view") {
@@ -270,13 +294,18 @@ function usePanelPairs(mode: CarouselMode, quorumIds: string[]): PanelConfig[][]
   // All slides = health charts, two per slide
   for (let i = 0; i < quorumIds.length; i += 2) {
     const pair: PanelConfig[] = [
-      { key: `q-${quorumIds[i]}`, quorumId: quorumIds[i], label: `Quorum ${i + 1}`, type: "health" },
+      {
+        key: `q-${quorumIds[i]}`,
+        quorumId: quorumIds[i],
+        label: formatQuorumLabel(i + 1, quorumIds[i], titlesById),
+        type: "health",
+      },
     ];
     if (i + 1 < quorumIds.length) {
       pair.push({
         key: `q-${quorumIds[i + 1]}`,
         quorumId: quorumIds[i + 1],
-        label: `Quorum ${i + 2}`,
+        label: formatQuorumLabel(i + 2, quorumIds[i + 1], titlesById),
         type: "health",
       });
     }

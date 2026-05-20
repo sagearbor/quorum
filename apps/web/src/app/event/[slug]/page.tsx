@@ -203,7 +203,9 @@ function QuorumCard({
               key={role.id}
               href={`/event/${slug}/quorum/${quorum.id}?station=${i + 1}&role=${encodeURIComponent(role.name)}`}
               data-testid={`role-pill-${role.id}`}
-              title={`Open ${role.name} at Station ${i + 1}`}
+              title={`Open ${role.name} at Station ${i + 1} (new tab)`}
+              target="_blank"
+              rel="noopener noreferrer"
               className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-medium hover:ring-1 hover:ring-current transition-all cursor-pointer"
               style={{
                 backgroundColor: `${role.color ?? "#6b7280"}18`,
@@ -285,6 +287,8 @@ export default function EventPage() {
           <Link
             href={`/display/${slug}`}
             data-testid="dashboard-link"
+            target="_blank"
+            rel="noopener noreferrer"
             className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 text-white px-4 py-2 text-sm font-medium hover:bg-indigo-700 transition-colors"
           >
             <svg

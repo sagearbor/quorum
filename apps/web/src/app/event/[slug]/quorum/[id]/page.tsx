@@ -5,6 +5,7 @@ import { useParams, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import {
   getQuorum,
+  getQuorums,
   getRoles,
   getContributions,
   isDemoMode,
@@ -248,6 +249,9 @@ export default function QuorumPage() {
 
   const [quorumTitle, setQuorumTitle] = useState<string>("");
   const [quorumDescription, setQuorumDescription] = useState<string>("");
+  /** This quorum's 1-indexed position within its event (used for the "#N" prefix
+   *  in the sticky header so visitors can tell sister quorums apart). */
+  const [quorumPosition, setQuorumPosition] = useState<number | null>(null);
   const [autonomyLevel, setAutonomyLevel] = useState<number>(0);
   const [showAutonomyControl, setShowAutonomyControl] = useState(false);
   const [showAgentActivity, setShowAgentActivity] = useState(false);
@@ -393,10 +397,13 @@ export default function QuorumPage() {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const [quorum, qRoles, qContribs] = await Promise.all([
+      const [quorum, qRoles, qContribs, siblings] = await Promise.all([
         getQuorum(quorumId),
         getRoles(quorumId),
         getContributions(quorumId),
+        // Fetch sibling quorums so we can compute this one's 1-indexed position
+        // within the event for the "#N · Title" header — slug already in scope.
+        getQuorums(slug).catch(() => []),
       ]);
       if (cancelled) return;
 
@@ -407,6 +414,11 @@ export default function QuorumPage() {
       }
       setRoles(qRoles as Role[]);
       setContributions(qContribs as Contribution[]);
+      // Sibling list is sorted oldest→newest by the backend; position = index + 1
+      if (Array.isArray(siblings) && siblings.length > 0) {
+        const idx = siblings.findIndex((s) => s.id === quorumId);
+        if (idx >= 0) setQuorumPosition(idx + 1);
+      }
       setLoading(false);
     }
     load();
@@ -680,6 +692,11 @@ export default function QuorumPage() {
                   data-testid="quorum-header-text"
                   className="text-base sm:text-lg font-bold truncate text-gray-900 dark:text-gray-100"
                 >
+                  {quorumPosition !== null && (
+                    <span className="text-gray-400 dark:text-gray-500 font-mono mr-1.5">
+                      #{quorumPosition}
+                    </span>
+                  )}
                   {quorumTitle || `Quorum ${quorumId}`}
                 </h1>
               )}

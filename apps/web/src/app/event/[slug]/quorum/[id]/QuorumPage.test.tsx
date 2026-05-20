@@ -174,6 +174,10 @@ vi.mock("@/lib/dataProvider", () => {
   return {
     isDemoMode: () => false,
     getQuorum: vi.fn().mockResolvedValue(mockQuorum),
+    // The quorum page now also fetches sibling quorums to compute its "#N"
+    // position in the event header — return a list containing the current
+    // quorum so the resolution succeeds.
+    getQuorums: vi.fn().mockResolvedValue([mockQuorum]),
     getRoles: vi.fn().mockResolvedValue(mockRoles),
     getContributions: vi.fn().mockResolvedValue(mockContributions),
     getStationMessages: vi.fn().mockResolvedValue([]),

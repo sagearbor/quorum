@@ -275,6 +275,7 @@ export default function DisplayPage() {
         <DashboardCarousel
           eventSlug={slug}
           quorumIds={quorumIds}
+          titlesById={Object.fromEntries(quorumOptions.map((q) => [q.id, q.title]))}
           mode={modeOverride}
           intervalMs={25_000}
         />

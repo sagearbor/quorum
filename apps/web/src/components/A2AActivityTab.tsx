@@ -117,12 +117,13 @@ function RolePill({ role, fallbackId }: RolePillProps) {
 }
 
 interface A2ARowProps {
-  event: AgentRequest;
+  event: AgentRequest & { dupCount?: number };
   rolesById: Map<string, Role>;
   highlight: boolean;
 }
 
 function A2ARow({ event, rolesById, highlight }: A2ARowProps) {
+  const dupCount = event.dupCount ?? 1;
   const [expanded, setExpanded] = useState(false);
   const source = rolesById.get(event.from_role_id);
   const target = rolesById.get(event.to_role_id);
@@ -161,6 +162,14 @@ function A2ARow({ event, rolesById, highlight }: A2ARowProps) {
         >
           {badge.label}
         </span>
+        {dupCount > 1 && (
+          <span
+            className="inline-flex items-center px-1.5 py-0.5 rounded-full text-[10px] font-mono tabular-nums bg-gray-100 text-gray-600 dark:bg-gray-700 dark:text-gray-300"
+            title={`The autonomy loop re-broadcast this same message ${dupCount - 1} more time${dupCount - 1 === 1 ? "" : "s"} — collapsed for readability.`}
+          >
+            ×{dupCount}
+          </span>
+        )}
         <span className="text-[10px] text-gray-500 dark:text-gray-400 ml-auto tabular-nums">
           {tsLabel}
         </span>
@@ -217,9 +226,35 @@ export function A2AActivityTab({
     return m;
   }, [roles]);
 
+  /** Collapse runs of A2A events that share identical content (the autonomy
+   *  loop re-broadcasts the same "cross-station insight" every tick when the
+   *  underlying state hasn't changed — without dedupe a 5-min demo can show
+   *  50+ identical rows).  Keeps the newest event per (status, content-hash)
+   *  and attaches a `dupCount` field so the UI can render "+N copies". */
+  const dedupedEvents = useMemo(() => {
+    const seen = new Map<string, AgentRequest & { dupCount: number }>();
+    for (const e of events) {
+      const contentKey = (e.content ?? "").trim().slice(0, 200);
+      const key = `${e.from_role_id ?? ""}::${e.to_role_id ?? ""}::${contentKey}`;
+      const existing = seen.get(key);
+      if (existing) {
+        existing.dupCount += 1;
+        // Keep the newest event as canonical so timestamps trend recent.
+        if ((e.created_at ?? "") > (existing.created_at ?? "")) {
+          seen.set(key, { ...e, dupCount: existing.dupCount });
+        }
+      } else {
+        seen.set(key, { ...e, dupCount: 1 });
+      }
+    }
+    return Array.from(seen.values()).sort((a, b) =>
+      (b.created_at ?? "").localeCompare(a.created_at ?? ""),
+    );
+  }, [events]);
+
   const filtered = useMemo(() => {
-    return events.filter((e) => matchesFilter(e.status, filter));
-  }, [events, filter]);
+    return dedupedEvents.filter((e) => matchesFilter(e.status, filter));
+  }, [dedupedEvents, filter]);
 
   const counts = useMemo(() => {
     const c = { all: events.length, pending: 0, completed: 0, rejected: 0 };

@@ -150,20 +150,55 @@ function QuorumCard({
   slug,
   station,
   router,
+  onDelete,
 }: {
   quorum: EnrichedQuorum;
   slug: string;
   station: string | null;
   router: ReturnType<typeof useRouter>;
+  onDelete: (quorumId: string, title: string) => Promise<void>;
 }) {
   const presence = usePresence(quorum.id);
   const roles = quorum.roles ?? [];
+  const [deleting, setDeleting] = useState(false);
 
   return (
     <div
       data-testid={`quorum-card-${quorum.id}`}
-      className="text-left border border-gray-200 dark:border-gray-700 rounded-xl p-4 bg-white dark:bg-gray-800 hover:border-indigo-300 hover:shadow-md transition-all"
+      className="relative text-left border border-gray-200 dark:border-gray-700 rounded-xl p-4 bg-white dark:bg-gray-800 hover:border-indigo-300 hover:shadow-md transition-all"
     >
+      {/* Delete button — absolutely positioned in the corner, separate from
+          the card-click button so it doesn't fire navigation.  Wrapped in
+          its own onClick(stopPropagation) for belt-and-suspenders. */}
+      <button
+        type="button"
+        data-testid={`delete-quorum-${quorum.id}`}
+        title="Delete this quorum (cannot be undone)"
+        aria-label={`Delete quorum ${quorum.title}`}
+        disabled={deleting}
+        onClick={async (e) => {
+          e.stopPropagation();
+          if (deleting) return;
+          setDeleting(true);
+          try {
+            await onDelete(quorum.id, quorum.title);
+          } finally {
+            setDeleting(false);
+          }
+        }}
+        className={`absolute top-2 right-2 z-10 inline-flex items-center justify-center w-7 h-7 rounded-md transition-colors ${
+          deleting
+            ? "bg-rose-100 text-rose-500 cursor-wait"
+            : "bg-transparent text-gray-300 hover:bg-rose-50 hover:text-rose-600 dark:text-gray-600 dark:hover:bg-rose-500/10 dark:hover:text-rose-400"
+        }`}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="3 6 5 6 21 6" />
+          <path d="M19 6l-2 14a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L5 6" />
+          <path d="M10 11v6M14 11v6" />
+          <path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2" />
+        </svg>
+      </button>
       <button
         type="button"
         onClick={() =>
@@ -174,7 +209,7 @@ function QuorumCard({
         className="w-full text-left focus:outline-none"
         data-testid={`quorum-card-link-${quorum.id}`}
       >
-        <div className="flex items-start justify-between mb-2">
+        <div className="flex items-start justify-between mb-2 pr-8">
           <h3 className="font-semibold text-sm leading-tight pr-2">
             {quorum.title}
           </h3>
@@ -257,6 +292,30 @@ export default function EventPage() {
     load();
     return () => { cancelled = true; };
   }, [slug]);
+
+  // Hard-delete a quorum.  Confirms first, calls DELETE /quorums/{id}, then
+  // optimistically removes the card from the local list.  Errors surface as
+  // an alert; on 404 we still drop the card (it's already gone server-side).
+  const handleDeleteQuorum = async (quorumId: string, title: string) => {
+    const confirmed = window.confirm(
+      `Permanently delete "${title}"?\n\nAll roles, contributions, insights, and artifacts will be deleted. This cannot be undone.`
+    );
+    if (!confirmed) return;
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    try {
+      const res = await fetch(`${apiBase}/quorums/${quorumId}`, {
+        method: "DELETE",
+      });
+      if (res.status === 204 || res.status === 404) {
+        setQuorums((prev) => prev.filter((q) => q.id !== quorumId));
+      } else {
+        const detail = await res.json().catch(() => null);
+        alert(`Delete failed (HTTP ${res.status}): ${detail?.detail ?? "unknown error"}`);
+      }
+    } catch (err) {
+      alert(`Delete failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+  };
 
   if (loading) {
     return (
@@ -409,6 +468,7 @@ export default function EventPage() {
                 slug={slug}
                 station={station}
                 router={router}
+                onDelete={handleDeleteQuorum}
               />
             ))}
           </div>

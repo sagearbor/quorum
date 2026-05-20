@@ -158,7 +158,25 @@ export function HeadlineRewrite({ quorumId, staticData }: HeadlineRewriteProps) 
         try {
           const res = await fetch(`${apiBase}/quorums/${quorumId}/before-after`);
           if (res.ok) {
-            snap = (await res.json()) as BeforeAfterSnapshot;
+            // API returns {initial, final, has_initial, has_final} — remap to
+            // the shape this component expects (final_position).  The API
+            // schema and the component were written in different sessions
+            // with different field naming; reconcile here rather than
+            // changing both sides.
+            const raw = (await res.json()) as {
+              initial?: FinalPosition | null;
+              final?: FinalPosition | null;
+              has_initial?: boolean;
+              has_final?: boolean;
+            };
+            snap = {
+              final_position: raw.final ?? null,
+              // original_question: the quorum's pre-deliberation framing.
+              // We don't have a dedicated server field, so fall back to the
+              // initial snapshot's headline (the framing as it was when the
+              // quorum first stabilized) — close enough for the demo.
+              original_question: raw.initial?.headline ?? undefined,
+            };
           }
         } catch {
           snap = null;

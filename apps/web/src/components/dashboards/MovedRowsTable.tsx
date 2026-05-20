@@ -183,7 +183,7 @@ export function MovedRowsTable({ quorumId, staticData }: MovedRowsTableProps) {
       try {
         const apiBase = getApiBase();
         const [resp, contribsRaw, rolesRaw] = await Promise.all([
-          fetch(`${apiBase}/api/quorums/${quorumId}/before-after`),
+          fetch(`${apiBase}/quorums/${quorumId}/before-after`),
           getContributions(quorumId).catch(() => []),
           getRoles(quorumId).catch(() => []),
         ]);

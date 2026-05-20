@@ -798,20 +798,39 @@ export default function QuorumPage() {
                 type="button"
                 data-testid="resolve-button"
                 onClick={async () => {
+                  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+                  // Already-resolved click = refresh the snapshot (the original
+                  // synthesis can drop the snapshot step silently if the
+                  // position_analyzer throws — see /refresh-snapshot route).
                   if (quorumStatus === "resolved") {
-                    alert("This quorum is already resolved.");
+                    setResolving(true);
+                    try {
+                      const res = await fetch(
+                        `${apiBase}/quorums/${quorumId}/refresh-snapshot`,
+                        { method: "POST" },
+                      );
+                      if (res.ok) {
+                        setActiveTab("resolution");
+                      } else {
+                        const detail = await res.json().catch(() => null);
+                        alert(`Refresh failed (HTTP ${res.status}): ${detail?.detail ?? "unknown error"}`);
+                      }
+                    } catch (err) {
+                      alert(`Refresh failed: ${err instanceof Error ? err.message : String(err)}`);
+                    } finally {
+                      setResolving(false);
+                    }
                     return;
                   }
                   if (
                     !window.confirm(
-                      "Resolve this quorum?\n\n• Locks contributions\n• Triggers Tier-3 synthesis (one LLM call)\n• Populates the Before / After tab\n\nCannot be undone.",
+                      "Resolve this quorum?\n\n• Writes the final Before/After snapshot\n• Runs one Tier-3 synthesis to generate the artifact\n• Does NOT lock future chat — agents can still talk after\n\nYou can re-run this (the button becomes 'Refresh') to retry the snapshot.",
                     )
                   ) {
                     return;
                   }
                   setResolving(true);
                   try {
-                    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
                     const res = await fetch(`${apiBase}/quorums/${quorumId}/resolve`, {
                       method: "POST",
                       headers: { "Content-Type": "application/json" },
@@ -822,7 +841,11 @@ export default function QuorumPage() {
                       setActiveTab("resolution");
                     } else if (res.status === 409) {
                       setQuorumStatus("resolved");
-                      alert("Quorum was already resolved. Switching to Before / After.");
+                      // 409 = already resolved.  Auto-fire snapshot refresh in
+                      // case the original resolve's snapshot step failed.
+                      await fetch(`${apiBase}/quorums/${quorumId}/refresh-snapshot`, {
+                        method: "POST",
+                      }).catch(() => undefined);
                       setActiveTab("resolution");
                     } else {
                       const detail = await res.json().catch(() => null);
@@ -834,27 +857,40 @@ export default function QuorumPage() {
                     setResolving(false);
                   }
                 }}
-                disabled={resolving || quorumStatus === "resolved"}
+                disabled={resolving}
                 className={`inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium transition-colors ${
                   quorumStatus === "resolved"
-                    ? "bg-emerald-50 text-emerald-700 cursor-default"
+                    ? "bg-emerald-50 text-emerald-700 hover:bg-emerald-100 cursor-pointer"
                     : resolving
                       ? "bg-amber-50 text-amber-700 cursor-wait"
                       : "bg-amber-500 text-white hover:bg-amber-600 cursor-pointer"
                 }`}
                 title={
                   quorumStatus === "resolved"
-                    ? "Already resolved"
+                    ? "Re-run snapshot extraction (in case the original synthesis dropped rows)"
                     : resolving
                       ? "Synthesizing artifact…"
-                      : "Lock contributions and generate the final artifact"
+                      : "Run synthesis + write the Before/After snapshot"
                 }
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="20 6 9 17 4 12" />
+                  {quorumStatus === "resolved" ? (
+                    <>
+                      <polyline points="23 4 23 10 17 10" />
+                      <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                    </>
+                  ) : (
+                    <polyline points="20 6 9 17 4 12" />
+                  )}
                 </svg>
                 <span className="hidden sm:inline">
-                  {quorumStatus === "resolved" ? "Resolved" : resolving ? "Resolving…" : "Resolve"}
+                  {quorumStatus === "resolved"
+                    ? resolving
+                      ? "Refreshing…"
+                      : "Refresh Before/After"
+                    : resolving
+                      ? "Resolving…"
+                      : "Resolve"}
                 </span>
               </button>
               <Link

@@ -5,6 +5,11 @@ from quorum_llm.contribution_analyzer import (
     ContributionAnalysis,
     analyze_contribution,
 )
+from quorum_llm.position_analyzer import (
+    FieldChange,
+    PositionSnapshot,
+    synthesize_position,
+)
 from quorum_llm.factory import get_llm_provider
 from quorum_llm.interface import LLMProvider
 from quorum_llm.providers.mock import MockLLMProvider
@@ -57,6 +62,10 @@ __all__ = [
     # Contribution analyzer (Tier 2 per-contribution scoring)
     "ContributionAnalysis",
     "analyze_contribution",
+    # Position analyzer (before/after snapshots)
+    "FieldChange",
+    "PositionSnapshot",
+    "synthesize_position",
     # Tier 1
     "extract_keywords",
     "deduplicate_contributions",

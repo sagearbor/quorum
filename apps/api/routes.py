@@ -25,6 +25,10 @@ from quorum_llm.contribution_analyzer import (
     ContributionAnalysis,
     analyze_contribution,
 )
+from quorum_llm.position_analyzer import (
+    PositionSnapshot,
+    synthesize_position,
+)
 from quorum_llm.metric_deltas import (
     append_rationale,
     apply_deltas_to_running_total,
@@ -166,6 +170,120 @@ def _db_contribs_to_llm(contribs_data: list[dict]) -> list[LLMContribution]:
         )
         for c in contribs_data
     ]
+
+
+async def _persist_position_snapshot(
+    quorum_id: str,
+    stage: str,  # "initial" | "final"
+) -> None:
+    """Fire-and-forget Before/After snapshot generator.
+
+    Runs the Tier-2 position synthesizer and persists the result onto the
+    artifacts row's ``initial_position`` or ``final_position`` column.  This
+    is called asynchronously from /contribute (after contribution #3 lands)
+    and synchronously from /resolve (after Tier-3 synthesis).  All errors
+    are swallowed and logged — a snapshot failure must never block the
+    request that triggered it.
+
+    For ``stage="initial"`` the column is only written when it's still NULL,
+    so retries don't overwrite the first captured framing.  For
+    ``stage="final"`` we always write — the resolved state is canonical.
+    """
+    column = "initial_position" if stage == "initial" else "final_position"
+    try:
+        db = get_supabase()
+        # Fetch quorum + roles + contributions + station chats for the prompt.
+        quorum_row = (
+            db.table("quorums")
+            .select("id, status")
+            .eq("id", quorum_id)
+            .maybe_single()
+            .execute()
+        )
+        if not quorum_row or not quorum_row.data:
+            logger.info(
+                "position_snapshot: quorum %s not found; skipping", quorum_id,
+            )
+            return
+
+        roles_resp = (
+            db.table("roles").select("*").eq("quorum_id", quorum_id).execute()
+        )
+        contribs_resp = (
+            db.table("contributions")
+            .select("*")
+            .eq("quorum_id", quorum_id)
+            .order("created_at")
+            .execute()
+        )
+        try:
+            chats_resp = (
+                db.table("station_messages")
+                .select("id, role_id, station_id, role, content")
+                .eq("quorum_id", quorum_id)
+                .order("created_at")
+                .limit(50)
+                .execute()
+            )
+            chats = chats_resp.data or []
+        except Exception:
+            # station_messages is best-effort context; absence is fine.
+            chats = []
+
+        llm_roles = _db_roles_to_llm(roles_resp.data or [])
+        llm_contribs = _db_contribs_to_llm(contribs_resp.data or [])
+
+        snapshot = await synthesize_position(
+            role_definitions=llm_roles,
+            contributions=llm_contribs,
+            chats=chats,
+            stage=stage,  # type: ignore[arg-type]
+            llm_provider=llm_provider,
+        )
+
+        # Find or create the artifacts row for this quorum.  Position
+        # snapshots can land before /resolve (initial stage), in which case
+        # no artifact row exists yet — insert a minimal placeholder.
+        existing = (
+            db.table("artifacts")
+            .select("id, initial_position")
+            .eq("quorum_id", quorum_id)
+            .execute()
+        )
+        snapshot_json = snapshot.model_dump(mode="json")
+
+        if existing.data:
+            artifact_id = existing.data[0]["id"]
+            if stage == "initial" and existing.data[0].get("initial_position"):
+                # Already captured — leave it alone.  The "initial" framing
+                # is the first 3-contribution moment and must not be
+                # overwritten by retries.
+                return
+            db.table("artifacts").update(
+                {column: snapshot_json}
+            ).eq("id", artifact_id).execute()
+        else:
+            # No artifact row yet (initial-stage path).  Insert a draft
+            # placeholder so we have somewhere to persist initial_position.
+            db.table("artifacts").insert({
+                "id": str(uuid.uuid4()),
+                "quorum_id": quorum_id,
+                "version": 0,
+                "content_hash": "",
+                "sections": [],
+                "status": "draft",
+                column: snapshot_json,
+            }).execute()
+
+        logger.info(
+            "position_snapshot: persisted %s for quorum=%s",
+            stage, quorum_id,
+        )
+    except Exception:
+        logger.warning(
+            "position_snapshot: failed to generate %s snapshot for quorum=%s",
+            stage, quorum_id, exc_info=True,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -673,6 +791,37 @@ async def contribute(quorum_id: str, body: ContributeRequest):
             # Non-fatal — contribution is already stored; facilitator fields
             # remain None.
 
+    # --- Before/After: capture initial-position snapshot after #3 ---
+    # Once the quorum has its first 3 contributions, fire the Tier-2 position
+    # synthesizer in the background to capture an "initial framing" snapshot.
+    # The helper itself checks whether initial_position is already set on the
+    # artifact row and no-ops if so, so this can race-fire harmlessly.  All
+    # errors swallowed inside _persist_position_snapshot — never blocks the
+    # /contribute response.
+    try:
+        contribution_count = len(all_contribs.data or [])
+        if contribution_count >= 3:
+            artifact_existing = (
+                db.table("artifacts")
+                .select("initial_position")
+                .eq("quorum_id", quorum_id)
+                .execute()
+            )
+            has_initial = bool(
+                artifact_existing.data
+                and artifact_existing.data[0].get("initial_position")
+            )
+            if not has_initial:
+                asyncio.create_task(
+                    _persist_position_snapshot(quorum_id, "initial")
+                )
+    except Exception:
+        logger.debug(
+            "contribute: failed to schedule initial position snapshot for "
+            "quorum=%s",
+            quorum_id, exc_info=True,
+        )
+
     return ContributeResponse(
         contribution_id=contribution_id,
         tier_processed=tier,
@@ -813,6 +962,52 @@ async def get_quorum_blackboard(quorum_id: str):
     db = get_supabase()
     state = await quorum_state_module.get_state(db, quorum_id)
     return QuorumBlackboardResponse(**state)
+
+
+# ---------------------------------------------------------------------------
+# GET /quorums/{quorum_id}/before-after  — Before/After snapshots
+# ---------------------------------------------------------------------------
+@router.get("/quorums/{quorum_id}/before-after")
+async def get_before_after(quorum_id: str):
+    """Return initial + final position snapshots for the Before/After view.
+
+    Response shape:
+
+        {
+            "initial":      PositionSnapshot | null,
+            "final":        PositionSnapshot | null,
+            "has_initial":  bool,
+            "has_final":    bool,
+        }
+
+    A 200 with both nulls means the quorum exists but no snapshots have
+    been captured yet — frontend renders "Still gathering data…".  Initial
+    is set after contribution #3 lands; final is set during /resolve.
+    """
+    db = get_supabase()
+    # 404 if the quorum doesn't exist at all.
+    _fetch_single(db, "quorums", "id", quorum_id, select="id", label="Quorum")
+
+    artifact_result = (
+        db.table("artifacts")
+        .select("initial_position, final_position")
+        .eq("quorum_id", quorum_id)
+        .execute()
+    )
+
+    initial: dict | None = None
+    final: dict | None = None
+    if artifact_result.data:
+        row = artifact_result.data[0]
+        initial = row.get("initial_position")
+        final = row.get("final_position")
+
+    return {
+        "initial": initial,
+        "final": final,
+        "has_initial": initial is not None,
+        "has_final": final is not None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -974,6 +1169,22 @@ async def resolve_quorum(quorum_id: str, body: ResolveRequest):
             "sections": sections_json,
         },
     })
+
+    # --- Before/After: capture final-position snapshot ---
+    # Tier-3 synthesis has landed; capture a typed PositionSnapshot of where
+    # the group ended up.  Awaited (not fire-and-forget) so the snapshot is
+    # guaranteed to be present when the frontend re-reads the artifact after
+    # /resolve returns — the Before/After view is the key expo visual and
+    # mustn't show "still gathering data" right after resolve.  Wrapped in
+    # try/except so a snapshot failure doesn't fail an already-successful
+    # resolve.
+    try:
+        await _persist_position_snapshot(quorum_id, "final")
+    except Exception:
+        logger.warning(
+            "resolve: final position snapshot failed for quorum=%s",
+            quorum_id, exc_info=True,
+        )
 
     download_url = f"/artifacts/{artifact_id}/download"
     return ResolveResponse(artifact_id=artifact_id, download_url=download_url)

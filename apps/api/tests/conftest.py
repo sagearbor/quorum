@@ -143,7 +143,7 @@ def _install_quorum_llm_mock() -> None:
     sys.modules["quorum_llm"] = pkg
 
     # Sub-module stubs that are imported by name in various files
-    for sub in ("interface", "models", "factory", "providers.mock", "tier1", "affinity", "conversation", "metric_deltas", "contribution_analyzer"):
+    for sub in ("interface", "models", "factory", "providers.mock", "tier1", "affinity", "conversation", "metric_deltas", "contribution_analyzer", "position_analyzer"):
         full = f"quorum_llm.{sub}"
         if full not in sys.modules:
             stub = types.ModuleType(full)
@@ -292,6 +292,54 @@ def _install_quorum_llm_mock() -> None:
 
                 stub.ContributionAnalysis = _ContributionAnalysis
                 stub.analyze_contribution = _stub_analyze_contribution
+            elif sub == "position_analyzer":
+                # Stub for quorum_llm.position_analyzer — returns a
+                # deterministic-but-empty PositionSnapshot.  Real impl lives
+                # in packages/llm/quorum_llm/position_analyzer.py and has
+                # its own dedicated tests; the API route tests just need
+                # the import to resolve and the helper to be no-op-safe.
+                from dataclasses import dataclass, field as _field
+
+                @dataclass
+                class _FieldChange:
+                    field: str = ""
+                    before: str = ""
+                    after: str = ""
+                    changed: bool = False
+                    drivers: list = _field(default_factory=list)
+
+                    def model_dump(self, mode: str = "python") -> dict:
+                        return {
+                            "field": self.field,
+                            "before": self.before,
+                            "after": self.after,
+                            "changed": self.changed,
+                            "drivers": list(self.drivers),
+                        }
+
+                @dataclass
+                class _PositionSnapshot:
+                    summary_sentences: list = _field(default_factory=lambda: ["a.", "b.", "c."])
+                    headline: str = "stub headline"
+                    key_aspects: list = _field(default_factory=list)
+                    unresolved: list = _field(default_factory=list)
+
+                    def model_dump(self, mode: str = "python") -> dict:
+                        return {
+                            "summary_sentences": list(self.summary_sentences),
+                            "headline": self.headline,
+                            "key_aspects": [a.model_dump(mode=mode) for a in self.key_aspects],
+                            "unresolved": list(self.unresolved),
+                        }
+
+                async def _stub_synthesize_position(
+                    role_definitions, contributions, chats, stage, llm_provider,
+                ):
+                    return _PositionSnapshot()
+
+                stub.FieldChange = _FieldChange
+                stub.PositionSnapshot = _PositionSnapshot
+                stub.synthesize_position = _stub_synthesize_position
             sys.modules[full] = stub
 
     # Also wire quorum_llm.providers as a package

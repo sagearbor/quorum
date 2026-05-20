@@ -504,6 +504,25 @@ async def create_quorum(event_id: str, body: CreateQuorumRequest):
 
 
 # ---------------------------------------------------------------------------
+# DELETE /quorums/{quorum_id}  — hard delete (cascades through roles,
+# contributions, artifacts, insights, agent_requests, etc. via FK constraints)
+# ---------------------------------------------------------------------------
+@router.delete("/quorums/{quorum_id}", status_code=204)
+async def delete_quorum(quorum_id: str):
+    """Hard-delete a quorum and all child rows (roles, contributions, artifacts,
+    insights, agent_requests, conversations, participants, sync state).  All
+    children cascade via the ON DELETE CASCADE FK constraints defined in the
+    schema migrations.  Returns 204 on success, 404 if the quorum doesn't exist.
+    """
+    db = get_supabase()
+    existing = db.table("quorums").select("id").eq("id", quorum_id).maybe_single().execute()
+    if not existing or not existing.data:
+        raise HTTPException(status_code=404, detail=f"Quorum {quorum_id} not found")
+    db.table("quorums").delete().eq("id", quorum_id).execute()
+    return None
+
+
+# ---------------------------------------------------------------------------
 # POST /quorums/{quorum_id}/contribute
 # ---------------------------------------------------------------------------
 @router.post("/quorums/{quorum_id}/contribute", response_model=ContributeResponse)

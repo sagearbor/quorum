@@ -163,8 +163,11 @@ async function fetchQuorumState(quorumId: string): Promise<StateResponse> {
 // Quorum data
 // ---------------------------------------------------------------------------
 
+export type QuorumStatusFilter = "all" | "active" | "resolved";
+
 export async function getQuorums(
-  eventSlug: string
+  eventSlug: string,
+  statusFilter: QuorumStatusFilter = "all",
 ): Promise<DemoQuorum[]> {
   if (isDemoMode()) {
     const engine = await loadDemoEngine();
@@ -174,7 +177,9 @@ export async function getQuorums(
   const apiBase = getApiBase();
   if (apiBase) {
     try {
-      const idsRes = await fetch(`${apiBase}/events/${eventSlug}/quorum-ids`);
+      const idsRes = await fetch(
+        `${apiBase}/events/${eventSlug}/quorum-ids?status_filter=${statusFilter}`,
+      );
       if (!idsRes.ok) return [];
       const ids: string[] = await idsRes.json();
       if (!ids.length) return [];

@@ -346,18 +346,38 @@ async def delete_event(event_id: str):
 # GET /events/{slug}/quorum-ids  — used by display page to get live quorum IDs
 # ---------------------------------------------------------------------------
 @router.get("/events/{slug}/quorum-ids", response_model=list[str])
-async def get_event_quorum_ids(slug: str):
-    """Return active quorum IDs for an event, looked up by slug."""
+async def get_event_quorum_ids(slug: str, status_filter: str = "all"):
+    """Return quorum IDs for an event, filtered by status.
+
+    ``status_filter`` (query param, default ``"all"``):
+      - ``"active"`` → only ``open`` + ``active`` quorums (the legacy default)
+      - ``"resolved"`` → only ``resolved`` quorums
+      - ``"all"`` → both buckets (so the event-landing UI can show resolved
+        quorums alongside running ones with a toggle).  Archived rows are
+        always excluded.
+
+    Unrecognised values fall back to ``"all"`` rather than 400-ing — the
+    URL is user-visible via the architect toggle and a typo shouldn't blow
+    up the page.
+    """
     db = get_supabase()
     event = db.table("events").select("id").eq("slug", slug).maybe_single().execute()
     if not event or not event.data:
         return []
     event_id = event.data["id"]
+
+    if status_filter == "active":
+        statuses = ["open", "active"]
+    elif status_filter == "resolved":
+        statuses = ["resolved"]
+    else:
+        statuses = ["open", "active", "resolved"]
+
     result = (
         db.table("quorums")
         .select("id")
         .eq("event_id", event_id)
-        .in_("status", ["open", "active"])
+        .in_("status", statuses)
         .order("created_at", desc=True)
         .execute()
     )
@@ -1079,6 +1099,35 @@ async def get_role_status(quorum_id: str):
         })
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# GET /quorums/{quorum_id}/a2a-debug
+# ---------------------------------------------------------------------------
+# Debug-only endpoint to count agent_requests rows for a quorum.  Helps
+# diagnose "A2A tab shows 0" issues by confirming whether rows actually
+# exist server-side (and how recent) vs a frontend/realtime problem.
+@router.get("/quorums/{quorum_id}/a2a-debug")
+async def a2a_debug(quorum_id: str):
+    db = get_supabase()
+    result = (
+        db.table("agent_requests")
+        .select("id, from_role_id, to_role_id, request_type, created_at, status")
+        .eq("quorum_id", quorum_id)
+        .order("created_at", desc=True)
+        .limit(20)
+        .execute()
+    )
+    rows = result.data or []
+    return {
+        "total_returned": len(rows),
+        "newest": rows[0].get("created_at") if rows else None,
+        "by_type": {
+            t: sum(1 for r in rows if r.get("request_type") == t)
+            for t in {r.get("request_type") for r in rows}
+        },
+        "rows": rows[:5],
+    }
 
 
 # ---------------------------------------------------------------------------

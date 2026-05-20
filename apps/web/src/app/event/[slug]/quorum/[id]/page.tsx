@@ -23,6 +23,7 @@ import { useA2ARequests } from "@/hooks/useA2ARequests";
 import type { StationMessage } from "@quorum/types";
 import { AgentActivityFeed } from "@/components/AgentActivityFeed";
 import { A2AActivityTab } from "@/components/A2AActivityTab";
+import { BeforeAfterPanel } from "@/components/dashboards/BeforeAfterPanel";
 import { PresenceDots } from "@/components/PresenceDots";
 import { usePresence } from "@/hooks/usePresence";
 import { useQuorumLive } from "@/hooks/useQuorumLive";
@@ -32,7 +33,7 @@ import { useQuorumLive } from "@/hooks/useQuorumLive";
 // ---------------------------------------------------------------------------
 
 /** Tabs shown below the contribution form. */
-type PanelTab = "conversation" | "contributions" | "documents" | "a2a";
+type PanelTab = "conversation" | "contributions" | "documents" | "a2a" | "resolution";
 
 // ---------------------------------------------------------------------------
 // VoiceButton
@@ -1034,6 +1035,7 @@ export default function QuorumPage() {
                 { id: "documents", label: "Documents" },
                 { id: "contributions", label: `Contributions (${contributions.length})` },
                 { id: "a2a", label: "A2A Activity" },
+                { id: "resolution", label: "Before / After" },
               ] as { id: PanelTab; label: string }[]
             ).map(({ id, label }) => (
               <button
@@ -1111,6 +1113,13 @@ export default function QuorumPage() {
                 once + kept fresh via Supabase realtime. */}
             {activeTab === "a2a" && (
               <A2AActivityTab events={a2aEvents} roles={roles} />
+            )}
+
+            {/* Before / After tab — wraps the 3 before/after views behind a
+                toggle (Headline / Radar / Table).  Powered by the
+                /quorums/{id}/before-after endpoint added in PR #66. */}
+            {activeTab === "resolution" && (
+              <BeforeAfterPanel quorumId={quorumId} />
             )}
 
             {/* Contributions tab */}

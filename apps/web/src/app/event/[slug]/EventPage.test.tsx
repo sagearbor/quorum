@@ -173,7 +173,9 @@ describe("EventPage", () => {
     );
     // The role pill is now an anchor whose href encodes both the station
     // number and the role name — clicking it lands the user on the quorum
-    // page with the persona pre-selected.
+    // page with the persona pre-selected.  (PR #62 replaced the old
+    // "Join as role..." dropdown with direct-link pills; the legacy
+    // dropdown tests that lived here are intentionally removed.)
     const pill = screen.getByTestId("role-pill-r-001");
     expect(pill.tagName).toBe("A");
     expect(pill.getAttribute("href")).toMatch(

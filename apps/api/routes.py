@@ -1063,6 +1063,61 @@ async def get_role_status(quorum_id: str):
 
 
 # ---------------------------------------------------------------------------
+# POST /quorums/{quorum_id}/refresh-snapshot
+# ---------------------------------------------------------------------------
+# Re-runs ONLY the position-snapshot synthesis (initial + final) without
+# touching the artifact.  Used to backfill snapshots when the original
+# /resolve call's snapshot step failed silently (the LLM occasionally
+# produces output the validator drops, leaving both columns NULL while
+# the artifact itself wrote successfully).
+@router.post("/quorums/{quorum_id}/refresh-snapshot")
+async def refresh_position_snapshot(quorum_id: str):
+    db = get_supabase()
+    _fetch_single(db, "quorums", "id", quorum_id, select="id, status", label="Quorum")
+
+    # Force-rerun initial first (writes only if NULL), then final (always writes).
+    initial_ok = False
+    final_ok = False
+    try:
+        await _persist_position_snapshot(quorum_id, "initial")
+        initial_ok = True
+    except Exception:
+        logger.warning(
+            "refresh-snapshot: initial synthesis failed for %s", quorum_id, exc_info=True,
+        )
+    try:
+        await _persist_position_snapshot(quorum_id, "final")
+        final_ok = True
+    except Exception:
+        logger.warning(
+            "refresh-snapshot: final synthesis failed for %s", quorum_id, exc_info=True,
+        )
+
+    # Read back to confirm what landed (the snapshot helper writes the artifact
+    # row directly; we report what's on disk so the frontend can warn if a
+    # snapshot still didn't materialize after the retry).
+    artifact_row = (
+        db.table("artifacts")
+        .select("initial_position, final_position")
+        .eq("quorum_id", quorum_id)
+        .order("version", desc=True)
+        .limit(1)
+        .execute()
+    )
+    has_initial = False
+    has_final = False
+    if artifact_row.data:
+        has_initial = artifact_row.data[0].get("initial_position") is not None
+        has_final = artifact_row.data[0].get("final_position") is not None
+    return {
+        "initial_attempt_ok": initial_ok,
+        "final_attempt_ok": final_ok,
+        "has_initial": has_initial,
+        "has_final": has_final,
+    }
+
+
+# ---------------------------------------------------------------------------
 # POST /quorums/{quorum_id}/resolve
 # ---------------------------------------------------------------------------
 @router.post("/quorums/{quorum_id}/resolve", response_model=ResolveResponse)

@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { getQuorums, isDemoMode } from "@/lib/dataProvider";
+import { getQuorums, isDemoMode, type QuorumStatusFilter } from "@/lib/dataProvider";
 import { QRCodeSVG } from "qrcode.react";
 import type { Quorum, Role } from "@quorum/types";
 import { PresenceDots } from "@/components/PresenceDots";
@@ -272,6 +272,16 @@ export default function EventPage() {
   const [quorums, setQuorums] = useState<EnrichedQuorum[]>([]);
   const [loading, setLoading] = useState(true);
   const [showQR, setShowQR] = useState(false);
+  // Status filter: all | active | resolved.  Persisted in localStorage so
+  // the toggle state survives refreshes.  Default "all" — the demo case is
+  // "I want to see the resolved one too without remembering the URL".
+  const [statusFilter, setStatusFilter] = useState<QuorumStatusFilter>(() => {
+    if (typeof window === "undefined") return "all";
+    const stored = window.localStorage.getItem("quorumStatusFilter");
+    return stored === "active" || stored === "resolved" || stored === "all"
+      ? (stored as QuorumStatusFilter)
+      : "all";
+  });
 
   const baseUrl =
     typeof window !== "undefined" ? window.location.origin : "https://quorum.app";
@@ -283,7 +293,7 @@ export default function EventPage() {
     let cancelled = false;
     async function load() {
       setLoading(true);
-      const data = await getQuorums(slug);
+      const data = await getQuorums(slug, statusFilter);
       if (!cancelled) {
         setQuorums(data as unknown as EnrichedQuorum[]);
         setLoading(false);
@@ -291,7 +301,13 @@ export default function EventPage() {
     }
     load();
     return () => { cancelled = true; };
-  }, [slug]);
+  }, [slug, statusFilter]);
+
+  // Persist toggle choice so a refresh keeps the user's selection.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    window.localStorage.setItem("quorumStatusFilter", statusFilter);
+  }, [statusFilter]);
 
   // Hard-delete a quorum.  Confirms first, calls DELETE /quorums/{id}, then
   // optimistically removes the card from the local list.  Errors surface as
@@ -384,6 +400,39 @@ export default function EventPage() {
             </span>
           )}
         </p>
+
+        {/* Status filter — segmented control.  Lets the operator show
+            resolved quorums alongside running ones (the default landing
+            view used to hide them, which made the resolved Before/After
+            tab unreachable except by direct URL).  Persisted in
+            localStorage so a refresh keeps the choice. */}
+        <div className="mt-3 inline-flex items-center rounded-lg border border-gray-200 dark:border-gray-700 p-0.5 bg-gray-50 dark:bg-gray-800/40">
+          {(
+            [
+              { value: "all", label: "All" },
+              { value: "active", label: "Active" },
+              { value: "resolved", label: "Resolved" },
+            ] as { value: QuorumStatusFilter; label: string }[]
+          ).map((opt) => {
+            const selected = statusFilter === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                onClick={() => setStatusFilter(opt.value)}
+                data-testid={`status-filter-${opt.value}`}
+                aria-pressed={selected}
+                className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${
+                  selected
+                    ? "bg-white dark:bg-gray-900 text-indigo-600 shadow-sm"
+                    : "text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white"
+                }`}
+              >
+                {opt.label}
+              </button>
+            );
+          })}
+        </div>
       </header>
 
       {/* QR Codes — collapsible, shows station links for all quorums */}

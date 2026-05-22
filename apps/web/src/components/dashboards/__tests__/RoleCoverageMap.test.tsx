@@ -112,6 +112,50 @@ describe("RoleCoverageMap", () => {
     expect(screen.getByTestId("role-coverage-empty")).toBeTruthy();
   });
 
+  it("derives columns from structured_fields keys when roles lack prompt_template", async () => {
+    // Real production case: the API's /quorums/{id}/roles endpoint returns
+    // roles WITHOUT prompt_template. The dashboard should still render the
+    // heatmap by deriving columns from the structured_fields keys observed on
+    // actual contributions.
+    render(
+      <RoleCoverageMap
+        quorumId="q-derived"
+        staticRoles={[
+          { id: "role-a", name: "Architect", authority_rank: 5 },
+          { id: "role-b", name: "Reviewer", authority_rank: 3 },
+        ]}
+        staticContributions={[
+          {
+            id: "c1",
+            role_id: "role-a",
+            structured_fields: {
+              contribution: "Initial architectural sketch",
+              concerns: "Scalability under load",
+            },
+          },
+          {
+            id: "c2",
+            role_id: "role-b",
+            structured_fields: {
+              contribution: "Looks good, minor revisions",
+            },
+          },
+        ]}
+      />,
+    );
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    // Both observed columns rendered.
+    expect(screen.getByTestId("cell-role-a-contribution")).toBeTruthy();
+    expect(screen.getByTestId("cell-role-a-concerns")).toBeTruthy();
+    expect(screen.getByTestId("cell-role-b-contribution")).toBeTruthy();
+    // Empty state should NOT trigger.
+    expect(screen.queryByTestId("role-coverage-empty")).toBeNull();
+  });
+
   it("opens the popover with contribution content on cell click", async () => {
     render(
       <RoleCoverageMap

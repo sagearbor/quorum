@@ -245,27 +245,48 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
             typeof (quorum as Record<string, unknown>).metrics === "object"
               ? ((quorum as Record<string, unknown>).metrics as HealthMetrics)
               : { ...INITIAL_METRICS };
-          // Build history by interpolating scores across contribution timestamps.
-          // Each contribution may carry its own `metrics` jsonb snapshot (the
-          // deterministic HealthMetrics dict at the moment it was written) —
-          // when present, use it so the Ghost-Trail Radar's ghost polygon
-          // (history[0]) actually differs from the current polygon
-          // (history[last]).  Fall back to the quorum's current `rowMetrics`
-          // only when the row's metrics is null/missing (older rows pre-
-          // migration, or rows written before the per-contribution snapshot
-          // was wired up).
+          // Build per-snapshot metrics by accumulating each contribution's
+          // analysis_deltas (the per-turn LLM-extracted score changes).  The
+          // ghost polygon starts at INITIAL_METRICS (zeros) and walks toward
+          // the final state, so the radar actually shows movement instead of
+          // a perfect-overlap pentagon.  The LAST snapshot is pinned to the
+          // actual rowMetrics so the "current" pole matches reality even
+          // when the LLM's deltas don't sum exactly to the final state
+          // (capping, post-processing, etc).
+          //
+          // This supersedes the earlier per-contribution `c.metrics` fallback
+          // (PR #79): contributions don't actually have a metrics column —
+          // they carry analysis_deltas instead.
+          //
+          // analysis_deltas keys use short names (consensus, completion,
+          // blockers, critical_path, role_coverage); rowMetrics uses long
+          // names (consensus_score, completion_pct, ...).  Map between them.
+          const SHORT_TO_LONG: Record<string, keyof HealthMetrics> = {
+            consensus: "consensus_score",
+            completion: "completion_pct",
+            role_coverage: "role_coverage_pct",
+            critical_path: "critical_path_score",
+            blockers: "blocker_score",
+          };
+          const accum: HealthMetrics = { ...INITIAL_METRICS };
+          const lastIdx = contribs.length - 1;
           const seedHistory: HealthSnapshot[] = contribs.map((c: Record<string, unknown>, i: number) => {
             const frac = (i + 1) / Math.max(contribs.length, 1);
             const score = Math.round(finalScore * frac * 10) / 10;
-            // Fallback to rowMetrics when the contribution row has no metrics snapshot.
-            const perContribMetrics: HealthMetrics =
-              c.metrics && typeof c.metrics === "object"
-                ? (c.metrics as HealthMetrics)
-                : rowMetrics;
+            const deltas = (c.analysis_deltas as Record<string, number> | null) ?? {};
+            for (const [short, val] of Object.entries(deltas)) {
+              const long = SHORT_TO_LONG[short];
+              if (!long || typeof val !== "number") continue;
+              const next = (accum[long] ?? 0) + val;
+              accum[long] = Math.max(0, Math.min(100, next));
+            }
             return {
               timestamp: new Date(c.created_at as string).getTime(),
               score,
-              metrics: perContribMetrics,
+              // Snapshot a *copy* of accum so later iterations don't mutate
+              // prior history entries.  Pin the final point to rowMetrics so
+              // the radar's "now" pole matches the live state.
+              metrics: i === lastIdx ? rowMetrics : { ...accum },
             };
           });
           // Ensure the chart always has at least one data point on load —

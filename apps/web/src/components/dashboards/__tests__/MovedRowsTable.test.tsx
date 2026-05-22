@@ -113,4 +113,60 @@ describe("MovedRowsTable", () => {
       screen.getByText(/No resolution yet — the quorum is still deliberating/i),
     ).toBeTruthy();
   });
+
+  it("renders the Δ driver column when at least one row resolves to a role", () => {
+    render(
+      <MovedRowsTable
+        quorumId="q-1"
+        staticData={{ payload, contributions, roles }}
+      />,
+    );
+    expect(screen.getByTestId("moved-rows-table-driver-column")).toBeTruthy();
+  });
+
+  it("hides the Δ driver column entirely when every row's drivers array is empty", () => {
+    const noDriverPayload: BeforeAfterPayload = {
+      ...payload,
+      final: {
+        ...payload.final!,
+        key_aspects: payload.final!.key_aspects.map((a) => ({ ...a, drivers: [] })),
+      },
+    };
+    render(
+      <MovedRowsTable
+        quorumId="q-1"
+        staticData={{ payload: noDriverPayload, contributions, roles }}
+      />,
+    );
+    // Header is gone…
+    expect(screen.queryByTestId("moved-rows-table-driver-column")).toBeNull();
+    // …and per-row driver pill containers are not rendered either.
+    expect(screen.queryByTestId("moved-row-scope-drivers")).toBeNull();
+    expect(screen.queryByTestId("moved-row-cadence-drivers")).toBeNull();
+    // Moved rows themselves still render.
+    expect(screen.getByTestId("moved-row-scope")).toBeTruthy();
+    expect(screen.getByTestId("moved-row-cadence")).toBeTruthy();
+  });
+
+  it("hides the Δ column when driver ids reference unknown contributions", () => {
+    // drivers populated but unresolvable (contribution id not in the map) — same
+    // visual outcome as empty drivers, so the column should hide.
+    const orphanDriverPayload: BeforeAfterPayload = {
+      ...payload,
+      final: {
+        ...payload.final!,
+        key_aspects: payload.final!.key_aspects.map((a) => ({
+          ...a,
+          drivers: a.changed ? ["c-orphan-id"] : [],
+        })),
+      },
+    };
+    render(
+      <MovedRowsTable
+        quorumId="q-1"
+        staticData={{ payload: orphanDriverPayload, contributions, roles }}
+      />,
+    );
+    expect(screen.queryByTestId("moved-rows-table-driver-column")).toBeNull();
+  });
 });

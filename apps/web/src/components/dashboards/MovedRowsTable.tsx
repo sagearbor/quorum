@@ -102,7 +102,17 @@ function DriverPills({ drivers, fieldId }: { drivers: DriverInfo[]; fieldId: str
 
 const ROW_CLS = "border-t border-white/5 align-top";
 
-function MovedRow({ row, drivers, reduceMotion }: { row: FieldChange; drivers: DriverInfo[]; reduceMotion: boolean }) {
+function MovedRow({
+  row,
+  drivers,
+  reduceMotion,
+  showDriverColumn,
+}: {
+  row: FieldChange;
+  drivers: DriverInfo[];
+  reduceMotion: boolean;
+  showDriverColumn: boolean;
+}) {
   const testId = `moved-row-${row.field}`;
   const cells = (
     <>
@@ -113,7 +123,9 @@ function MovedRow({ row, drivers, reduceMotion }: { row: FieldChange; drivers: D
       <td className="px-3 py-2 text-xs text-emerald-200/90">
         {row.after || <span className="italic text-white/30">—</span>}
       </td>
-      <td className="px-3 py-2"><DriverPills drivers={drivers} fieldId={row.field} /></td>
+      {showDriverColumn && (
+        <td className="px-3 py-2"><DriverPills drivers={drivers} fieldId={row.field} /></td>
+      )}
     </>
   );
   if (reduceMotion) return <tr data-testid={testId} className={ROW_CLS}>{cells}</tr>;
@@ -132,15 +144,29 @@ function MovedRow({ row, drivers, reduceMotion }: { row: FieldChange; drivers: D
   );
 }
 
-function HeldRow({ row, reduceMotion }: { row: FieldChange; reduceMotion: boolean }) {
+function HeldRow({
+  row,
+  reduceMotion,
+  showDriverColumn,
+}: {
+  row: FieldChange;
+  reduceMotion: boolean;
+  showDriverColumn: boolean;
+}) {
   const testId = `held-row-${row.field}`;
+  // When the Δ column is hidden the middle cell needs to span Before+After+held-label
+  // (3 cols). When it's shown, the trailing "held" cell takes the Δ slot and the
+  // middle cell spans just Before+After (2 cols).
+  const middleColSpan = showDriverColumn ? 2 : 3;
   const cells = (
     <>
       <td className="px-3 py-2 text-xs font-medium text-white/60">{humanize(row.field)}</td>
-      <td className="px-3 py-2 text-xs text-white/45" colSpan={2}>
+      <td className="px-3 py-2 text-xs text-white/45" colSpan={middleColSpan}>
         {row.before || row.after || <span className="italic text-white/25">—</span>}
       </td>
-      <td className="px-3 py-2 text-[10px] uppercase tracking-wider text-white/30">held</td>
+      {showDriverColumn && (
+        <td className="px-3 py-2 text-[10px] uppercase tracking-wider text-white/30">held</td>
+      )}
     </>
   );
   if (reduceMotion) {
@@ -240,6 +266,20 @@ export function MovedRowsTable({ quorumId, staticData }: MovedRowsTableProps) {
     return { movedRows: moved, heldRows: held };
   }, [payload]);
 
+  // Hide the Δ ("drivers") column entirely when no row has resolvable drivers.
+  // The position-analyzer LLM consistently returns drivers: [] for every aspect,
+  // so the column otherwise degenerates to a stack of em-dashes (pure noise).
+  // Held rows never carry drivers in current backend output, so we only inspect
+  // movedRows here; if that assumption changes, extend the OR below.
+  const hasAnyDrivers = useMemo(
+    () =>
+      movedRows.some(
+        (row) =>
+          resolveDrivers(row.drivers ?? [], contribById, roleById, paletteIdx).length > 0,
+      ),
+    [movedRows, contribById, roleById, paletteIdx],
+  );
+
   if (loading) {
     return (
       <div className="flex h-full items-center justify-center" data-testid="moved-rows-loading">
@@ -275,16 +315,23 @@ export function MovedRowsTable({ quorumId, staticData }: MovedRowsTableProps) {
         <table className="w-full table-fixed border-collapse text-sm">
           <thead className="bg-white/[0.04] text-[10px] uppercase tracking-wider text-white/40">
             <tr>
-              <th className="w-[20%] px-3 py-2 text-left font-medium">Aspect</th>
-              <th className="w-[32%] px-3 py-2 text-left font-medium">Before</th>
-              <th className="w-[32%] px-3 py-2 text-left font-medium">After</th>
-              <th className="w-[16%] px-3 py-2 text-left font-medium">Δ</th>
+              <th className="px-3 py-2 text-left font-medium">Aspect</th>
+              <th className="px-3 py-2 text-left font-medium">Before</th>
+              <th className="px-3 py-2 text-left font-medium">After</th>
+              {hasAnyDrivers && (
+                <th
+                  className="px-3 py-2 text-left font-medium"
+                  data-testid="moved-rows-table-driver-column"
+                >
+                  Δ
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>
             {movedRows.length === 0 && (
               <tr data-testid="moved-rows-no-changes">
-                <td colSpan={4} className="px-3 py-6 text-center text-xs text-white/40">
+                <td colSpan={hasAnyDrivers ? 4 : 3} className="px-3 py-6 text-center text-xs text-white/40">
                   No aspects moved between framing and resolution.
                 </td>
               </tr>
@@ -296,13 +343,14 @@ export function MovedRowsTable({ quorumId, staticData }: MovedRowsTableProps) {
                   row={row}
                   drivers={resolveDrivers(row.drivers ?? [], contribById, roleById, paletteIdx)}
                   reduceMotion={!!reduceMotion}
+                  showDriverColumn={hasAnyDrivers}
                 />
               ))}
             </AnimatePresence>
 
             {heldRows.length > 0 && (
               <tr data-testid="moved-rows-held-toggle" className="border-t border-white/5">
-                <td colSpan={4} className="px-3 py-2">
+                <td colSpan={hasAnyDrivers ? 4 : 3} className="px-3 py-2">
                   <button
                     type="button"
                     onClick={() => setShowHeld((v) => !v)}
@@ -318,7 +366,12 @@ export function MovedRowsTable({ quorumId, staticData }: MovedRowsTableProps) {
 
             <AnimatePresence initial={false}>
               {showHeld && heldRows.map((row) => (
-                <HeldRow key={`held-${row.field}`} row={row} reduceMotion={!!reduceMotion} />
+                <HeldRow
+                  key={`held-${row.field}`}
+                  row={row}
+                  reduceMotion={!!reduceMotion}
+                  showDriverColumn={hasAnyDrivers}
+                />
               ))}
             </AnimatePresence>
           </tbody>

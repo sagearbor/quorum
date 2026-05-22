@@ -729,6 +729,9 @@ export function subscribeToStationMessages(
 
 /**
  * Fetch all documents for a quorum (defaults to active status).
+ *
+ * Throws when the underlying Supabase query returns an error so callers can
+ * distinguish a real fetch failure from a legitimately empty result set.
  */
 export async function getAgentDocuments(
   quorumId: string,
@@ -753,7 +756,12 @@ export async function getAgentDocuments(
     query = query.eq("status", "active");
   }
 
-  const { data } = await query;
+  const { data, error } = await query;
+  if (error) {
+    throw new Error(
+      `getAgentDocuments(${quorumId}): ${error.message ?? "unknown error"}`,
+    );
+  }
   return (data ?? []) as AgentDocument[];
 }
 

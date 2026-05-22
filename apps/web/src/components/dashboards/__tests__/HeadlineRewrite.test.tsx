@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { HeadlineRewrite } from "../HeadlineRewrite";
 
 // ---------------------------------------------------------------------------
@@ -16,6 +17,19 @@ vi.mock("@/lib/dataProvider", () => ({
     ],
   })),
 }));
+
+// Disable framer-motion's animation hook so the typewriter short-circuits to
+// the final headline immediately. This keeps assertions deterministic in
+// jsdom (where requestAnimationFrame scheduling can stall mid-frame).
+vi.mock("framer-motion", async () => {
+  const actual = await vi.importActual<typeof import("framer-motion")>(
+    "framer-motion",
+  );
+  return {
+    ...actual,
+    useReducedMotion: () => true,
+  };
+});
 
 beforeEach(() => {
   // Ensure no API base is set so we exercise the fallback path
@@ -78,5 +92,66 @@ describe("HeadlineRewrite", () => {
 
     // Awaiting-resolution caption should be present.
     expect(screen.getByTestId("headline-rewrite-awaiting")).toBeTruthy();
+
+    // Toggle should NOT be rendered while deliberating.
+    expect(screen.queryByTestId("headline-rewrite-was-now-toggle")).toBeNull();
+  });
+
+  it("renders the WAS / NOW toggle when resolved and switches headline on click", async () => {
+    const user = userEvent.setup();
+    render(
+      <HeadlineRewrite
+        quorumId="q-1"
+        staticData={{
+          snapshot: {
+            original_question: "Should we lower the eGFR threshold?",
+            final_position: {
+              headline: "Quorum endorses lowering eGFR threshold to 45",
+            },
+            roles: [],
+          },
+        }}
+      />,
+    );
+
+    // Toggle wrapper present
+    const toggle = screen.getByTestId("headline-rewrite-was-now-toggle");
+    expect(toggle).toBeTruthy();
+
+    const wasBtn = within(toggle).getByRole("button", { name: /^was$/i });
+    const nowBtn = within(toggle).getByRole("button", { name: /^now$/i });
+
+    // Default view is NOW — resolved headline shown, Was caption absent.
+    expect(nowBtn.getAttribute("aria-pressed")).toBe("true");
+    expect(wasBtn.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.queryByTestId("headline-rewrite-was-caption")).toBeNull();
+
+    // Click WAS → original framing shown, caption appears.
+    await user.click(wasBtn);
+    expect(wasBtn.getAttribute("aria-pressed")).toBe("true");
+    expect(nowBtn.getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByTestId("headline-rewrite-was-caption")).toBeTruthy();
+    // Wait for typewriter to settle on the OLD headline.
+    await waitFor(
+      () => {
+        expect(
+          screen.getByTestId("headline-rewrite-current").textContent,
+        ).toContain("Should we lower the eGFR threshold?");
+      },
+      { timeout: 3000 },
+    );
+
+    // Click NOW → resolved framing returns, caption disappears.
+    await user.click(nowBtn);
+    expect(nowBtn.getAttribute("aria-pressed")).toBe("true");
+    expect(screen.queryByTestId("headline-rewrite-was-caption")).toBeNull();
+    await waitFor(
+      () => {
+        expect(
+          screen.getByTestId("headline-rewrite-current").textContent,
+        ).toContain("Quorum endorses lowering eGFR threshold to 45");
+      },
+      { timeout: 3000 },
+    );
   });
 });

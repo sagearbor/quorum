@@ -5,12 +5,14 @@
  *
  * Renders a faux front-page where the quorum's original framing (its title)
  * morphs into the resolved framing (the `final_position.headline` from the
- * before/after snapshot, when available). Hovering or clicking the headline
- * ghosts the OLD framing back in as a translucent overlay so an audience can
- * see the diff on demand.
+ * before/after snapshot, when available). A discrete WAS / NOW toggle lets the
+ * audience flip between the original framing and the resolved one — only one
+ * is shown at a time so the text stays readable in screenshots and on a
+ * projector.
  *
  * Empty state: when no `final_position` yet, shows the original problem
  * statement with caption "Awaiting resolution — quorum is still deliberating."
+ * The WAS / NOW toggle is hidden until resolution exists.
  *
  * Self-contained: fetches its own /quorums/{id}/before-after + falls back to
  * `getQuorum(quorumId).title` when the endpoint is missing/404.
@@ -19,7 +21,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { motion, useReducedMotion, AnimatePresence } from "framer-motion";
+import { useReducedMotion } from "framer-motion";
 import { DashboardInfo } from "./DashboardInfo";
 import { getQuorum } from "@/lib/dataProvider";
 
@@ -55,7 +57,7 @@ export interface HeadlineRewriteProps {
 }
 
 const HEADLINE_BLURB =
-  "**Headline Rewrite.** Shows how the quorum's question evolved from the original framing to the resolved one. Hover the headline to see the original. Updates when the quorum is resolved.";
+  "**Headline Rewrite.** Shows how the quorum's question evolved from the original framing to the resolved one. Use the WAS / NOW toggle to flip between them. Updates when the quorum is resolved.";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -142,7 +144,10 @@ export function HeadlineRewrite({ quorumId, staticData }: HeadlineRewriteProps) 
     staticData?.quorumRoles ?? [],
   );
   const [loading, setLoading] = useState<boolean>(!staticData);
-  const [reveal, setReveal] = useState<boolean>(false); // user is requesting OLD overlay
+  // Toggle: which framing is currently displayed. Default to "now" (resolved).
+  // Replaces the previous hover-overlay pattern where OLD ghosted over NEW —
+  // that stacked two strings on top of each other and was unreadable.
+  const [view, setView] = useState<"was" | "now">("now");
 
   // -------------------------------------------------------------------------
   // Data fetch (skipped when staticData is set)
@@ -242,27 +247,43 @@ export function HeadlineRewrite({ quorumId, staticData }: HeadlineRewriteProps) 
   }, [snapshot, fallbackRoles]);
 
   // -------------------------------------------------------------------------
-  // Typewriter animation: retype from OLD -> NEW once we have a resolution.
+  // Typewriter animation: retype between WAS <-> NOW as the user toggles.
   // -------------------------------------------------------------------------
-  // We animate exactly once per (oldHeadline, newHeadline) pair when there's a
-  // genuine rewrite. If they're identical (no resolution yet) we skip the
-  // animation entirely.
-  const shouldAnimate =
+  // We animate whenever there's a genuine rewrite (OLD != NEW) and the user
+  // hasn't opted out of motion. On first paint with a resolution we also
+  // animate the OLD -> NOW transition once.
+  const canAnimate =
     hasResolution &&
     !reduceMotion &&
     oldHeadline !== newHeadline;
-  // The hook reads the current "target" headline; we change the target to NEW
-  // and let the typewriter erase OLD then type NEW.
-  const [target, setTarget] = useState(oldHeadline);
+  // The displayed headline is driven by `view`: "now" -> resolved, "was" ->
+  // original. Without a resolution, both reduce to oldHeadline.
+  const currentHeadline = view === "was" ? oldHeadline : newHeadline;
+  // The hook reads the current "target" headline; we change the target and
+  // let the typewriter erase the previous string then type the new one.
+  const [target, setTarget] = useState(hasResolution ? oldHeadline : newHeadline);
+  const firstResolveRef = useRef(false);
   useEffect(() => {
-    if (shouldAnimate) {
-      // small delay so audience sees OLD for a moment first
-      const t = window.setTimeout(() => setTarget(newHeadline), 600);
-      return () => window.clearTimeout(t);
+    if (!hasResolution) {
+      setTarget(newHeadline);
+      return;
     }
-    setTarget(newHeadline);
-  }, [shouldAnimate, oldHeadline, newHeadline]);
-  const displayed = useTypewriter(target, 1200, shouldAnimate);
+    // First time we see a resolution, start at OLD and animate to NOW so the
+    // audience gets the OLD-then-NEW reveal once.
+    if (!firstResolveRef.current && view === "now") {
+      firstResolveRef.current = true;
+      if (canAnimate) {
+        setTarget(oldHeadline);
+        const t = window.setTimeout(() => setTarget(newHeadline), 600);
+        return () => window.clearTimeout(t);
+      }
+      setTarget(newHeadline);
+      return;
+    }
+    // Subsequent toggles: animate straight to whichever the user picked.
+    setTarget(currentHeadline);
+  }, [hasResolution, view, currentHeadline, oldHeadline, newHeadline, canAnimate]);
+  const displayed = useTypewriter(target, 1200, canAnimate);
 
   // -------------------------------------------------------------------------
   // Loading state
@@ -314,51 +335,70 @@ export function HeadlineRewrite({ quorumId, staticData }: HeadlineRewriteProps) 
         </div>
       </div>
 
-      {/* Headline — large serif, with hover-to-reveal-old overlay */}
+      {/* WAS / NOW toggle — only meaningful once we have a resolution. */}
+      {hasResolution && (
+        <div
+          className="mt-2 inline-flex items-center gap-1 self-start rounded-sm border border-white/15 bg-white/[0.04] p-0.5 text-[10px] font-semibold uppercase tracking-[0.2em]"
+          data-testid="headline-rewrite-was-now-toggle"
+          role="group"
+          aria-label="Toggle between original and resolved framing"
+        >
+          <button
+            type="button"
+            onClick={() => setView("was")}
+            aria-pressed={view === "was"}
+            className={
+              "rounded-[2px] px-2 py-1 transition-colors " +
+              (view === "was"
+                ? "bg-amber-400/20 text-amber-300"
+                : "text-white/55 hover:text-white/80")
+            }
+          >
+            Was
+          </button>
+          <button
+            type="button"
+            onClick={() => setView("now")}
+            aria-pressed={view === "now"}
+            className={
+              "rounded-[2px] px-2 py-1 transition-colors " +
+              (view === "now"
+                ? "bg-white/15 text-white"
+                : "text-white/55 hover:text-white/80")
+            }
+          >
+            Now
+          </button>
+        </div>
+      )}
+
+      {/* Headline — large serif, single source of truth driven by toggle. */}
       <div
-        className="relative mt-2 cursor-pointer select-none"
-        onClick={() => {
-          if (!hasResolution) return;
-          setReveal(true);
-          window.setTimeout(() => setReveal(false), 2000);
-        }}
-        onMouseEnter={() => hasResolution && setReveal(true)}
-        onMouseLeave={() => setReveal(false)}
-        role={hasResolution ? "button" : undefined}
-        aria-label={hasResolution ? "Hover or click to see original framing" : undefined}
+        className="relative mt-1 select-none"
         data-testid="headline-rewrite-headline"
       >
         <h1
-          className="font-serif text-3xl leading-[1.08] tracking-tight text-white sm:text-4xl md:text-5xl"
+          className={
+            "font-serif text-3xl leading-[1.08] tracking-tight sm:text-4xl md:text-5xl " +
+            (view === "was" && hasResolution
+              ? "text-white/85 underline decoration-amber-400/70 decoration-[2px] underline-offset-[6px]"
+              : "text-white")
+          }
           data-testid="headline-rewrite-current"
         >
           {displayed}
-          {shouldAnimate && displayed.length < target.length && (
+          {canAnimate && displayed.length < target.length && (
             <span className="ml-0.5 inline-block h-[0.8em] w-[3px] -translate-y-[0.1em] bg-amber-400 align-middle" />
           )}
         </h1>
-
-        {/* Ghost overlay of OLD headline on hover/click */}
-        <AnimatePresence>
-          {reveal && hasResolution && (
-            <motion.div
-              key="ghost"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.25 }}
-              className="pointer-events-none absolute inset-0 flex flex-col justify-start"
-              data-testid="headline-rewrite-ghost"
-            >
-              <div className="mb-1 inline-flex items-center gap-2 self-start rounded-sm bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-300">
-                Was <span className="text-amber-400">→</span> Now
-              </div>
-              <span className="font-serif text-3xl leading-[1.08] tracking-tight text-white/45 line-through decoration-amber-400/50 decoration-[2px] sm:text-4xl md:text-5xl">
-                {oldHeadline}
-              </span>
-            </motion.div>
-          )}
-        </AnimatePresence>
+        {view === "was" && hasResolution && (
+          <div
+            className="mt-2 inline-flex items-center gap-2 rounded-sm bg-amber-400/15 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.2em] text-amber-300"
+            data-testid="headline-rewrite-was-caption"
+          >
+            Was <span className="text-amber-400">→</span> Now
+          </div>
+        )}
       </div>
 
       {/* Dek (subhead) */}

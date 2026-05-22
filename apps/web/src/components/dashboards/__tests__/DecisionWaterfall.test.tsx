@@ -160,6 +160,44 @@ describe("DecisionWaterfall", () => {
     expect(screen.getByText("2 resolved")).toBeTruthy();
   });
 
+  it("labels the vault 'Decision Resolved' when the quorum is resolved", () => {
+    render(
+      <DecisionWaterfall
+        quorumId="q-resolved"
+        nowMs={baseTime + 10 * 60_000}
+        staticData={{
+          roles,
+          contributions,
+          agentRequests,
+          resolvedSectionCount: 1,
+          quorumResolved: true,
+        }}
+      />,
+    );
+    expect(screen.getByTestId("decision-waterfall-vault-label").textContent).toBe(
+      "Decision Resolved",
+    );
+    expect(screen.getByText("1 resolved")).toBeTruthy();
+  });
+
+  it("labels the vault 'Decision Pending' when the quorum is not resolved", () => {
+    render(
+      <DecisionWaterfall
+        quorumId="q-pending"
+        nowMs={baseTime + 10 * 60_000}
+        staticData={{
+          roles,
+          contributions,
+          agentRequests,
+          resolvedSectionCount: 0,
+        }}
+      />,
+    );
+    expect(screen.getByTestId("decision-waterfall-vault-label").textContent).toBe(
+      "Decision Pending",
+    );
+  });
+
   it("shows the sparse-state hint when there are roles but no contributions", () => {
     render(
       <DecisionWaterfall

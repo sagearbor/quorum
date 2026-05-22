@@ -31,6 +31,7 @@ import {
   getRoles,
   getContributions,
   getArtifact,
+  getQuorum,
 } from "@/lib/dataProvider";
 
 const WATERFALL_BLURB =
@@ -52,6 +53,9 @@ export interface DecisionWaterfallProps {
     contributions: ContributionLike[];
     agentRequests?: AgentRequestLike[];
     resolvedSectionCount?: number;
+    /** When true, render the vault as "Decision Resolved" rather than
+     *  "Decision Pending". Mirrors quorum.status === 'resolved' in live mode. */
+    quorumResolved?: boolean;
   };
   /** Override the now-clock — used in tests for deterministic layout. */
   nowMs?: number;
@@ -368,6 +372,9 @@ export function DecisionWaterfall({
   const [resolvedCount, setResolvedCount] = useState<number>(
     staticData?.resolvedSectionCount ?? 0,
   );
+  const [quorumResolved, setQuorumResolved] = useState<boolean>(
+    staticData?.quorumResolved ?? false,
+  );
   const [error, setError] = useState<string | null>(null);
   const mountedRef = useRef(true);
 
@@ -387,10 +394,11 @@ export function DecisionWaterfall({
 
     async function load() {
       try {
-        const [rolesRaw, contribsRaw, artifactRaw] = await Promise.all([
+        const [rolesRaw, contribsRaw, artifactRaw, quorumRaw] = await Promise.all([
           getRoles(quorumId),
           getContributions(quorumId),
           getArtifact(quorumId),
+          getQuorum(quorumId),
         ]);
         if (cancelled || !mountedRef.current) return;
 
@@ -425,19 +433,44 @@ export function DecisionWaterfall({
           },
         );
 
-        let resolved = 0;
+        // Resolved-section counting.  We prefer the explicit
+        // `section.status === 'resolved'` marker when sections actually carry
+        // a status field (older artifact shapes / future schemas) — but real
+        // production artifacts ship sections with only {title, content,
+        // source_contribution_ids}, no per-section status.  In that case we
+        // fall back to counting *all* sections, because the artifact-synthesis
+        // pipeline only emits a section once that slice of the decision has
+        // been ratified.  This keeps the vault accurate for resolved quorums
+        // instead of always reporting "0 resolved".
         const artifactSections =
           (artifactRaw as unknown as { sections?: Array<Record<string, unknown>> } | null)
             ?.sections;
-        if (Array.isArray(artifactSections)) {
-          for (const section of artifactSections) {
-            if (section.status === "resolved") resolved += 1;
+        let resolved = 0;
+        if (Array.isArray(artifactSections) && artifactSections.length > 0) {
+          const withStatus = artifactSections.filter(
+            (s) => typeof s.status === "string",
+          );
+          if (withStatus.length > 0) {
+            resolved = withStatus.filter((s) => s.status === "resolved").length;
+          } else {
+            // No per-section status field — every emitted section counts.
+            resolved = artifactSections.length;
           }
         }
+
+        // Is the quorum itself resolved?  Drives the vault label between
+        // "Decision Pending" and "Decision Resolved".  Note artifact.status
+        // is unreliable here — it stays "draft" even on quorums that have
+        // been marked resolved via /resolve, since the artifact-synthesis
+        // step doesn't always flip it.
+        const quorumStatus =
+          (quorumRaw as unknown as { status?: string } | null)?.status ?? "";
+        const isResolved = quorumStatus === "resolved";
 
         setRoles(mappedRoles);
         setContributions(mappedContribs);
         setResolvedCount(resolved);
+        setQuorumResolved(isResolved);
         setError(null);
       } catch (e) {
         if (cancelled || !mountedRef.current) return;
@@ -736,8 +769,9 @@ export function DecisionWaterfall({
                   y={vaultTop + 18}
                   className="fill-emerald-300/80"
                   style={{ fontSize: 11, fontWeight: 600 }}
+                  data-testid="decision-waterfall-vault-label"
                 >
-                  Decision Pending
+                  {quorumResolved ? "Decision Resolved" : "Decision Pending"}
                 </text>
                 <text
                   x={leftPad}
@@ -745,7 +779,9 @@ export function DecisionWaterfall({
                   className="fill-white/40"
                   style={{ fontSize: 9 }}
                 >
-                  Resolved artifact sections drop in here.
+                  {quorumResolved
+                    ? "Quorum closed — artifact synthesized."
+                    : "Resolved artifact sections drop in here."}
                 </text>
                 {/* Vault icon */}
                 <g

@@ -236,6 +236,8 @@ export function RoleCoverageMap({
   const fields = useMemo<string[]>(() => {
     const seen = new Set<string>();
     const order: string[] = [];
+    // Primary source: role.prompt_template[].field_name. This is what an
+    // architect declared up front and is the canonical column set.
     for (const r of roles) {
       const tpl = Array.isArray(r.prompt_template) ? r.prompt_template : [];
       for (const f of tpl) {
@@ -245,8 +247,26 @@ export function RoleCoverageMap({
         }
       }
     }
+    // Fallback / supplement: keys observed on actual contributions'
+    // structured_fields. Many production roles ship without a populated
+    // prompt_template (the API's /quorums/{id}/roles endpoint historically
+    // returns only id/name/authority_rank/capacity), and we still want this
+    // dashboard to render the activity heatmap rather than a misleading
+    // "no contributions yet" empty state. We dedupe against prompt_template
+    // fields so the canonical column order is preserved when both sources
+    // contribute the same key.
+    for (const c of contribs) {
+      const sf = c.structured_fields;
+      if (!sf || typeof sf !== "object") continue;
+      for (const key of Object.keys(sf)) {
+        if (typeof sf[key] !== "string") continue;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        order.push(key);
+      }
+    }
     return order;
-  }, [roles]);
+  }, [roles, contribs]);
 
   const sortedRoles = useMemo<RoleEntry[]>(() => {
     return [...roles].sort((a, b) => {
@@ -342,6 +362,23 @@ export function RoleCoverageMap({
   );
 
   if (sortedRoles.length === 0 || fields.length === 0) {
+    // Distinguish three flavors of "empty" so the projection isn't misleading
+    // on quorums that DO have contributions but no structured field data:
+    //   - no roles at all                  -> generic empty
+    //   - roles but no contributions yet   -> "roles will fill this grid"
+    //   - roles + contributions but none   -> honest: structured_fields are
+    //     have structured_fields              required for the heatmap
+    let emptyMessage: string;
+    if (sortedRoles.length === 0) {
+      emptyMessage =
+        "No roles configured for this quorum — the coverage grid will appear once roles exist.";
+    } else if (contribs.length === 0) {
+      emptyMessage =
+        "No contributions yet — roles will fill this grid as they commit positions.";
+    } else {
+      emptyMessage =
+        "Contributions exist but none carry structured field data — this dashboard maps role × field coverage, and the underlying contributions are unstructured prose.";
+    }
     return (
       <div
         className="flex h-full w-full flex-col gap-3 rounded-md bg-white/[0.03] p-3 text-white"
@@ -352,10 +389,7 @@ export function RoleCoverageMap({
           className="flex flex-1 items-center justify-center text-center"
           data-testid="role-coverage-empty"
         >
-          <p className="max-w-sm text-sm text-white/40">
-            No contributions yet — roles will fill this grid as they commit
-            positions.
-          </p>
+          <p className="max-w-sm text-sm text-white/40">{emptyMessage}</p>
         </div>
       </div>
     );

@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { render, screen, fireEvent, act } from "@testing-library/react";
 import { GhostRadar } from "../GhostRadar";
 import type { HealthSnapshot } from "@quorum/types";
 
@@ -125,5 +125,204 @@ describe("GhostRadar", () => {
     expect(
       screen.getByText("Ghost will appear as the quorum evolves"),
     ).toBeInTheDocument();
+  });
+
+  // -------------------------------------------------------------------------
+  // Scrub + transport controls
+  // -------------------------------------------------------------------------
+
+  function makeHistory(n: number): HealthSnapshot[] {
+    const out: HealthSnapshot[] = [];
+    const base = Date.now() - n * 1000;
+    for (let i = 0; i < n; i += 1) {
+      out.push(
+        makeSnap(
+          {
+            completion_pct: i * 5,
+            consensus_score: i * 4,
+            role_coverage_pct: i * 3,
+            critical_path_score: i * 2,
+            blocker_score: i,
+          },
+          base + i * 1000,
+        ),
+      );
+    }
+    return out;
+  }
+
+  it("renders scrub slider + Play / Loop / Live controls when history is long enough", () => {
+    render(<GhostRadar quorumId="q-controls" staticHistory={makeHistory(5)} />);
+    expect(screen.getByTestId("ghost-radar-scrub-slider")).toBeInTheDocument();
+    expect(screen.getByTestId("ghost-radar-play")).toBeInTheDocument();
+    expect(screen.getByTestId("ghost-radar-autoloop")).toBeInTheDocument();
+    expect(screen.getByTestId("ghost-radar-live")).toBeInTheDocument();
+  });
+
+  it("scrub position is sticky — value persists after the change event (no snap back)", () => {
+    render(<GhostRadar quorumId="q-sticky" staticHistory={makeHistory(8)} />);
+    const slider = screen.getByTestId(
+      "ghost-radar-scrub-slider",
+    ) as HTMLInputElement;
+
+    // Move the slider to index 3 and "release" (we don't fire any extra mouse-up
+    // because there shouldn't be a snap-back handler anymore).
+    fireEvent.change(slider, { target: { value: "3" } });
+
+    expect(slider.value).toBe("3");
+    // The label should show the scrubbed snapshot, not "live · now".
+    const label = screen.getByTestId("ghost-radar-scrub-label");
+    expect(label.textContent).toContain("4/8");
+    expect(label.textContent).not.toContain("live");
+  });
+
+  it("Live button resets scrubIdx so the slider snaps back to NOW", () => {
+    render(<GhostRadar quorumId="q-live" staticHistory={makeHistory(6)} />);
+    const slider = screen.getByTestId(
+      "ghost-radar-scrub-slider",
+    ) as HTMLInputElement;
+
+    fireEvent.change(slider, { target: { value: "2" } });
+    expect(slider.value).toBe("2");
+
+    fireEvent.click(screen.getByTestId("ghost-radar-live"));
+    // Slider value reflects the latest snapshot index (history.length - 1).
+    expect(slider.value).toBe("5");
+    expect(screen.getByTestId("ghost-radar-scrub-label").textContent).toContain(
+      "live",
+    );
+  });
+
+  it("auto-loop button toggles aria-pressed", () => {
+    render(<GhostRadar quorumId="q-loop" staticHistory={makeHistory(5)} />);
+    const loopBtn = screen.getByTestId("ghost-radar-autoloop");
+    expect(loopBtn.getAttribute("aria-pressed")).toBe("false");
+    fireEvent.click(loopBtn);
+    expect(loopBtn.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(loopBtn);
+    expect(loopBtn.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  describe("Play animation", () => {
+    beforeEach(() => {
+      vi.useFakeTimers({ shouldAdvanceTime: false });
+    });
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    it("advances the slider one step at a time when Play is pressed", () => {
+      render(<GhostRadar quorumId="q-play" staticHistory={makeHistory(6)} />);
+      const slider = screen.getByTestId(
+        "ghost-radar-scrub-slider",
+      ) as HTMLInputElement;
+      const playBtn = screen.getByTestId("ghost-radar-play");
+
+      // Initially "live · now" — slider parked on history.length - 1 = 5.
+      expect(slider.value).toBe("5");
+
+      // Start play. The effect seeds scrubIdx to 0 immediately on the first
+      // effect run (no timer needed for the seed).
+      act(() => {
+        fireEvent.click(playBtn);
+      });
+      expect(slider.value).toBe("0");
+
+      // Step forward through history. PLAY_TOTAL_MS / 6 = 1000ms but it's
+      // clamped to PLAY_MAX_STEP_MS = 600ms.
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(slider.value).toBe("1");
+
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(slider.value).toBe("2");
+    });
+
+    it("stops playback when reaching the end and auto-loop is OFF", () => {
+      render(<GhostRadar quorumId="q-end" staticHistory={makeHistory(3)} />);
+      const slider = screen.getByTestId(
+        "ghost-radar-scrub-slider",
+      ) as HTMLInputElement;
+      const playBtn = screen.getByTestId("ghost-radar-play");
+
+      act(() => {
+        fireEvent.click(playBtn);
+      });
+      expect(slider.value).toBe("0");
+      // 3 frames @ 600ms step ceiling (6000/3 = 2000ms clamped to 600).
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(slider.value).toBe("1");
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(slider.value).toBe("2");
+      // Next tick — we're at end, no loop → snap back to live.
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      // scrubIdx === null → slider parks on history.length - 1 again.
+      expect(slider.value).toBe("2");
+      expect(screen.getByTestId("ghost-radar-scrub-label").textContent).toContain(
+        "live",
+      );
+      // Play button has flipped back to "Play".
+      expect(playBtn.getAttribute("aria-pressed")).toBe("false");
+    });
+
+    it("loops back to 0 when auto-loop is ON and end is reached", () => {
+      render(<GhostRadar quorumId="q-loop-play" staticHistory={makeHistory(3)} />);
+      const slider = screen.getByTestId(
+        "ghost-radar-scrub-slider",
+      ) as HTMLInputElement;
+
+      // Turn on auto-loop, then play.
+      act(() => {
+        fireEvent.click(screen.getByTestId("ghost-radar-autoloop"));
+        fireEvent.click(screen.getByTestId("ghost-radar-play"));
+      });
+      expect(slider.value).toBe("0");
+
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(slider.value).toBe("1");
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(slider.value).toBe("2");
+      // Next tick at end → loop to 0 because autoLoop is ON.
+      act(() => {
+        vi.advanceTimersByTime(600);
+      });
+      expect(slider.value).toBe("0");
+      // Still playing.
+      expect(
+        screen.getByTestId("ghost-radar-play").getAttribute("aria-pressed"),
+      ).toBe("true");
+    });
+
+    it("scrubbing manually while playing pauses playback", () => {
+      render(<GhostRadar quorumId="q-interrupt" staticHistory={makeHistory(5)} />);
+      const slider = screen.getByTestId(
+        "ghost-radar-scrub-slider",
+      ) as HTMLInputElement;
+      const playBtn = screen.getByTestId("ghost-radar-play");
+
+      act(() => {
+        fireEvent.click(playBtn);
+      });
+      expect(playBtn.getAttribute("aria-pressed")).toBe("true");
+
+      act(() => {
+        fireEvent.change(slider, { target: { value: "1" } });
+      });
+      expect(playBtn.getAttribute("aria-pressed")).toBe("false");
+      expect(slider.value).toBe("1");
+    });
   });
 });

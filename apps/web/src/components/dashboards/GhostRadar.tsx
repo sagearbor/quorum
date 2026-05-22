@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   RadarChart,
   PolarGrid,
@@ -32,7 +32,8 @@ import type { HealthSnapshot } from "@quorum/types";
 const GHOST_RADAR_BLURB = `**Ghost-Trail Radar.** Translucent grey polygon = the quorum's initial state. Filled colored polygon = right now. The shape difference is the deliberation's impact at a glance. Delta pills below show per-axis change.
 - **Ghost** is captured from the first snapshot at mount and never changes.
 - **Current** is the live polygon — modulated by AI signals when Live Signals are ON.
-- **Scrub** drag the slider at the bottom to replay intermediate states; release to snap back to "now".`;
+- **Scrub** drag the slider to replay intermediate states; your position is sticky until you hit "Live" to return to now.
+- **Play / Pause** animates through history. **Loop** rewinds to the start when it reaches the end.`;
 
 const LIVE_SIGNALS_STORAGE_KEY = "quorumLiveSignals";
 
@@ -121,6 +122,29 @@ function scoreColor(score: number, threshold: number): { hex: string } {
   return { hex: "#f87171" };
 }
 
+/** "3:42 ago" / "12s ago" / "just now" — relative time from a unix-ms timestamp. */
+function formatRelativeTime(ts: number, now: number): string {
+  const diffMs = Math.max(0, now - ts);
+  const sec = Math.floor(diffMs / 1000);
+  if (sec < 5) return "just now";
+  if (sec < 60) return `${sec}s ago`;
+  const min = Math.floor(sec / 60);
+  const remSec = sec % 60;
+  if (min < 60) return `${min}:${remSec.toString().padStart(2, "0")} ago`;
+  const hr = Math.floor(min / 60);
+  const remMin = min % 60;
+  return `${hr}h ${remMin}m ago`;
+}
+
+/** Total step duration for the Play animation, in ms. ~6s feel regardless of length. */
+const PLAY_TOTAL_MS = 6000;
+/** Floor on per-step duration (so very long histories don't blur past). */
+const PLAY_MIN_STEP_MS = 80;
+/** Ceiling on per-step duration (so very short histories don't crawl). */
+const PLAY_MAX_STEP_MS = 600;
+/** Fallback step for prefers-reduced-motion (no interpolation, just steps). */
+const PLAY_REDUCED_MOTION_STEP_MS = 400;
+
 export function GhostRadar({
   quorumId,
   threshold = 75,
@@ -147,8 +171,126 @@ export function GhostRadar({
   }, [liveSignalsOn]);
 
   // Scrub slider — 0 means earliest snapshot, history.length-1 means newest.
-  // `null` means "follow live" (snap back on release).
+  // `null` means "follow live" (track the latest snapshot as it arrives).
+  // IMPORTANT: scrubIdx is sticky. Once the user moves the slider, their
+  // position is honoured across re-renders (including realtime history
+  // appends from useQuorumLive) until they hit the "Live" button or Play
+  // walks them back to null at the end of the timeline.
   const [scrubIdx, setScrubIdx] = useState<number | null>(null);
+
+  // Play/pause + auto-loop controls.
+  const [playing, setPlaying] = useState(false);
+  const [autoLoop, setAutoLoop] = useState(false);
+  // We use a ref for the animation handle so the effect that drives playback
+  // doesn't capture a stale setTimeout id across rerenders.
+  const playTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // Tracks whether the current Play session has snapped to its starting
+  // position yet. Reset when Play is toggled off. This prevents an infinite
+  // "snap to 0" loop when the user starts playback from the end frame.
+  const playSeededRef = useRef(false);
+
+  // Clamp scrubIdx if history shrinks (rare, but defensive). Never NULL it
+  // out automatically when history grows — that's the snap-back bug.
+  useEffect(() => {
+    if (scrubIdx == null) return;
+    if (history.length === 0) {
+      setScrubIdx(null);
+      return;
+    }
+    if (scrubIdx > history.length - 1) {
+      setScrubIdx(history.length - 1);
+    }
+  }, [history.length, scrubIdx]);
+
+  // ── Play animation driver ───────────────────────────────────────────────
+  // When `playing` flips to true, walk scrubIdx forward one step at a time
+  // until we hit `history.length - 1`. Then either loop back to 0 (auto-loop
+  // ON) or stop and return to live (auto-loop OFF).
+  useEffect(() => {
+    if (!playing) {
+      if (playTimerRef.current) {
+        clearTimeout(playTimerRef.current);
+        playTimerRef.current = null;
+      }
+      // Reset the "seeded" flag so the next Play session re-evaluates its
+      // start position fresh.
+      playSeededRef.current = false;
+      return;
+    }
+    if (history.length < 2) {
+      setPlaying(false);
+      return;
+    }
+
+    // Pick a step duration that targets ~6s total but clamps for very short
+    // or very long histories. Reduced motion users get a fixed step.
+    const stepMs = prefersReducedMotion
+      ? PLAY_REDUCED_MOTION_STEP_MS
+      : Math.max(
+          PLAY_MIN_STEP_MS,
+          Math.min(PLAY_MAX_STEP_MS, Math.floor(PLAY_TOTAL_MS / history.length)),
+        );
+
+    // First tick of a fresh play session — seed the start position.
+    // If the user is at "live" (null) or already parked on the last frame,
+    // start from the beginning so they can actually see the playback.
+    // Otherwise resume from wherever they scrubbed to.
+    if (!playSeededRef.current) {
+      playSeededRef.current = true;
+      const currentPos = scrubIdx ?? history.length - 1;
+      const startPos = currentPos >= history.length - 1 ? 0 : currentPos;
+      if (scrubIdx !== startPos) {
+        setScrubIdx(startPos);
+        return; // re-run effect with the new scrubIdx
+      }
+    }
+
+    playTimerRef.current = setTimeout(() => {
+      const cur = scrubIdx ?? 0;
+      const end = history.length - 1;
+      if (cur >= end) {
+        // We're already on the last frame. Loop or stop.
+        if (autoLoop) {
+          setScrubIdx(0);
+        } else {
+          // Return to live (slider snaps to the right edge) and stop.
+          setScrubIdx(null);
+          setPlaying(false);
+        }
+        return;
+      }
+      setScrubIdx(cur + 1);
+    }, stepMs);
+
+    return () => {
+      if (playTimerRef.current) {
+        clearTimeout(playTimerRef.current);
+        playTimerRef.current = null;
+      }
+    };
+  }, [playing, scrubIdx, history.length, autoLoop, prefersReducedMotion]);
+
+  // Pressing Play while at "live" should start from the beginning of history,
+  // not stay parked at the end. We seed scrubIdx in the effect above.
+  const handleTogglePlay = () => {
+    if (history.length < 2) return;
+    setPlaying((p) => !p);
+  };
+
+  const handleReturnToLive = () => {
+    setPlaying(false);
+    setScrubIdx(null);
+  };
+
+  const handleToggleAutoLoop = () => {
+    setAutoLoop((v) => !v);
+  };
+
+  const handleScrubChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    // Manual scrub interrupts playback so the user is in control again.
+    if (playing) setPlaying(false);
+    setScrubIdx(Number(e.target.value));
+  };
 
   /** Apply the cumulative LLM delta for a metric, clamping to [0, 100]. */
   const modulate = (key: keyof typeof DELTA_KEY_BY_METRIC, raw: number): number => {
@@ -347,31 +489,104 @@ export function GhostRadar({
         })}
       </div>
 
-      {/* ── Scrub slider (only when we have enough history to scrub) ──── */}
+      {/* ── Scrub slider + transport controls ─────────────────────────── */}
       {history.length >= 3 && (
         <div
-          className="flex items-center gap-2 px-2 pt-1 pb-2"
+          className="flex flex-col gap-1 px-2 pt-1 pb-2"
           style={{ flex: "0 0 auto" }}
           data-testid="ghost-radar-scrub"
         >
-          <span className="text-[9px] uppercase tracking-[0.22em] text-white/35">
-            scrub
-          </span>
-          <input
-            type="range"
-            aria-label="Scrub through quorum history"
-            min={0}
-            max={history.length - 1}
-            value={scrubIdx ?? history.length - 1}
-            onChange={(e) => setScrubIdx(Number(e.target.value))}
-            onMouseUp={() => setScrubIdx(null)}
-            onTouchEnd={() => setScrubIdx(null)}
-            onBlur={() => setScrubIdx(null)}
-            className="flex-1 h-1 accent-white/60 cursor-pointer"
-          />
-          <span className="text-[9px] uppercase tracking-[0.22em] text-white/35 tabular-nums">
-            {scrubIdx == null ? "now" : `${scrubIdx + 1}/${history.length}`}
-          </span>
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] uppercase tracking-[0.22em] text-white/35">
+              scrub
+            </span>
+            <input
+              type="range"
+              aria-label="Scrub through quorum history"
+              data-testid="ghost-radar-scrub-slider"
+              min={0}
+              max={history.length - 1}
+              value={scrubIdx ?? history.length - 1}
+              onChange={handleScrubChange}
+              className="flex-1 h-1 accent-white/60 cursor-pointer"
+            />
+            <span
+              className="text-[9px] uppercase tracking-[0.22em] text-white/45 tabular-nums min-w-[6.5rem] text-right"
+              data-testid="ghost-radar-scrub-label"
+            >
+              {scrubIdx == null
+                ? "live · now"
+                : `${scrubIdx + 1}/${history.length}${
+                    currentSnapshot?.timestamp
+                      ? ` · ${formatRelativeTime(
+                          currentSnapshot.timestamp,
+                          history[history.length - 1]?.timestamp ?? Date.now(),
+                        )}`
+                      : ""
+                  }`}
+            </span>
+          </div>
+          <div className="flex items-center gap-1.5 pl-[2.6rem]">
+            <button
+              type="button"
+              onClick={handleTogglePlay}
+              data-testid="ghost-radar-play"
+              aria-pressed={playing}
+              aria-label={playing ? "Pause playback" : "Play through history"}
+              title={playing ? "Pause" : "Play through history"}
+              disabled={history.length < 2}
+              className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-white/70 hover:bg-white/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <span aria-hidden="true">{playing ? "⏸" : "▶"}</span>
+              <span>{playing ? "Pause" : "Play"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleToggleAutoLoop}
+              data-testid="ghost-radar-autoloop"
+              aria-pressed={autoLoop}
+              aria-label="Toggle auto-loop"
+              title={
+                autoLoop
+                  ? "Auto-loop ON — playback restarts from the beginning at the end."
+                  : "Auto-loop OFF — playback stops when it reaches the end."
+              }
+              className="inline-flex items-center gap-1 rounded-full border border-white/10 px-2 py-0.5 text-[10px] font-medium transition-colors"
+              style={{
+                background: autoLoop ? "rgba(52,211,153,0.15)" : "rgba(255,255,255,0.05)",
+                color: autoLoop ? "#34d399" : "rgba(255,255,255,0.6)",
+                borderColor: autoLoop
+                  ? "rgba(52,211,153,0.35)"
+                  : "rgba(255,255,255,0.1)",
+              }}
+            >
+              <span aria-hidden="true">↻</span>
+              <span>Loop</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleReturnToLive}
+              data-testid="ghost-radar-live"
+              aria-label="Return to live"
+              title="Snap back to the latest snapshot and resume live behaviour"
+              disabled={scrubIdx == null && !playing}
+              className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-2 py-0.5 text-[10px] font-medium text-white/70 hover:bg-white/10 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <span
+                aria-hidden="true"
+                className="inline-block h-1.5 w-1.5 rounded-full"
+                style={{
+                  background:
+                    scrubIdx == null && !playing ? "#34d399" : "rgba(255,255,255,0.45)",
+                  boxShadow:
+                    scrubIdx == null && !playing
+                      ? "0 0 6px rgba(52,211,153,0.7)"
+                      : "none",
+                }}
+              />
+              <span>Live</span>
+            </button>
+          </div>
         </div>
       )}
     </div>

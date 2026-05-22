@@ -163,7 +163,7 @@ export function AgentAffinityGraphRiver({
     async function load() {
       try {
         const base = process.env.NEXT_PUBLIC_API_URL ?? "";
-        const res = await fetch(`${base}/api/quorums/${quorumId}/role-status`);
+        const res = await fetch(`${base}/quorums/${quorumId}/role-status`);
         if (!res.ok) throw new Error(`role-status ${res.status}`);
         const data: RoleStatusResponse[] = await res.json();
         if (cancelled) return;

@@ -246,16 +246,26 @@ export function useQuorumLive(quorumId: string): QuorumLiveState {
               ? ((quorum as Record<string, unknown>).metrics as HealthMetrics)
               : { ...INITIAL_METRICS };
           // Build history by interpolating scores across contribution timestamps.
-          // For metrics on intermediate points, we don't have time-series history
-          // in the DB so we use the current row metrics — secondary lines render
-          // as a flat baseline until live UPDATE events arrive.
+          // Each contribution may carry its own `metrics` jsonb snapshot (the
+          // deterministic HealthMetrics dict at the moment it was written) —
+          // when present, use it so the Ghost-Trail Radar's ghost polygon
+          // (history[0]) actually differs from the current polygon
+          // (history[last]).  Fall back to the quorum's current `rowMetrics`
+          // only when the row's metrics is null/missing (older rows pre-
+          // migration, or rows written before the per-contribution snapshot
+          // was wired up).
           const seedHistory: HealthSnapshot[] = contribs.map((c: Record<string, unknown>, i: number) => {
             const frac = (i + 1) / Math.max(contribs.length, 1);
             const score = Math.round(finalScore * frac * 10) / 10;
+            // Fallback to rowMetrics when the contribution row has no metrics snapshot.
+            const perContribMetrics: HealthMetrics =
+              c.metrics && typeof c.metrics === "object"
+                ? (c.metrics as HealthMetrics)
+                : rowMetrics;
             return {
               timestamp: new Date(c.created_at as string).getTime(),
               score,
-              metrics: rowMetrics,
+              metrics: perContribMetrics,
             };
           });
           // Ensure the chart always has at least one data point on load —

@@ -76,19 +76,22 @@ describe("HeadlineRewrite", () => {
   it("falls back to the quorum title when no snapshot exists", async () => {
     render(<HeadlineRewrite quorumId="q-1" />);
 
-    // The Loading state appears first, then the resolved title.
+    // Wait directly for the rendered title text — this avoids a CI race
+    // where the container testid appears (loading flips to false) a beat
+    // before the async getQuorum() promise resolves and populates
+    // fallbackTitle.  Locally this resolves in one tick; on slower CI
+    // runners the assertion would land on the "Awaiting question…"
+    // fallback string before the mock promise flushed.
     await waitFor(() => {
-      expect(screen.getByTestId("headline-rewrite")).toBeTruthy();
+      expect(
+        screen.getByTestId("headline-rewrite-current").textContent,
+      ).toContain("Original quorum framing");
     });
 
     // Status pill should report "Deliberating" since no final_position.
     expect(screen.getByTestId("headline-rewrite-status").textContent).toMatch(
       /deliberating/i,
     );
-
-    // The current headline should contain the quorum.title text.
-    const current = screen.getByTestId("headline-rewrite-current");
-    expect(current.textContent).toContain("Original quorum framing");
 
     // Awaiting-resolution caption should be present.
     expect(screen.getByTestId("headline-rewrite-awaiting")).toBeTruthy();

@@ -564,13 +564,34 @@ export function AgentDocumentDashboard({
   quorumId,
   staticDocuments,
 }: AgentDocumentDashboardOwnProps) {
-  const { documents: liveDocuments, loading } = useAgentDocuments(quorumId);
+  const {
+    documents: liveDocuments,
+    loading,
+    error,
+  } = useAgentDocuments(quorumId);
   const documents = staticDocuments ?? liveDocuments;
 
   const activeDocuments = useMemo(
     () => documents.filter((d) => d.status === "active"),
     [documents],
   );
+
+  // Distinguish the four possible terminal states so the empty-state copy
+  // tells the user what's actually going on:
+  //   1. quorumId not yet set  → "Waiting for quorum…"
+  //   2. loading                → "Loading documents…"
+  //   3. error during fetch     → "Failed to load reference documents." + message
+  //   4. fetched, zero results  → "No reference documents have been seeded for this quorum."
+  if (!staticDocuments && !quorumId) {
+    return (
+      <div
+        className="flex h-full items-center justify-center"
+        data-testid="agent-document-dashboard-waiting"
+      >
+        <span className="text-sm text-white/40">Waiting for quorum…</span>
+      </div>
+    );
+  }
 
   if (loading && !staticDocuments) {
     return (
@@ -585,14 +606,32 @@ export function AgentDocumentDashboard({
     );
   }
 
+  if (error && !staticDocuments) {
+    return (
+      <div
+        className="flex h-full flex-col items-center justify-center gap-1 px-4 text-center"
+        data-testid="agent-document-dashboard-error"
+      >
+        <p className="text-sm font-medium text-red-300">
+          Failed to load reference documents.
+        </p>
+        <p className="text-xs text-white/40">{error}</p>
+      </div>
+    );
+  }
+
   if (activeDocuments.length === 0) {
     return (
       <div
-        className="flex h-full items-center justify-center"
+        className="flex h-full flex-col items-center justify-center gap-1 px-4 text-center"
         data-testid="agent-document-dashboard-empty"
       >
-        <p className="text-sm text-white/40">
-          No agent documents yet.
+        <p className="text-sm text-white/60">
+          No reference documents for this quorum.
+        </p>
+        <p className="text-xs text-white/40">
+          Seed documents via <code className="font-mono">scripts/seed-agent-documents.py</code>{" "}
+          or POST to <code className="font-mono">/quorums/&#123;id&#125;/documents</code> to populate this panel.
         </p>
       </div>
     );

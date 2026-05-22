@@ -12,6 +12,7 @@ vi.mock("@/hooks/useAgentDocuments", () => ({
   useAgentDocuments: () => ({
     documents: [],
     loading: false,
+    error: null,
     refresh: vi.fn(),
   }),
 }));
@@ -165,6 +166,17 @@ describe("AgentDocumentDashboard", () => {
     expect(
       screen.getByTestId("agent-document-dashboard-empty"),
     ).toBeTruthy();
+  });
+
+  it("empty-state copy distinguishes 'none seeded' from a fetch error", () => {
+    render(
+      <AgentDocumentDashboard quorumId="q1" staticDocuments={[]} />,
+    );
+    // The new copy guides the user toward seeding rather than implying a bug.
+    expect(
+      screen.getByText(/No reference documents for this quorum/i),
+    ).toBeTruthy();
+    expect(screen.getByText(/seed-agent-documents\.py/)).toBeTruthy();
   });
 
   it("renders the dashboard container when documents are present", () => {

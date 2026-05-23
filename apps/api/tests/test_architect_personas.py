@@ -433,3 +433,284 @@ def test_load_agent_works_without_role_id_or_db():
     defn = load_agent("researcher")
     assert defn.name == "Researcher"
     assert "Researcher" in defn.instructions
+
+
+# ---------------------------------------------------------------------------
+# 6. Empty-domain_tags retry + keyword fallback
+# ---------------------------------------------------------------------------
+# Regression: production quorum 1ff1ac0b-9816-4478-a783-a2166615a914 shipped
+# a role ("Data Modeling & Architecture Strategist") with domain_tags=[] from
+# the architect LLM, which made every affinity score involving that role
+# return 0.  The fix retries the full generate_roles call once, then
+# backfills any remaining empty roles with keyword-extracted tags.
+
+def test_keyword_fallback_tags_produces_canonical_tags():
+    """_keyword_fallback_tags extracts tokens from name+focus and canonicalizes them."""
+    from apps.api.architect_agent import _keyword_fallback_tags
+
+    tags = _keyword_fallback_tags(
+        name="Data Modeling & Architecture Strategist",
+        focus="Design data models for cross-functional analytics platform.",
+    )
+
+    assert len(tags) >= 3, f"expected >=3 fallback tags, got {tags}"
+    # Canonicalized form: lowercase snake_case, no punctuation
+    for tag in tags:
+        assert tag == tag.lower(), f"tag {tag!r} not lowercase"
+        assert " " not in tag, f"tag {tag!r} contains space"
+    # The most-frequent role-defining tokens should appear
+    assert "data" in tags
+    assert "modeling" in tags
+    assert "architecture" in tags
+
+
+def test_keyword_fallback_returns_empty_for_empty_inputs():
+    """_keyword_fallback_tags returns [] when name+focus are empty/whitespace."""
+    from apps.api.architect_agent import _keyword_fallback_tags
+
+    assert _keyword_fallback_tags("", "") == []
+    assert _keyword_fallback_tags("   ", "  ") == []
+
+
+def test_backfill_empty_tags_fills_only_missing_roles(caplog):
+    """_backfill_empty_tags backfills empty roles but leaves populated roles alone."""
+    import logging
+
+    from apps.api.architect_agent import RoleSuggestion, _backfill_empty_tags
+
+    good_role = RoleSuggestion(
+        name="Statistician",
+        description="Owns power calculations.",
+        authority_rank=3,
+        suggested_prompt_focus="Statistical rigor.",
+        system_prompt="You are the Statistician.",
+        domain_tags=["statistics", "power", "randomization"],
+        temperature=0.3,
+    )
+    broken_role = RoleSuggestion(
+        name="Data Modeling & Architecture Strategist",
+        description="Owns the data model.",
+        authority_rank=4,
+        suggested_prompt_focus="Design data models for analytics.",
+        system_prompt="You are the Strategist.",
+        domain_tags=[],  # LLM dropped the tags
+        temperature=0.4,
+    )
+
+    with caplog.at_level(logging.WARNING):
+        backfilled = _backfill_empty_tags([good_role, broken_role], label="test")
+
+    # Only the broken role gets backfilled
+    assert backfilled == 1
+    assert good_role.domain_tags == ["statistics", "power", "randomization"]
+    assert len(broken_role.domain_tags) >= 3
+    assert "data" in broken_role.domain_tags
+    # A WARNING should fire so operators can see which role got patched
+    assert any(
+        "Data Modeling" in rec.getMessage() and "empty domain_tags" in rec.getMessage()
+        for rec in caplog.records
+    ), f"expected WARNING for backfilled role; got: {[r.getMessage() for r in caplog.records]}"
+
+
+@pytest.mark.asyncio
+async def test_generate_roles_retries_when_any_role_has_empty_tags(monkeypatch, caplog):
+    """generate_roles_with_title retries the FULL call once if any role lacks tags."""
+    import logging
+
+    monkeypatch.delenv("QUORUM_TEST_MODE", raising=False)
+
+    from apps.api.architect_agent import (
+        RoleSuggestion,
+        RoleSuggestionList,
+        generate_roles_with_title,
+    )
+    from quorum_llm.interface import LLMProvider
+
+    first_response = RoleSuggestionList(
+        roles=[
+            RoleSuggestion(
+                name="Good Role",
+                description="Has tags.",
+                authority_rank=3,
+                suggested_prompt_focus="Be useful.",
+                system_prompt="You are Good Role.",
+                domain_tags=["alpha", "beta", "gamma"],
+                temperature=0.3,
+            ),
+            RoleSuggestion(
+                name="Broken Role",
+                description="Missing tags.",
+                authority_rank=2,
+                suggested_prompt_focus="Owns the data model strategy.",
+                system_prompt="You are Broken Role.",
+                domain_tags=[],  # bug: empty
+                temperature=0.3,
+            ),
+        ],
+        short_title="Initial Title",
+    )
+    second_response = RoleSuggestionList(
+        roles=[
+            RoleSuggestion(
+                name="Good Role",
+                description="Has tags.",
+                authority_rank=3,
+                suggested_prompt_focus="Be useful.",
+                system_prompt="You are Good Role.",
+                domain_tags=["alpha", "beta", "gamma"],
+                temperature=0.3,
+            ),
+            RoleSuggestion(
+                name="Broken Role",
+                description="Now has tags.",
+                authority_rank=2,
+                suggested_prompt_focus="Owns the data model strategy.",
+                system_prompt="You are Broken Role.",
+                domain_tags=["data", "model", "strategy"],  # retry filled them in
+                temperature=0.3,
+            ),
+        ],
+        short_title="Retry Title",
+    )
+
+    call_count = {"n": 0}
+
+    # Subclass LLMProvider so _provider_supports_run_typed returns True
+    class _FakeTypedProvider(LLMProvider):
+        async def complete(self, prompt, tier):
+            return ""
+
+        async def embed(self, text):
+            return []
+
+        async def run_typed(self, *args, **kwargs):
+            call_count["n"] += 1
+            return first_response if call_count["n"] == 1 else second_response
+
+    with caplog.at_level(logging.WARNING):
+        roles, short_title = await generate_roles_with_title(
+            "Design a data platform", llm_provider=_FakeTypedProvider()
+        )
+
+    # The full call was retried exactly once (2 total invocations)
+    assert call_count["n"] == 2, f"expected 2 LLM calls, got {call_count['n']}"
+
+    # Retry results are used (Broken Role now has tags from retry, not fallback)
+    by_name = {r.name: r for r in roles}
+    assert by_name["Broken Role"].domain_tags == ["data", "model", "strategy"]
+    assert by_name["Good Role"].domain_tags == ["alpha", "beta", "gamma"]
+    # Retry's non-empty short_title is used
+    assert short_title == "Retry Title"
+
+    # WARNING was emitted about the empty tags before the retry
+    assert any(
+        "empty" in rec.getMessage().lower() and "retrying" in rec.getMessage().lower()
+        for rec in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_generate_roles_falls_back_to_keywords_when_retry_also_empty(
+    monkeypatch, caplog
+):
+    """If both LLM calls return empty tags, keyword extraction fills them in."""
+    import logging
+
+    monkeypatch.delenv("QUORUM_TEST_MODE", raising=False)
+
+    from apps.api.architect_agent import (
+        RoleSuggestion,
+        RoleSuggestionList,
+        generate_roles_with_title,
+    )
+    from quorum_llm.interface import LLMProvider
+
+    empty_response = RoleSuggestionList(
+        roles=[
+            RoleSuggestion(
+                name="Data Modeling Strategist",
+                description="Owns the data model.",
+                authority_rank=4,
+                suggested_prompt_focus="Design data models for analytics.",
+                system_prompt="You are the Strategist.",
+                domain_tags=[],  # both calls fail
+                temperature=0.4,
+            )
+        ],
+        short_title="Strategy Quorum",
+    )
+
+    class _FakeTypedProvider(LLMProvider):
+        async def complete(self, prompt, tier):
+            return ""
+
+        async def embed(self, text):
+            return []
+
+        async def run_typed(self, *args, **kwargs):
+            return empty_response
+
+    with caplog.at_level(logging.WARNING):
+        roles, _ = await generate_roles_with_title(
+            "Design a data platform", llm_provider=_FakeTypedProvider()
+        )
+
+    assert len(roles) == 1
+    role = roles[0]
+    # Keyword fallback filled the tags
+    assert len(role.domain_tags) >= 3, (
+        f"keyword fallback should yield >=3 tags, got {role.domain_tags}"
+    )
+    assert "data" in role.domain_tags
+    # A WARNING was emitted naming the role we backfilled
+    assert any(
+        "Data Modeling Strategist" in rec.getMessage()
+        and "keyword-extracted" in rec.getMessage()
+        for rec in caplog.records
+    ), f"expected backfill WARNING; got: {[r.getMessage() for r in caplog.records]}"
+
+
+def test_persist_agent_configs_backfills_empty_domain_tags(caplog):
+    """persist_agent_configs also applies the keyword fallback (defense in depth).
+
+    The ai-start route accepts RoleSuggestion objects from the request body
+    (the architect UI sends them after the user reviews/edits), so a role
+    with domain_tags=[] can reach persist_agent_configs even if
+    generate_roles_with_title already backfilled.
+    """
+    import logging
+
+    from apps.api.architect_agent import RoleSuggestion, persist_agent_configs
+
+    db = _FakeDB()
+    role_id = str(uuid.uuid4())
+
+    with caplog.at_level(logging.WARNING):
+        rows = persist_agent_configs(
+            db,
+            "q-1",
+            [
+                (
+                    role_id,
+                    RoleSuggestion(
+                        name="Data Modeling & Architecture Strategist",
+                        description="Owns the data model.",
+                        authority_rank=4,
+                        suggested_prompt_focus="Design data models for analytics.",
+                        system_prompt="You are the Strategist.",
+                        domain_tags=[],  # bug from upstream
+                        temperature=0.4,
+                    ),
+                )
+            ],
+        )
+
+    assert len(rows) == 1
+    inserted = [i for i in db.inserts if i["_table"] == "agent_configs"][0]
+    assert len(inserted["domain_tags"]) >= 3
+    assert "data" in inserted["domain_tags"]
+    # WARNING was logged
+    assert any(
+        "empty domain_tags" in rec.getMessage() and "keyword-extracted" in rec.getMessage()
+        for rec in caplog.records
+    )

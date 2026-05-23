@@ -194,3 +194,53 @@ async def test_analyze_contribution_propagates_provider_errors():
             role_authority_rank=3,
             llm_provider=_BoomProvider(),
         )
+
+
+# ---------------------------------------------------------------------------
+# Rubric calibration — guards against accidental regression of the
+# anti-saturation language Sophie asked for after every radar axis pegged at
+# 100 on her demo quorum.  These tests assert the rubric STRING contains the
+# concrete calibration anchors and the anti-hallucination clause; they do NOT
+# validate model behaviour (the mock provider returns canned outputs that
+# don't depend on the rubric).  If a future refactor strips these anchors the
+# rubric will silently revert to "things are going well" language and the
+# chart will saturate again — fail loudly here instead.
+# ---------------------------------------------------------------------------
+
+
+def test_rubric_includes_calibration_anchors():
+    """The rubric must anchor 0/25/50/75/100 with concrete observable criteria."""
+    from quorum_llm.contribution_analyzer import _ANALYZER_INSTRUCTIONS
+
+    rubric = _ANALYZER_INSTRUCTIONS
+    # The five anchor points must all appear so the LLM has fixed reference
+    # values and doesn't drift back to vague "good progress = high score".
+    for anchor in ("100 =", "75 =", "50 =", "25 =", "0 ="):
+        assert anchor in rubric, f"Rubric missing anchor for {anchor!r}"
+    # "Complete and final" is the explicit definition of 100 — a generic
+    # "things are going well" rounding-up phrasing is what triggered the
+    # original saturation bug.
+    assert "COMPLETE AND FINAL" in rubric
+
+
+def test_rubric_includes_anti_hallucination_clause():
+    """The rubric must require concrete evidence to justify large positive deltas."""
+    from quorum_llm.contribution_analyzer import _ANALYZER_INSTRUCTIONS
+
+    rubric = _ANALYZER_INSTRUCTIONS
+    # The anti-hallucination clause: large positive deltas require quotable
+    # closure language.
+    assert "quote" in rubric.lower() or "specific phrase" in rubric.lower()
+    # The +5/+10 split is the calibration threshold Sophie called out:
+    # without quotable evidence, the LLM must stay <=+5.
+    assert "+5" in rubric
+    assert "+10" in rubric
+
+
+def test_rubric_covers_all_five_metrics():
+    """Every metric the analyzer scores must have a per-axis rubric paragraph."""
+    from quorum_llm.contribution_analyzer import _ANALYZER_INSTRUCTIONS
+
+    rubric = _ANALYZER_INSTRUCTIONS.lower()
+    for metric in ("consensus", "completion", "critical_path", "blockers", "role_coverage"):
+        assert metric in rubric, f"Rubric missing per-metric anchor for {metric!r}"

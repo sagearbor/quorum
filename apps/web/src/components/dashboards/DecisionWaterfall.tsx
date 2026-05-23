@@ -15,11 +15,21 @@
  * Resolved artifact sections animate into a "Decision Pending" vault zone
  * pinned to the bottom of the canvas.
  *
+ * Visual encoding (post-2026-05 redesign):
+ *  - Real time x-axis with HH:MM tick labels + faint vertical gridlines.
+ *  - Chip radius encoded by |Δ| magnitude across the five analysis_deltas
+ *    metrics (consensus, completion, blockers, critical_path, role_coverage).
+ *  - Tier band: each lane gets a coloured left-edge stripe by authority_rank.
+ *  - Same-second jitter: chips colliding on a single pixel are nudged ±2-3px
+ *    on the y-axis to stay individually clickable.
+ *  - Empty lanes get a diagonal stripe pattern + "awaiting input" hint.
+ *  - Chip <title> tooltips include the LLM analysis_rationale snippet.
+ *
  * Self-contained: fetches its own roles + contributions + agent_requests via
  * the shared dataProvider, mirroring the pattern used by AgentAffinityGraphRiver.
  * Tailwind + framer-motion only — no new deps.
  *
- * Spec: ?  Answer the question "is this decision actually moving through the
+ * Spec: Answer the question "is this decision actually moving through the
  * chain of command, or stuck at one level?" for a Duke clinical audience that
  * recognises the IRB → PI → committee structure.
  */
@@ -35,7 +45,7 @@ import {
 } from "@/lib/dataProvider";
 
 const WATERFALL_BLURB =
-  "**Decision Waterfall.** Swim-lanes by authority rank. Contributions drop down as they engage lower-rank roles. A decision that reaches the bottom is ready to commit. Useful for spotting where a decision is stuck.";
+  "**Decision Waterfall.** Swim-lanes by authority rank. Contributions drop down as they engage lower-rank roles. Chip size = magnitude of the analysis delta (sum of |Δ| across consensus/completion/blockers/critical_path/role_coverage). A decision that reaches the bottom is ready to commit.";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -76,8 +86,13 @@ export interface ContributionLike {
   role_id: string;
   content: string;
   created_at: string;
-  /** Optional pre-computed sentiment delta (positive=supportive, negative=dissenting). */
+  /** Optional pre-computed single-number sentiment delta (legacy / fallback). */
   analysis_delta?: number;
+  /** LLM-emitted per-metric deltas (consensus, completion, blockers,
+   *  critical_path, role_coverage). Used to size chips by magnitude. */
+  analysis_deltas?: Record<string, number>;
+  /** LLM-emitted rationale string — surfaced in the chip <title> tooltip. */
+  analysis_rationale?: string;
 }
 
 export interface AgentRequestLike {
@@ -94,10 +109,18 @@ interface Chip {
   laneIndex: number;
   x: number;
   y: number;
+  /** Chip radius in px — encodes |Δ| magnitude. */
+  radius: number;
   color: string;
   delta: number; // -1..1 (rough sign for tint)
+  /** Sum-of-absolute-deltas magnitude for hover label. */
+  magnitude: number;
   createdAt: number;
   text: string;
+  /** First 120 chars of analysis_rationale (or content) for the title tooltip. */
+  rationale: string;
+  /** Role display name — surfaced in the tooltip. */
+  roleName: string;
 }
 
 // A cascade arrow: contribution -> later contribution from a lower-rank role.
@@ -132,6 +155,34 @@ const DISSENT_RE = /\b(disagree|oppose|reject|dissent|concern|risk|block)\b/i;
 // "engagement" with an earlier higher-rank contribution.
 const ENGAGEMENT_WINDOW_MS = 10 * 60_000; // 10 minutes
 
+// Chip radius bounds (px). 4 is the smallest legible dot; 12 keeps even loud
+// chips from blocking the lane label.
+const RADIUS_MIN = 4;
+const RADIUS_MAX = 12;
+// Magnitude that maps to radius=RADIUS_MAX. Calibrated against the live
+// clinical-trial quorum where strong moves sit around |Δ|=30-45 across the
+// five metrics; 40 keeps mid-strength chips visibly larger than no-op chips
+// without flattening the top end.
+const MAGNITUDE_ANCHOR = 40;
+
+// Tier band stripe colours, keyed by authority_rank. Higher rank = warmer
+// amber (more visual weight); lower rank fades into slate.
+const TIER_STRIPE_COLORS: Record<number, string> = {
+  5: "rgba(251, 191, 36, 0.95)", // warm amber
+  4: "rgba(252, 211, 77, 0.75)", // lighter amber
+  3: "rgba(148, 163, 184, 0.7)", // gray
+  2: "rgba(100, 116, 139, 0.7)", // slate
+  1: "rgba(71, 85, 105, 0.7)", // darker slate
+};
+const TIER_STRIPE_DEFAULT = "rgba(100, 116, 139, 0.55)";
+
+function tierStripeColor(rank: number): string {
+  if (rank in TIER_STRIPE_COLORS) return TIER_STRIPE_COLORS[rank];
+  if (rank >= 5) return TIER_STRIPE_COLORS[5];
+  if (rank <= 1) return TIER_STRIPE_COLORS[1];
+  return TIER_STRIPE_DEFAULT;
+}
+
 /** Sign-of-engagement heuristic from raw text. */
 function deltaFromText(content: string, override?: number): number {
   if (typeof override === "number" && !Number.isNaN(override)) {
@@ -140,6 +191,32 @@ function deltaFromText(content: string, override?: number): number {
   if (SUPPORTIVE_RE.test(content)) return 0.6;
   if (DISSENT_RE.test(content)) return -0.6;
   return 0;
+}
+
+/** Sum of absolute values across the per-metric deltas dict. */
+function magnitudeFromDeltas(
+  deltas: Record<string, number> | undefined,
+  fallbackDelta?: number,
+): number {
+  if (deltas && Object.keys(deltas).length > 0) {
+    let sum = 0;
+    for (const v of Object.values(deltas)) {
+      if (typeof v === "number" && Number.isFinite(v)) sum += Math.abs(v);
+    }
+    return sum;
+  }
+  if (typeof fallbackDelta === "number" && Number.isFinite(fallbackDelta)) {
+    // Legacy scalar delta is in [-1..1]. Scale to a comparable order by
+    // assuming a "moderate" event ~= 0.5 * MAGNITUDE_ANCHOR.
+    return Math.abs(fallbackDelta) * (MAGNITUDE_ANCHOR / 2);
+  }
+  return 0;
+}
+
+/** Normalise magnitude [0..1] then map to radius [RADIUS_MIN..RADIUS_MAX]. */
+function radiusFromMagnitude(mag: number): number {
+  const norm = Math.max(0, Math.min(1, mag / MAGNITUDE_ANCHOR));
+  return RADIUS_MIN + norm * (RADIUS_MAX - RADIUS_MIN);
 }
 
 /** Tint a base hex by sign — green-ish for support, red-ish for dissent. */
@@ -161,6 +238,57 @@ function fmtClock(ms: number): string {
     .getMinutes()
     .toString()
     .padStart(2, "0")}`;
+}
+
+/** Format an epoch ms as HH:MM:SS relative to the local zone. */
+function fmtClockSec(ms: number): string {
+  const d = new Date(ms);
+  return `${d.getHours().toString().padStart(2, "0")}:${d
+    .getMinutes()
+    .toString()
+    .padStart(2, "0")}:${d.getSeconds().toString().padStart(2, "0")}`;
+}
+
+/** Pick "nice" tick spacing in ms for a given span and target tick count. */
+function niceTickStepMs(spanMs: number, targetTicks: number): number {
+  if (spanMs <= 0) return 60_000;
+  const raw = spanMs / Math.max(1, targetTicks);
+  const candidates = [
+    15_000,
+    30_000,
+    60_000,
+    2 * 60_000,
+    5 * 60_000,
+    10 * 60_000,
+    15 * 60_000,
+    30 * 60_000,
+    60 * 60_000,
+    2 * 3_600_000,
+    6 * 3_600_000,
+    12 * 3_600_000,
+    24 * 3_600_000,
+  ];
+  for (const c of candidates) {
+    if (c >= raw) return c;
+  }
+  return candidates[candidates.length - 1];
+}
+
+/** Build 5-8 tick timestamps spanning [tMin..tMax] aligned to whole units. */
+function buildTickTimes(tMin: number, tMax: number, target = 6): number[] {
+  if (!Number.isFinite(tMin) || !Number.isFinite(tMax) || tMax <= tMin) {
+    return [tMin];
+  }
+  const step = niceTickStepMs(tMax - tMin, target);
+  const first = Math.ceil(tMin / step) * step;
+  const ticks: number[] = [];
+  for (let t = first; t <= tMax + 1; t += step) {
+    ticks.push(t);
+    if (ticks.length >= 10) break;
+  }
+  // Drop ticks that would crowd the right edge by < 10% of the span.
+  const minGap = (tMax - tMin) * 0.05;
+  return ticks.filter((t) => t - tMin >= 0 && tMax - t >= -minGap);
 }
 
 // ---------------------------------------------------------------------------
@@ -185,6 +313,9 @@ interface LayoutResult {
   xMin: number;
   xMax: number;
   totalHeight: number;
+  /** Computed for the x-axis renderer. */
+  tMin: number;
+  tMax: number;
 }
 
 function layout({
@@ -235,24 +366,69 @@ function layout({
     return leftPad + Math.max(0, Math.min(1, t)) * plotWidth;
   }
 
-  const chips: Chip[] = contributions
+  // First pass: build chips, tracking per-(lane,second) collisions so we can
+  // jitter colliding chips off the lane midline.
+  type ProtoChip = Omit<Chip, "y"> & {
+    laneY: number;
+    bucketKey: string;
+  };
+
+  const protoChips: ProtoChip[] = contributions
     .filter((c) => roleIndex.has(c.role_id))
     .map((c) => {
       const idx = roleIndex.get(c.role_id)!;
       const lane = lanes[idx];
       const delta = deltaFromText(c.content, c.analysis_delta);
+      const magnitude = magnitudeFromDeltas(c.analysis_deltas, c.analysis_delta);
+      const radius = radiusFromMagnitude(magnitude);
+      const tMs = safeTime(c.created_at);
+      const secondBucket = Math.floor(tMs / 1000);
+      const rationaleSource =
+        (c.analysis_rationale && c.analysis_rationale.trim()) || c.content || "";
+      const rationale =
+        rationaleSource.length > 120
+          ? rationaleSource.slice(0, 120) + "…"
+          : rationaleSource;
       return {
         id: c.id,
         roleId: c.role_id,
         laneIndex: idx,
-        x: xFromTime(safeTime(c.created_at)),
-        y: lane.y,
+        x: xFromTime(tMs),
+        laneY: lane.y,
+        radius,
         color: chipColor(lane.color, delta),
         delta,
-        createdAt: safeTime(c.created_at),
+        magnitude,
+        createdAt: tMs,
         text: c.content,
+        rationale,
+        roleName: lane.role.name,
+        bucketKey: `${idx}|${secondBucket}`,
       };
     });
+
+  // Count collisions per (lane, second) bucket so we can spread within-lane
+  // overlapping chips vertically. Single-chip buckets stay on the midline.
+  const bucketCounts = new Map<string, number>();
+  for (const p of protoChips) {
+    bucketCounts.set(p.bucketKey, (bucketCounts.get(p.bucketKey) ?? 0) + 1);
+  }
+  const bucketSeen = new Map<string, number>();
+  const maxJitter = Math.min(3, Math.max(2, laneHeight / 22)); // 2-3 px
+
+  const chips: Chip[] = protoChips.map((p) => {
+    const total = bucketCounts.get(p.bucketKey) ?? 1;
+    if (total <= 1) {
+      return { ...p, y: p.laneY } as Chip;
+    }
+    // Spread N chips symmetrically across [-maxJitter..+maxJitter].
+    const seenIdx = bucketSeen.get(p.bucketKey) ?? 0;
+    bucketSeen.set(p.bucketKey, seenIdx + 1);
+    // Map seenIdx in [0..total-1] to a symmetric offset.
+    const t = total === 1 ? 0.5 : seenIdx / (total - 1);
+    const offset = (t - 0.5) * 2 * maxJitter;
+    return { ...p, y: p.laneY + offset } as Chip;
+  });
 
   // Derive cascades: for each chip in lane k, find the next chip in any lane
   // k' > k (lower authority) within ENGAGEMENT_WINDOW_MS. We connect only the
@@ -287,6 +463,8 @@ function layout({
     xMin: leftPad,
     xMax: leftPad + plotWidth,
     totalHeight: topPad + sortedRoles.length * laneHeight,
+    tMin,
+    tMax,
   };
 }
 
@@ -420,6 +598,16 @@ export function DecisionWaterfall({
         const mappedContribs: ContributionLike[] = (contribsRaw ?? []).map(
           (c) => {
             const raw = c as unknown as Record<string, unknown>;
+            const rawDeltas = raw.analysis_deltas;
+            let deltas: Record<string, number> | undefined;
+            if (rawDeltas && typeof rawDeltas === "object" && !Array.isArray(rawDeltas)) {
+              const out: Record<string, number> = {};
+              for (const [k, v] of Object.entries(rawDeltas as Record<string, unknown>)) {
+                const n = typeof v === "number" ? v : Number(v);
+                if (Number.isFinite(n)) out[k] = n;
+              }
+              if (Object.keys(out).length > 0) deltas = out;
+            }
             return {
               id: String(raw.id ?? ""),
               role_id: String(raw.role_id ?? ""),
@@ -428,6 +616,11 @@ export function DecisionWaterfall({
               analysis_delta:
                 typeof raw.analysis_delta === "number"
                   ? (raw.analysis_delta as number)
+                  : undefined,
+              analysis_deltas: deltas,
+              analysis_rationale:
+                typeof raw.analysis_rationale === "string"
+                  ? (raw.analysis_rationale as string)
                   : undefined,
             };
           },
@@ -497,6 +690,10 @@ export function DecisionWaterfall({
   const rightPad = 24;
   const topPad = 8;
   const vaultHeight = 70;
+  // Strip of space reserved below the lane area for the x-axis tick labels.
+  const axisHeight = 22;
+  // Width of the tier band stripe pinned to the left of each lane.
+  const tierStripeWidth = 5;
 
   const safeRoles = roles ?? [];
 
@@ -525,14 +722,6 @@ export function DecisionWaterfall({
     const idx = new Map<string, number>();
     sorted.forEach((r, i) => idx.set(r.id, i));
 
-    const times = contributions.map((c) => safeTime(c.created_at));
-    const now = nowMs ?? Date.now();
-    const tMax = times.length > 0 ? Math.max(...times, now) : now;
-    const tMin =
-      times.length > 0
-        ? Math.min(Math.min(...times), tMax - 5 * 60_000)
-        : tMax - 30 * 60_000;
-
     return cascadesFromAgentRequests(
       agentRequests,
       baseLayout.chips,
@@ -542,10 +731,10 @@ export function DecisionWaterfall({
       rightPad,
       topPad,
       laneHeight,
-      tMin,
-      tMax,
+      baseLayout.tMin,
+      baseLayout.tMax,
     );
-  }, [baseLayout, agentRequests, safeRoles, contributions, width, laneHeight, nowMs]);
+  }, [baseLayout, agentRequests, safeRoles, width, laneHeight]);
 
   // -------------------------------------------------------------------------
   // Loading / empty states
@@ -586,7 +775,26 @@ export function DecisionWaterfall({
     ? [...baseLayout.cascades, ...requestCascades]
     : [];
 
-  const totalHeight = (baseLayout?.totalHeight ?? topPad) + vaultHeight + 12;
+  // Axis ticks live in the strip *between* the lane area and the vault.
+  const axisTopY = baseLayout?.totalHeight ?? topPad;
+  const axisLabelY = axisTopY + 14;
+  const ticks = baseLayout
+    ? buildTickTimes(baseLayout.tMin, baseLayout.tMax, 6)
+    : [];
+
+  // Group chips by lane so we can detect empty lanes for the awaiting-input
+  // stripe overlay.
+  const chipsByLane = new Map<number, Chip[]>();
+  if (baseLayout) {
+    for (const ch of baseLayout.chips) {
+      const arr = chipsByLane.get(ch.laneIndex);
+      if (arr) arr.push(ch);
+      else chipsByLane.set(ch.laneIndex, [ch]);
+    }
+  }
+
+  const totalHeight =
+    (baseLayout?.totalHeight ?? topPad) + axisHeight + vaultHeight + 12;
 
   return (
     <div
@@ -626,28 +834,94 @@ export function DecisionWaterfall({
             >
               <path d="M 0 0 L 10 5 L 0 10 z" fill="currentColor" />
             </marker>
+            {/* Diagonal stripe pattern used to fill empty-lane backgrounds. */}
+            <pattern
+              id="dw-empty-stripe"
+              width="8"
+              height="8"
+              patternUnits="userSpaceOnUse"
+              patternTransform="rotate(-45)"
+            >
+              <rect width="8" height="8" fill="rgba(255,255,255,0.015)" />
+              <line
+                x1="0"
+                y1="0"
+                x2="0"
+                y2="8"
+                stroke="rgba(255,255,255,0.06)"
+                strokeWidth="2"
+              />
+            </pattern>
           </defs>
 
-          {/* Lane backgrounds + labels */}
+          {/* Lane backgrounds + labels + tier stripes */}
           {baseLayout?.lanes.map((lane) => {
             const yTop = lane.y - laneHeight / 2;
+            const stripeFill = tierStripeColor(lane.role.authority_rank);
+            const labelTint = stripeFill.replace(/[\d.]+\)$/, "0.18)");
+            const laneChips = chipsByLane.get(lane.index) ?? [];
+            const isEmpty = laneChips.length === 0;
             return (
               <g key={lane.role.id} data-testid={`waterfall-lane-${lane.role.id}`}>
+                {/* Subtle label-area tint (left of the plot) using the tier color. */}
                 <rect
                   x={0}
                   y={yTop}
-                  width={width}
+                  width={leftPad - 4}
+                  height={laneHeight}
+                  fill={labelTint}
+                />
+                {/* Alternating lane row tint across the plot. */}
+                <rect
+                  x={leftPad - 4}
+                  y={yTop}
+                  width={width - (leftPad - 4)}
                   height={laneHeight}
                   fill={lane.index % 2 === 0 ? "rgba(255,255,255,0.025)" : "rgba(255,255,255,0.04)"}
                 />
-                <line
-                  x1={leftPad}
-                  x2={width - rightPad}
-                  y1={lane.y}
-                  y2={lane.y}
-                  stroke="rgba(255,255,255,0.05)"
-                  strokeDasharray="2 4"
+                {/* Tier band stripe pinned to the lane's left edge (right of label). */}
+                <rect
+                  x={leftPad - 4}
+                  y={yTop + 2}
+                  width={tierStripeWidth}
+                  height={laneHeight - 4}
+                  fill={stripeFill}
+                  rx={1.5}
+                  data-testid={`waterfall-tier-stripe-${lane.role.id}`}
                 />
+                {/* Empty-lane diagonal stripe overlay + "awaiting input" text. */}
+                {isEmpty && (
+                  <g>
+                    <rect
+                      x={leftPad + tierStripeWidth}
+                      y={yTop + 2}
+                      width={width - rightPad - leftPad - tierStripeWidth}
+                      height={laneHeight - 4}
+                      fill="url(#dw-empty-stripe)"
+                      data-testid={`waterfall-empty-lane-${lane.role.id}`}
+                    />
+                    <text
+                      x={(leftPad + (width - rightPad)) / 2}
+                      y={lane.y + 3}
+                      textAnchor="middle"
+                      className="fill-white/30"
+                      style={{ fontSize: 10, fontStyle: "italic" }}
+                    >
+                      awaiting input from {lane.role.name}
+                    </text>
+                  </g>
+                )}
+                {/* Lane midline (only meaningful when chips are present). */}
+                {!isEmpty && (
+                  <line
+                    x1={leftPad}
+                    x2={width - rightPad}
+                    y1={lane.y}
+                    y2={lane.y}
+                    stroke="rgba(255,255,255,0.05)"
+                    strokeDasharray="2 4"
+                  />
+                )}
                 {/* Authority pip */}
                 <circle
                   cx={leftPad - 16}
@@ -679,6 +953,66 @@ export function DecisionWaterfall({
               </g>
             );
           })}
+
+          {/* X-axis: faint vertical gridlines through the lane area + tick
+              labels in the axis strip below it. */}
+          {baseLayout && ticks.length > 0 && (
+            <g data-testid="waterfall-x-axis">
+              {ticks.map((t) => {
+                const plotWidth = Math.max(80, width - leftPad - rightPad);
+                const xFromTime = (ms: number) => {
+                  if (baseLayout.tMax === baseLayout.tMin) {
+                    return leftPad + plotWidth / 2;
+                  }
+                  const r = (ms - baseLayout.tMin) / (baseLayout.tMax - baseLayout.tMin);
+                  return leftPad + Math.max(0, Math.min(1, r)) * plotWidth;
+                };
+                const x = xFromTime(t);
+                return (
+                  <g key={`tick-${t}`}>
+                    {/* Gridline through the lane area. */}
+                    <line
+                      x1={x}
+                      x2={x}
+                      y1={topPad}
+                      y2={axisTopY}
+                      stroke="rgba(255,255,255,0.06)"
+                      strokeWidth={1}
+                      data-testid="waterfall-x-axis-tick"
+                    />
+                    {/* Tick mark in the axis strip. */}
+                    <line
+                      x1={x}
+                      x2={x}
+                      y1={axisTopY}
+                      y2={axisTopY + 4}
+                      stroke="rgba(255,255,255,0.35)"
+                      strokeWidth={1}
+                    />
+                    {/* HH:MM label. */}
+                    <text
+                      x={x}
+                      y={axisLabelY + 4}
+                      textAnchor="middle"
+                      className="fill-white/55"
+                      style={{ fontSize: 9, fontVariantNumeric: "tabular-nums" }}
+                    >
+                      {fmtClock(t)}
+                    </text>
+                  </g>
+                );
+              })}
+              {/* Axis baseline. */}
+              <line
+                x1={leftPad}
+                x2={width - rightPad}
+                y1={axisTopY}
+                y2={axisTopY}
+                stroke="rgba(255,255,255,0.18)"
+                strokeWidth={1}
+              />
+            </g>
+          )}
 
           {/* Cascade paths */}
           {allCascades.map((c) => {
@@ -715,22 +1049,23 @@ export function DecisionWaterfall({
 
           {/* Contribution chips */}
           {baseLayout?.chips.map((chip) => {
-            const radius = 8;
+            const magnitudeStr = chip.magnitude.toFixed(1);
+            const tooltipLine1 = `${chip.roleName} · ${fmtClockSec(chip.createdAt)} · |Δ| ${magnitudeStr}`;
+            const tooltipLine2 = chip.rationale;
             const chipNode = (
               <g key={chip.id} data-testid={`waterfall-chip-${chip.id}`}>
                 <circle
                   cx={chip.x}
                   cy={chip.y}
-                  r={radius}
+                  r={chip.radius}
                   fill={chip.color}
                   fillOpacity={0.9}
                   stroke="rgba(0,0,0,0.6)"
                   strokeWidth={1}
                 />
                 <title>
-                  {fmtClock(chip.createdAt)} —{" "}
-                  {chip.text.slice(0, 80)}
-                  {chip.text.length > 80 ? "…" : ""}
+                  {tooltipLine1}
+                  {tooltipLine2 ? `\n${tooltipLine2}` : ""}
                 </title>
               </g>
             );
@@ -747,9 +1082,9 @@ export function DecisionWaterfall({
             );
           })}
 
-          {/* Decision Pending vault */}
+          {/* Decision Pending vault — pushed down by the axis strip. */}
           {(() => {
-            const vaultTop = (baseLayout?.totalHeight ?? topPad) + 8;
+            const vaultTop = axisTopY + axisHeight + 4;
             const vaultCenterX = width / 2;
             const vaultCenterY = vaultTop + vaultHeight / 2;
             return (
@@ -854,7 +1189,12 @@ export function DecisionWaterfall({
           <span className="inline-block h-2 w-2 rounded-full bg-slate-400" />
           neutral
         </span>
-        <span className="ml-auto">x = time · y = authority rank (high→low)</span>
+        <span className="inline-flex items-center gap-1">
+          <span className="inline-block h-1.5 w-1.5 rounded-full bg-white/60" />
+          <span className="inline-block h-3 w-3 rounded-full bg-white/60" />
+          size = |Δ|
+        </span>
+        <span className="ml-auto">x = HH:MM · y = authority rank (high→low)</span>
       </div>
     </div>
   );

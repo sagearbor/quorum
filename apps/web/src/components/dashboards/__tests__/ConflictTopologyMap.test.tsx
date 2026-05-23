@@ -199,4 +199,29 @@ describe("ConflictTopologyMap", () => {
       ).toBeTruthy();
     });
   });
+
+  it("shows consensus copy when roles contributed but no conflict signals fired", async () => {
+    // Two roles, two contributions each, ZERO shared structured_fields and
+    // ZERO opposing analysis_deltas — the legitimate "agents agreed" outcome.
+    // We assert the empty-state overlay tells the audience this is real
+    // consensus, not missing data.
+    const dp = await import("@/lib/dataProvider");
+    (dp.getRoles as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      mockRoles[0],
+      mockRoles[1],
+    ]);
+    (dp.getContributions as unknown as ReturnType<typeof vi.fn>).mockResolvedValueOnce([
+      { id: "a1", role_id: "role-a", structured_fields: {}, analysis_deltas: { consensus: 0.1 } },
+      { id: "a2", role_id: "role-a", structured_fields: {}, analysis_deltas: { consensus: 0.1 } },
+      { id: "b1", role_id: "role-b", structured_fields: {}, analysis_deltas: { consensus: 0.1 } },
+      { id: "b2", role_id: "role-b", structured_fields: {}, analysis_deltas: { consensus: 0.1 } },
+    ]);
+
+    render(<ConflictTopologyMap quorumId="q-consensus" />);
+    await waitFor(() => {
+      expect(
+        screen.getByText(/Agents reached consensus/i),
+      ).toBeTruthy();
+    });
+  });
 });

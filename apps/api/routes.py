@@ -1147,6 +1147,138 @@ async def get_role_status(quorum_id: str):
 
 
 # ---------------------------------------------------------------------------
+# GET /quorums/{quorum_id}/affinity-graph
+# ---------------------------------------------------------------------------
+# Computes the agent-affinity graph on-fetch from agent_configs.domain_tags.
+# There is no separate writer maintaining a cached affinity_edges table —
+# the graph is cheap to derive (<=20 roles, O(n^2) Jaccard) so we compute
+# it lazily here from the same source the role-status view reads.
+@router.get("/quorums/{quorum_id}/affinity-graph")
+async def get_affinity_graph(quorum_id: str):
+    # Use compute_tag_relevance (word-level overlap) rather than the strict
+    # exact-string Jaccard that build_affinity_graph hard-codes.  On the live
+    # 4-role data-strategy quorum, strict Jaccard surfaces only 1 edge above
+    # 0.1 because architect-generated compound tags
+    # (e.g. "stakeholder_engagement" vs "stakeholder_feedback") rarely
+    # exact-match even when they're semantically equivalent — the same
+    # vocabulary mismatch that motivated compute_tag_relevance in the first
+    # place (see affinity.py for the design note).  Word-level overlap
+    # surfaces those edges and matches the metric find_relevant_agents
+    # already uses for A2A fan-out, so the dashboard and the autonomy loop
+    # speak the same affinity language.
+    from quorum_llm.affinity import compute_tag_relevance
+
+    db = get_supabase()
+    _fetch_single(db, "quorums", "id", quorum_id, select="id", label="Quorum")
+
+    roles_resp = (
+        db.table("roles")
+        .select("id, name, color, status")
+        .eq("quorum_id", quorum_id)
+        .execute()
+    )
+    roles = roles_resp.data or []
+    if not roles:
+        return {"nodes": [], "edges": []}
+
+    cfg_resp = (
+        db.table("agent_configs")
+        .select("role_id, domain_tags")
+        .eq("quorum_id", quorum_id)
+        .execute()
+    )
+    tags_by_role: dict[str, list[str]] = {
+        cfg["role_id"]: cfg.get("domain_tags") or []
+        for cfg in (cfg_resp.data or [])
+    }
+
+    contrib_resp = (
+        db.table("contributions")
+        .select("role_id")
+        .eq("quorum_id", quorum_id)
+        .execute()
+    )
+    contrib_counts: dict[str, int] = {}
+    for c in contrib_resp.data or []:
+        rid = c.get("role_id")
+        if rid:
+            contrib_counts[rid] = contrib_counts.get(rid, 0) + 1
+
+    # Most-recent agent_requests row per (from, to) pair drives
+    # interactionType.  Pull the latest 200 rows (descending); the first row
+    # seen for a pair is the freshest.
+    requests_resp = (
+        db.table("agent_requests")
+        .select("from_role_id, to_role_id, request_type, created_at")
+        .eq("quorum_id", quorum_id)
+        .order("created_at", desc=True)
+        .limit(200)
+        .execute()
+    )
+    pair_interaction: dict[tuple[str, str], str] = {}
+    for row in requests_resp.data or []:
+        f = row.get("from_role_id")
+        t = row.get("to_role_id")
+        if not f or not t or f == t:
+            continue
+        key = tuple(sorted((f, t)))
+        if key in pair_interaction:
+            continue
+        pair_interaction[key] = row.get("request_type") or ""
+
+    def _interaction_type(role_a: str, role_b: str) -> str:
+        key = tuple(sorted((role_a, role_b)))
+        rt = pair_interaction.get(key)
+        if rt in ("conflict_flag", "negotiation", "escalation"):
+            return "conflicting"
+        if rt in ("input_request", "review_request"):
+            return "requesting"
+        if rt == "doc_edit_notify":
+            return "collaborative"
+        return "none"
+
+    nodes = []
+    role_ids: list[str] = []
+    for role in roles:
+        rid = role["id"]
+        role_ids.append(rid)
+        nodes.append({
+            "id": rid,
+            "label": role.get("name") or "(unnamed)",
+            "activityCount": contrib_counts.get(rid, 0),
+            "active": (role.get("status") or "active") == "active",
+            "color": role.get("color") or "#94a3b8",
+            "tags": tags_by_role.get(rid, []),
+        })
+
+    # Pairwise edge construction.  Threshold matches find_relevant_agents'
+    # default (0.1 here, slightly looser than the 0.2 used for A2A fan-out
+    # because the dashboard wants to show *some* connection between roles
+    # that share at least one significant word — the fan-out path is
+    # stricter because each edge there triggers an LLM call).
+    _EDGE_THRESHOLD = 0.1
+    edges = []
+    for i, source_id in enumerate(role_ids):
+        for target_id in role_ids[i + 1:]:
+            weight = compute_tag_relevance(
+                tags_by_role.get(source_id, []),
+                tags_by_role.get(target_id, []),
+            )
+            if weight <= _EDGE_THRESHOLD:
+                continue
+            edges.append({
+                "source": source_id,
+                "target": target_id,
+                "weight": float(weight),
+                "interactionType": _interaction_type(source_id, target_id),
+            })
+
+    edges.sort(key=lambda e: e["weight"], reverse=True)
+
+    return {"nodes": nodes, "edges": edges}
+
+
+# ---------------------------------------------------------------------------
 # GET /quorums/{quorum_id}/a2a-debug
 # ---------------------------------------------------------------------------
 # Debug-only endpoint to count agent_requests rows for a quorum.  Helps

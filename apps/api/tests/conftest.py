@@ -165,6 +165,13 @@ def _install_quorum_llm_mock() -> None:
                 stub.extract_keywords = lambda text, **kw: text.lower().split()[:5]
             elif sub == "affinity":
                 stub.compute_tag_affinity = lambda a, b: len(set(a) & set(b)) / max(len(set(a) | set(b)), 1)
+                # compute_tag_relevance: simple symmetric overlap stub for the
+                # /affinity-graph route — real implementation tokenizes on _.
+                stub.compute_tag_relevance = lambda a, b: (
+                    len(set(a) & set(b)) / min(len(set(a)), len(set(b)))
+                    if a and b and set(a) and set(b)
+                    else 0.0
+                )
                 stub.extract_tags_from_text = lambda text, existing_vocabulary=None, vocab=None: text.lower().split()[:5]
                 # Real signature: find_relevant_agents(source_tags, all_agents, threshold=0.2).
                 # agent_engine.py calls this with kwargs, so the stub must accept them.

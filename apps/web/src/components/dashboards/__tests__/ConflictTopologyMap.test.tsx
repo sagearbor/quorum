@@ -54,6 +54,8 @@ vi.mock("@/lib/dataProvider", () => {
 import {
   ConflictTopologyMap,
   detectConflictEdges,
+  nodeRadiusForCount,
+  strokeWidthForAuthority,
 } from "../ConflictTopologyMap";
 
 beforeEach(() => {
@@ -117,6 +119,72 @@ describe("detectConflictEdges", () => {
         (e.source === "role-b" && e.target === "role-c"),
     );
     expect(cb).toBeUndefined();
+  });
+
+  it("filters opposing analysis_deltas below the magnitude threshold", () => {
+    // Both sides have opposite-sign deltas but the absolute values are tiny.
+    // With threshold=5 there should be no delta-driven evidence.
+    const roles: { id: string; name: string }[] = [
+      { id: "a", name: "A" },
+      { id: "b", name: "B" },
+    ];
+    const contributions = [
+      { id: "1", role_id: "a", structured_fields: {}, analysis_deltas: { consensus: 0.5 } },
+      { id: "2", role_id: "b", structured_fields: {}, analysis_deltas: { consensus: -0.5 } },
+    ];
+    const noisy = detectConflictEdges(roles, contributions);
+    expect(noisy.length).toBe(1);
+    expect(noisy[0].active).toBe(true);
+    const filtered = detectConflictEdges(roles, contributions, {
+      deltaMagnitudeThreshold: 5,
+    });
+    expect(filtered).toEqual([]);
+  });
+
+  it("captures raw cumulative sums on delta-driven evidence", () => {
+    const roles = [
+      { id: "a", name: "A" },
+      { id: "b", name: "B" },
+    ];
+    const contributions = [
+      { id: "1", role_id: "a", structured_fields: {}, analysis_deltas: { consensus: 12 } },
+      { id: "2", role_id: "b", structured_fields: {}, analysis_deltas: { consensus: -3 } },
+    ];
+    const edges = detectConflictEdges(roles, contributions);
+    expect(edges.length).toBe(1);
+    const ev = edges[0].evidence.find((e) => e.metric === "consensus");
+    expect(ev).toBeDefined();
+    expect(ev!.sumA).toBe(12);
+    expect(ev!.sumB).toBe(-3);
+  });
+});
+
+describe("nodeRadiusForCount", () => {
+  it("returns a mid-size value when all roles tie", () => {
+    expect(nodeRadiusForCount(5, 5, 5)).toBe(24);
+  });
+
+  it("scales linearly between 14 and 34", () => {
+    expect(nodeRadiusForCount(0, 0, 10)).toBe(14);
+    expect(nodeRadiusForCount(10, 0, 10)).toBe(34);
+    expect(nodeRadiusForCount(5, 0, 10)).toBe(24);
+  });
+
+  it("clamps to range when count is out of bounds", () => {
+    expect(nodeRadiusForCount(-1, 0, 10)).toBe(14);
+    expect(nodeRadiusForCount(99, 0, 10)).toBe(34);
+  });
+});
+
+describe("strokeWidthForAuthority", () => {
+  it("maps authority rank to outline thickness", () => {
+    expect(strokeWidthForAuthority(undefined)).toBe(1);
+    expect(strokeWidthForAuthority(0)).toBe(1);
+    expect(strokeWidthForAuthority(1)).toBe(1);
+    expect(strokeWidthForAuthority(2)).toBe(2);
+    expect(strokeWidthForAuthority(3)).toBe(2);
+    expect(strokeWidthForAuthority(4)).toBe(3);
+    expect(strokeWidthForAuthority(99)).toBe(3);
   });
 });
 
@@ -195,9 +263,69 @@ describe("ConflictTopologyMap", () => {
     render(<ConflictTopologyMap quorumId="q-empty" />);
     await waitFor(() => {
       expect(
-        screen.getByText(/No conflicts detected yet/i),
+        screen.getByText(/No roles yet/i),
       ).toBeTruthy();
     });
+  });
+
+  it("renders the summary chip with conflict + collaboration counts", async () => {
+    render(<ConflictTopologyMap quorumId="q-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("topology-summary-chip")).toBeTruthy();
+    });
+    // role-a vs role-b is the only conflict in the fixture (shared
+    // patient_consent + opposing consensus deltas).
+    expect(
+      screen.getByTestId("topology-summary-conflicts").textContent,
+    ).toMatch(/1\s*conflict/);
+    // No /affinity-graph fetch responds in the test env → 0 collaborations.
+    expect(
+      screen.getByTestId("topology-summary-collaborations").textContent,
+    ).toMatch(/0\s*collaboration/);
+  });
+
+  it("renders baseline dashed edges for every role-pair", async () => {
+    const { container } = render(<ConflictTopologyMap quorumId="q-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("conflict-topology-svg")).toBeTruthy();
+    });
+    // 3 roles → C(3,2) = 3 baseline edges.
+    const baselines = container.querySelectorAll(
+      '[data-testid^="baseline-edge-"]',
+    );
+    expect(baselines.length).toBe(3);
+  });
+
+  it("renders a numeric badge on each conflict edge", async () => {
+    const { container } = render(<ConflictTopologyMap quorumId="q-1" />);
+    await waitFor(() => {
+      const badge =
+        container.querySelector(
+          '[data-testid="conflict-edge-badge-role-a-role-b"]',
+        ) ||
+        container.querySelector(
+          '[data-testid="conflict-edge-badge-role-b-role-a"]',
+        );
+      expect(badge).not.toBeNull();
+    });
+  });
+
+  it("encodes contribution count + authority rank on each node", async () => {
+    const { container } = render(<ConflictTopologyMap quorumId="q-1" />);
+    await waitFor(() => {
+      expect(screen.getByTestId("conflict-node-role-a")).toBeTruthy();
+    });
+    const nodeA = container.querySelector(
+      '[data-testid="conflict-node-role-a"]',
+    );
+    // Falls back to client-side count when /role-status isn't reachable.
+    expect(nodeA?.getAttribute("data-contribution-count")).toBe("1");
+    expect(nodeA?.getAttribute("data-authority-rank")).toBe("4");
+    // Larger contribution count → larger radius. role-a, role-b, role-c
+    // each have 1 contribution in the fixture so radii should be equal.
+    const radius = parseFloat(nodeA?.getAttribute("data-node-radius") ?? "0");
+    expect(radius).toBeGreaterThanOrEqual(14);
+    expect(radius).toBeLessThanOrEqual(34);
   });
 
   it("shows consensus copy when roles contributed but no conflict signals fired", async () => {

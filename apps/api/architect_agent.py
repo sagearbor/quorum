@@ -12,8 +12,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from quorum_llm import get_llm_provider
+from quorum_llm.affinity import canonicalize_tag
 from quorum_llm.interface import LLMProvider
 from quorum_llm.models import LLMTier
+from quorum_llm.tier1 import extract_keywords
 
 from quorum_a2a.a2a_client import A2AClient
 from database import get_supabase
@@ -341,7 +343,60 @@ async def generate_roles_with_title(
                 instructions=_ROLE_GENERATION_INSTRUCTIONS,
                 max_tokens=8192,
             )
-            return list(output.roles), _sanitize_short_title(output.short_title)
+            roles = list(output.roles)
+            short_title = _sanitize_short_title(output.short_title)
+
+            # The LLM call validated fine but may have returned a role with
+            # ``domain_tags=[]`` — Pydantic permits that (default=[]).  Seen
+            # in production on quorum 1ff1ac0b... where the "Data Modeling
+            # & Architecture Strategist" role came back with zero tags,
+            # breaking every affinity score touching it.
+            #
+            # Retry the FULL call once if any role is missing tags; the
+            # combined call is the natural unit (cheaper than per-role
+            # round-trips and gives the model a fresh sampling).
+            missing_after_first = [r.name for r in roles if not r.domain_tags]
+            if missing_after_first:
+                logger.warning(
+                    "architect: LLM returned %d/%d roles with empty "
+                    "domain_tags (%s) — retrying full generate_roles call "
+                    "once.",
+                    len(missing_after_first),
+                    len(roles),
+                    missing_after_first,
+                )
+                try:
+                    retry = await llm_provider.run_typed(
+                        user_content,
+                        tier=LLMTier.CONFLICT,
+                        output_type=RoleSuggestionList,
+                        instructions=_ROLE_GENERATION_INSTRUCTIONS,
+                        max_tokens=8192,
+                    )
+                    retry_roles = list(retry.roles)
+                    # Only swap in retry results if they're at least as
+                    # complete (fewer empty-tag roles).  Avoid trading a
+                    # mostly-good response for an entirely-worse one.
+                    retry_missing = sum(
+                        1 for r in retry_roles if not r.domain_tags
+                    )
+                    if retry_missing < len(missing_after_first):
+                        roles = retry_roles
+                        retry_title = _sanitize_short_title(retry.short_title)
+                        if retry_title:
+                            short_title = retry_title
+                except Exception:
+                    logger.warning(
+                        "architect: retry of generate_roles failed — "
+                        "proceeding with first-attempt results.",
+                        exc_info=True,
+                    )
+
+            # Final safety net: any role still missing tags gets a
+            # deterministic keyword-extracted set so it's at least visible
+            # to affinity routing.
+            _backfill_empty_tags(roles, label="generate_roles")
+            return roles, short_title
         except ValueError:
             logger.warning(
                 "Typed-agent path failed for generate_roles; falling back to "
@@ -352,6 +407,7 @@ async def generate_roles_with_title(
     # Legacy path doesn't surface short_title — caller falls back to the
     # deterministic first-sentence summary.
     roles = await _generate_roles_legacy(problem, llm_provider)
+    _backfill_empty_tags(roles, label="generate_roles_legacy")
     return roles, ""
 
 
@@ -473,6 +529,102 @@ def _slugify_role_name(name: str) -> str:
     return name.lower().strip().replace(" ", "_").replace("-", "_")
 
 
+# Minimum tags we want to ship per role.  Below this, affinity routing returns
+# 0.0 for any pair involving the under-tagged role (see live evidence: prod
+# quorum 1ff1ac0b... had a role with domain_tags=[] that broke every affinity
+# score touching it).  Keyword extraction over name + focus + prompt_template
+# is deterministic and rarely yields fewer than 3 distinct tokens.
+_MIN_FALLBACK_TAGS = 3
+_MAX_FALLBACK_TAGS = 8
+
+
+def _keyword_fallback_tags(
+    name: str,
+    focus: str = "",
+    extra_text: str = "",
+) -> list[str]:
+    """Derive deterministic domain_tags from a role's free-text fields.
+
+    Used when the architect LLM returns ``domain_tags=[]`` for a role even
+    after a retry.  We pool the role's name, suggested_prompt_focus, and any
+    extra prose (e.g. prompt_template field text), run
+    :func:`quorum_llm.tier1.extract_keywords` to rank tokens by frequency,
+    canonicalize each via :func:`quorum_llm.affinity.canonicalize_tag`, and
+    return a deduplicated list of up to ``_MAX_FALLBACK_TAGS`` tags.
+
+    This is heuristic by design — the goal is "any tags > 0 tags" so the
+    role is visible to affinity routing, not "the perfect tag set the LLM
+    would have produced".  When the LLM succeeds, this never fires.
+
+    Args:
+        name: Role name (e.g. "Data Modeling & Architecture Strategist").
+        focus: ``suggested_prompt_focus`` sentence, if any.
+        extra_text: Optional extra prose (e.g. prompt_template field text).
+
+    Returns:
+        List of canonical, deduplicated tags.  Empty only if the inputs
+        contained no usable tokens; in practice almost always >= 3.
+    """
+    blob = " ".join(s for s in (name, focus, extra_text) if s and s.strip())
+    if not blob.strip():
+        return []
+    raw_keywords = extract_keywords(blob, max_keywords=_MAX_FALLBACK_TAGS * 2)
+    seen: set[str] = set()
+    tags: list[str] = []
+    for token in raw_keywords:
+        canonical = canonicalize_tag(token)
+        if not canonical or canonical in seen:
+            continue
+        seen.add(canonical)
+        tags.append(canonical)
+        if len(tags) >= _MAX_FALLBACK_TAGS:
+            break
+    return tags
+
+
+def _backfill_empty_tags(
+    roles: list[RoleSuggestion],
+    *,
+    label: str = "",
+) -> int:
+    """Fill ``domain_tags`` via keyword extraction for any role missing tags.
+
+    Mutates each ``RoleSuggestion`` in place — empty/missing tag lists are
+    replaced with the output of :func:`_keyword_fallback_tags`.  Emits one
+    WARNING log per role that needed backfilling so the architect (and
+    operators tailing logs) can see which roles the LLM dropped tags on.
+
+    Returns the number of roles that were backfilled.
+    """
+    backfilled = 0
+    for role in roles:
+        if role.domain_tags:
+            continue
+        fallback = _keyword_fallback_tags(
+            role.name or "", role.suggested_prompt_focus or ""
+        )
+        if not fallback:
+            logger.warning(
+                "architect: role=%r has empty domain_tags AND no usable "
+                "name/focus text for keyword fallback (label=%s) — leaving "
+                "tags empty; affinity routing will be degraded for this role.",
+                role.name,
+                label or "n/a",
+            )
+            continue
+        role.domain_tags = fallback
+        backfilled += 1
+        logger.warning(
+            "architect: role=%r had empty domain_tags from LLM (label=%s) — "
+            "filled with %d keyword-extracted tags: %s",
+            role.name,
+            label or "n/a",
+            len(fallback),
+            fallback,
+        )
+    return backfilled
+
+
 def _generic_persona_for(name: str, focus: str) -> str:
     """Generate a minimal default persona when the LLM omitted ``system_prompt``.
 
@@ -512,6 +664,37 @@ def persist_agent_configs(
                 suggestion.name, suggestion.suggested_prompt_focus
             )
 
+        # Defense in depth: the ai-start route accepts RoleSuggestion objects
+        # straight from the request body (the architect UI sends them after
+        # the user reviews/edits), so a role with domain_tags=[] can reach
+        # this function even if generate_roles_with_title already backfills.
+        # Apply the same keyword fallback here so every persisted row has
+        # tags or, at worst, an explicit WARNING log explaining why not.
+        domain_tags = list(suggestion.domain_tags or [])
+        if not domain_tags:
+            domain_tags = _keyword_fallback_tags(
+                suggestion.name or "",
+                suggestion.suggested_prompt_focus or "",
+            )
+            if domain_tags:
+                logger.warning(
+                    "persist_agent_configs: role=%s (%r) arrived with empty "
+                    "domain_tags — filled with %d keyword-extracted tags: %s",
+                    role_id,
+                    suggestion.name,
+                    len(domain_tags),
+                    domain_tags,
+                )
+            else:
+                logger.warning(
+                    "persist_agent_configs: role=%s (%r) arrived with empty "
+                    "domain_tags AND no usable name/focus text for keyword "
+                    "fallback — persisting empty tag list; affinity routing "
+                    "will be degraded for this role.",
+                    role_id,
+                    suggestion.name,
+                )
+
         row = {
             "id": str(uuid.uuid4()),
             "role_id": role_id,
@@ -523,7 +706,7 @@ def persist_agent_configs(
             "doc_permissions": [],
             "auto_create_docs": False,
             "auto_suggest_dashboards": False,
-            "domain_tags": list(suggestion.domain_tags or []),
+            "domain_tags": domain_tags,
         }
         try:
             db.table("agent_configs").insert(row).execute()

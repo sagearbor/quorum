@@ -23,11 +23,32 @@ vi.mock("@/lib/supabase", () => {
 });
 
 beforeEach(() => {
-  // Default fetch — return a small role list so the river renders.
+  // Default fetch — return a small role list so the river renders, and a
+  // matching affinity-graph response since the component fetches both in
+  // parallel via Promise.all.
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
-      new Response(
+    vi.fn(async (url: string) => {
+      if (typeof url === "string" && url.includes("/affinity-graph")) {
+        return new Response(
+          JSON.stringify({
+            nodes: [
+              { id: "role-1", label: "IRB Officer", tags: ["ethics"] },
+              { id: "role-2", label: "Site Coordinator", tags: ["site"] },
+            ],
+            edges: [
+              {
+                source: "role-1",
+                target: "role-2",
+                weight: 0.3,
+                interactionType: "collaborative",
+              },
+            ],
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }
+      return new Response(
         JSON.stringify([
           {
             role_id: "role-1",
@@ -43,8 +64,8 @@ beforeEach(() => {
           },
         ]),
         { status: 200, headers: { "content-type": "application/json" } },
-      ),
-    ),
+      );
+    }),
   );
 });
 

@@ -5,33 +5,38 @@
  *
  * Time flows left to right; each role is a coloured swim lane whose:
  *   - Thickness at time t  approx  (contributions + a2a_requests) by that role in minute t
- *   - Centerline at time t approx  vertical position derived from how aligned
- *                              that role's recent tag set is with the centroid
- *                              of all roles' recent tag sets. Highly aligned
- *                              roles hover near the middle; outliers drift to
- *                              the top / bottom of the canvas.
+ *   - Centerline at time t approx  vertical position derived from each role's
+ *                              mean pairwise affinity to its peers, taken
+ *                              from the backend `/quorums/{id}/affinity-graph`
+ *                              endpoint (word-level overlap via
+ *                              `compute_tag_relevance`). Highly aligned
+ *                              roles hover near the middle; outliers drift
+ *                              to the top / bottom of the canvas.
  *
- * The view maintains a rolling 30-minute window of per-role buckets in local
- * state. It is intentionally a simpler, more legible counterpart to the
- * force-directed AgentAffinityGraph — designers flagged the river as the
- * highest-risk view of the three, so this implementation favours readability
- * over visual sophistication:
+ * Previously the alignment signal came from a client-side Jaccard of
+ * per-minute tag sets against the union centroid. That returned ~0 because
+ * LLM-emitted `[tags: ...]` are short generic words while persona
+ * domain_tags are compound — every band sat in a flat horizontal stripe.
+ * The backend endpoint uses word-level overlap, so it produces real signal.
+ *
+ * The view maintains a rolling 30-minute window of per-role activity buckets
+ * in local state.
  *
  *   - SVG <path> with linear ("L") interpolation only — no cubic Beziers.
  *   - Empty / sparse state shows an explicit "Listening for activity…" hint
  *     instead of jagged zero-height bands.
  *   - Respects prefers-reduced-motion (no auto-scroll under that hint).
  *
- * Self-contained: fetches its own role list via /api/quorums/{id}/role-status
- * and subscribes to `contributions` + `a2a_requests` via Supabase realtime,
- * matching the pattern used by useQuorumLive / useA2ARequests / dataProvider.
+ * Self-contained: fetches /role-status and /affinity-graph in parallel,
+ * polls /affinity-graph every 15s, and subscribes to `contributions` +
+ * `a2a_requests` via Supabase realtime.
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { DashboardInfo } from "./DashboardInfo";
 
 const RIVER_BLURB =
-  "**Agent Affinity — River.** A streamgraph of agent activity over the last 30 minutes. Each colored band is one role; band thickness shows how much that role contributed in that minute (messages + A2A requests), and the vertical position shows how aligned the role's recent tags are with the rest of the quorum. Bands braid toward each other when roles converge on shared topics.";
+  "**Agent Affinity — River.** A streamgraph of agent activity over the last 30 minutes. Each colored band is one role; band thickness shows how much that role contributed in that minute (messages + A2A requests), and the vertical position shows how aligned that role's tags are with the rest of the quorum — computed server-side by the affinity-graph endpoint (word-level overlap, not exact-match). Bands braid toward each other when roles converge on shared topics.";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -83,6 +88,22 @@ interface RoleSeries {
   points: { x: number; cy: number; thickness: number }[];
 }
 
+/** Edge from the backend `/affinity-graph` endpoint. */
+interface AffinityEdge {
+  source: string;
+  target: string;
+  weight: number;
+  interactionType?: string;
+}
+
+interface AffinityGraphResponse {
+  nodes: Array<{ id: string; label?: string; tags?: string[] }>;
+  edges: AffinityEdge[];
+}
+
+/** Pairwise weights from the backend, keyed by `pairKey(a, b)`. */
+type EdgeWeightMap = Map<string, number>;
+
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
@@ -128,15 +149,30 @@ function floorToMinute(ms: number): number {
   return Math.floor(ms / MS_PER_MIN) * MS_PER_MIN;
 }
 
-/** Jaccard similarity between two tag sets. */
-function jaccard(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 || b.size === 0) return 0;
-  let inter = 0;
-  a.forEach((t) => {
-    if (b.has(t)) inter++;
-  });
-  const union = a.size + b.size - inter;
-  return union === 0 ? 0 : inter / union;
+/** Stable ordering for two role ids to use as a pair-key in the weight map. */
+function pairKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
+}
+
+/** Mean pairwise affinity weight for `roleId` against every other role
+ *  appearing in `allRoleIds`, looked up in the backend-supplied edge map.
+ *  Returns 0 when the role has no edges in the response. */
+function meanAffinity(
+  roleId: string,
+  allRoleIds: string[],
+  weights: EdgeWeightMap,
+): number {
+  if (allRoleIds.length <= 1) return 0;
+  let total = 0;
+  let n = 0;
+  for (const peer of allRoleIds) {
+    if (peer === roleId) continue;
+    const w = weights.get(pairKey(roleId, peer));
+    if (w === undefined) continue;
+    total += w;
+    n += 1;
+  }
+  return n === 0 ? 0 : total / n;
 }
 
 // ---------------------------------------------------------------------------
@@ -154,18 +190,34 @@ export function AgentAffinityGraphRiver({
   const [events, setEvents] = useState<ActivityEvent[]>([]);
   const [tick, setTick] = useState(0); // forces re-render every 30s for auto-scroll
   const prefersReducedMotion = usePrefersReducedMotion();
+  /** Pairwise affinity weights from the backend `/affinity-graph` endpoint,
+   *  keyed by `pairKey(a, b)`. Polled every 15s so the band centerlines
+   *  update as new contributions land server-side. */
+  const [edgeWeights, setEdgeWeights] = useState<EdgeWeightMap>(
+    () => new Map<string, number>(),
+  );
 
   // -------------------------------------------------------------------------
-  // Fetch role list (REST)
+  // Fetch role list + initial affinity graph in parallel.
+  //   - /role-status drives the swim-lane roster.
+  //   - /affinity-graph supplies authoritative pairwise weights used to
+  //     position each band's centerline (mean affinity to all peers).
+  //   Affinity-graph failure is non-fatal: bands fall back to the lane
+  //   bias and sit on the midline.
   // -------------------------------------------------------------------------
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
         const base = process.env.NEXT_PUBLIC_API_URL ?? "";
-        const res = await fetch(`${base}/quorums/${quorumId}/role-status`);
-        if (!res.ok) throw new Error(`role-status ${res.status}`);
-        const data: RoleStatusResponse[] = await res.json();
+        const [rolesRes, affinityRes] = await Promise.all([
+          fetch(`${base}/quorums/${quorumId}/role-status`),
+          fetch(`${base}/quorums/${quorumId}/affinity-graph`).catch(
+            () => null,
+          ),
+        ]);
+        if (!rolesRes.ok) throw new Error(`role-status ${rolesRes.status}`);
+        const data: RoleStatusResponse[] = await rolesRes.json();
         if (cancelled) return;
         const mapped: RoleMeta[] = data.map((r, i) => ({
           role_id: r.role_id,
@@ -174,6 +226,21 @@ export function AgentAffinityGraphRiver({
           color: FALLBACK_PALETTE[i % FALLBACK_PALETTE.length],
           authority_rank: 0,
         }));
+
+        if (affinityRes && affinityRes.ok) {
+          try {
+            const graph: AffinityGraphResponse = await affinityRes.json();
+            const map: EdgeWeightMap = new Map();
+            for (const e of graph.edges ?? []) {
+              if (!e.source || !e.target) continue;
+              map.set(pairKey(e.source, e.target), e.weight);
+            }
+            if (!cancelled) setEdgeWeights(map);
+          } catch {
+            // Malformed payload — leave weights empty.
+          }
+        }
+
         setRoles(mapped);
         setError(null);
       } catch (e) {
@@ -188,6 +255,38 @@ export function AgentAffinityGraphRiver({
       cancelled = true;
     };
   }, [quorumId]);
+
+  // -------------------------------------------------------------------------
+  // Poll the backend affinity graph every 15s so band centerlines drift as
+  // new contributions land server-side.
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (!quorumId) return;
+    if (!roles || roles.length === 0) return;
+    let cancelled = false;
+    const base = process.env.NEXT_PUBLIC_API_URL ?? "";
+    const refresh = async () => {
+      try {
+        const res = await fetch(`${base}/quorums/${quorumId}/affinity-graph`);
+        if (!res.ok) return;
+        const graph: AffinityGraphResponse = await res.json();
+        if (cancelled) return;
+        const map: EdgeWeightMap = new Map();
+        for (const e of graph.edges ?? []) {
+          if (!e.source || !e.target) continue;
+          map.set(pairKey(e.source, e.target), e.weight);
+        }
+        setEdgeWeights(map);
+      } catch {
+        // Transient failure — keep the previous snapshot.
+      }
+    };
+    const id = setInterval(refresh, 15_000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [quorumId, roles]);
 
   // -------------------------------------------------------------------------
   // Subscribe to contributions + a2a_requests via Supabase realtime
@@ -304,10 +403,6 @@ export function AgentAffinityGraphRiver({
     void tick;
 
     const windowStart = floorToMinute(now) - (WINDOW_MINUTES - 1) * MS_PER_MIN;
-    const minuteStamps: number[] = [];
-    for (let i = 0; i < WINDOW_MINUTES; i++) {
-      minuteStamps.push(windowStart + i * MS_PER_MIN);
-    }
 
     // role_id -> bucket index -> bucket
     const byRole = new Map<string, Bucket[]>();
@@ -330,18 +425,24 @@ export function AgentAffinityGraphRiver({
       ev.tags.forEach((t) => buckets[idx].tags.add(t));
     }
 
-    // Per-minute union of all roles' tags — used as the centroid for alignment.
-    const centroids: Set<string>[] = minuteStamps.map(() => new Set());
-    byRole.forEach((buckets) => {
-      for (let i = 0; i < WINDOW_MINUTES; i++) {
-        buckets[i].tags.forEach((t) => centroids[i].add(t));
-      }
-    });
-
     // Project to (x, cy, thickness).
     const usableW = width - LEFT_PAD - RIGHT_PAD;
     const cyMid = height / 2;
     const halfH = (height - TOP_PAD - BOTTOM_PAD) / 2;
+
+    // Per-role mean affinity to all peers, from the backend `/affinity-graph`
+    // endpoint. Held constant across the rolling window (affinity is a
+    // whole-quorum property at fetch time, not a per-minute slice). Roles
+    // with no edges in the response — or before the first fetch — get 0,
+    // i.e. they drift to the edge until the backend reports their weights.
+    const allRoleIds = roles.map((r) => r.role_id);
+    const alignByRole = new Map<string, number>();
+    for (const r of roles) {
+      alignByRole.set(
+        r.role_id,
+        meanAffinity(r.role_id, allRoleIds, edgeWeights),
+      );
+    }
 
     const out: RoleSeries[] = [];
     let roleIdx = 0;
@@ -353,8 +454,8 @@ export function AgentAffinityGraphRiver({
         ((roleIdx - (roles.length - 1) / 2) / Math.max(roles.length, 1)) *
         halfH *
         0.4;
+      const align = alignByRole.get(r.role_id) ?? 0;
       const points = buckets.map((b, i) => {
-        const align = jaccard(b.tags, centroids[i]);
         // Aligned roles hover near center; outliers drift outward.
         const offset = (1 - align) * halfH * 0.55;
         const cy = cyMid + bias + (roleIdx % 2 === 0 ? -offset : offset);
@@ -367,7 +468,7 @@ export function AgentAffinityGraphRiver({
       roleIdx++;
     }
     return out;
-  }, [roles, events, nowMs, tick, width, height]);
+  }, [roles, events, nowMs, tick, width, height, edgeWeights]);
 
   // -------------------------------------------------------------------------
   // Render

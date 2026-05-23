@@ -5,12 +5,19 @@
  * agent affinity dashboard.
  *
  * Top 70%: live spring-simulated graph.  Each role is a circle; positions
- *          re-target every 2 s based on Jaccard similarity of the [tags: ...]
- *          blocks seen in the last 20 contributions.  Nodes with high overlap
- *          pull toward each other; isolated nodes drift to the periphery.
- *          Authority rank → node "mass" → spring inertia (heavier nodes
- *          resist motion).  Animation uses Framer Motion's built-in spring
- *          transition (no custom physics engine, no d3-force).
+ *          re-target every 2 s based on the pairwise affinity weights
+ *          returned by the backend `/quorums/{id}/affinity-graph` endpoint
+ *          (word-level overlap via `compute_tag_relevance`). Nodes whose
+ *          weights are high pull toward each other; pairs without an edge
+ *          in the response have no force between them. Authority rank →
+ *          node "mass" → spring inertia (heavier nodes resist motion).
+ *          Animation uses Framer Motion's built-in spring transition.
+ *
+ *          Previously this used a client-side exact-match Jaccard over
+ *          `[tags: ...]` blocks from contributions, which returned ~0 for
+ *          every pair because LLM-emitted tags are short generic words
+ *          ("policy", "risk") while persona domain_tags are compound
+ *          ("policy_compliance"). The nodes stayed isolated in a ring.
  *
  * Bottom 30%: 60 s activity heatmap.  Rows = roles (sorted by authority_rank
  *             desc), columns = 12 x 5 s buckets.  Cell intensity = count of
@@ -49,8 +56,10 @@ const RETARGET_INTERVAL_MS = 2000;
 const HEATMAP_BUCKET_MS = 5000;
 const HEATMAP_BUCKET_COUNT = 12;
 const HEATMAP_WINDOW_MS = HEATMAP_BUCKET_MS * HEATMAP_BUCKET_COUNT;
-const CONTRIB_TAG_WINDOW = 20;
 const COMET_DURATION_MS = 1400;
+/** How often to poll the backend `/affinity-graph` endpoint for refreshed
+ *  pairwise weights. */
+const AFFINITY_REFRESH_MS = 15_000;
 
 const AFFINITY_SPRING_BLURB =
   "**Agent Affinity (Spring + Heatmap).** Each circle is an AI role; nodes drift via a spring simulation toward neighbours whose recent `[tags: ...]` overlap (Jaccard) is highest. Higher-authority roles are heavier and move more slowly. The strip below is a 60 s activity heatmap — cell intensity = combined station messages + agent-to-agent requests in that 5 s bucket. Comets show live A2A traffic.";
@@ -128,6 +137,22 @@ interface Vec2 {
   y: number;
 }
 
+/** Edge returned by the backend `/affinity-graph` endpoint. */
+interface AffinityEdge {
+  source: string;
+  target: string;
+  weight: number;
+  interactionType?: string;
+}
+
+interface AffinityGraphResponse {
+  nodes: Array<{ id: string; label?: string; tags?: string[] }>;
+  edges: AffinityEdge[];
+}
+
+/** Pairwise weights from the backend, keyed by `pairKey(a, b)`. */
+export type EdgeWeightMap = Map<string, number>;
+
 // ---------------------------------------------------------------------------
 // Helpers (exported for unit tests)
 // ---------------------------------------------------------------------------
@@ -149,7 +174,12 @@ export function extractTagsFromContent(content: string): string[] {
   return tags;
 }
 
-/** Jaccard similarity between two tag arrays (treated as sets). */
+/** Jaccard similarity between two tag arrays (treated as sets).
+ *
+ *  Retained as an exported helper because the unit-test suite covers it
+ *  directly. The component itself no longer uses Jaccard for affinity —
+ *  pairwise weights come from the backend `/affinity-graph` endpoint, which
+ *  uses word-level overlap (`compute_tag_relevance`). */
 export function jaccard(a: string[], b: string[]): number {
   if (a.length === 0 || b.length === 0) return 0;
   const sa = new Set(a);
@@ -160,6 +190,11 @@ export function jaccard(a: string[], b: string[]): number {
   });
   const union = sa.size + sb.size - inter;
   return union === 0 ? 0 : inter / union;
+}
+
+/** Stable ordering for two role ids to use as a pair-key in the weight map. */
+function pairKey(a: string, b: string): string {
+  return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
 /** Even ring layout positions for the given roles. */
@@ -178,13 +213,14 @@ function ringLayout(roleIds: string[], cx: number, cy: number, radius: number): 
  *
  * Algorithm: start from the ring layout, then apply a single relaxation
  * pass where every pair of roles nudges toward each other proportional to
- * their tag-set Jaccard similarity (computed from the last N contributions).
- * Roles with zero similarity to any peer keep their ring position.  This is
+ * the backend-computed affinity weight (word-level overlap via
+ * `compute_tag_relevance`, served by `/quorums/{id}/affinity-graph`).
+ * Roles without an edge in the response keep their ring position. This is
  * intentionally cheap — Framer's spring transition smooths between frames.
  */
-function computeTargetPositions(
+export function computeTargetPositions(
   roles: RoleNode[],
-  tagsByRole: Map<string, string[]>,
+  weights: EdgeWeightMap,
   cx: number,
   cy: number,
   radius: number,
@@ -200,9 +236,7 @@ function computeTargetPositions(
     for (let j = i + 1; j < roles.length; j++) {
       const a = roles[i];
       const b = roles[j];
-      const tagsA = tagsByRole.get(a.id) ?? [];
-      const tagsB = tagsByRole.get(b.id) ?? [];
-      const sim = jaccard(tagsA, tagsB);
+      const sim = weights.get(pairKey(a.id, b.id)) ?? 0;
       if (sim <= 0) continue;
       const pa = ring.get(a.id)!;
       const pb = ring.get(b.id)!;
@@ -251,14 +285,17 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
   const [connState, setConnState] = useState<"connecting" | "ready" | "error">("connecting");
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  /** Recent contributions, used to derive [tags: ...] sets per role. */
-  const [recentContribs, setRecentContribs] = useState<ContributionRow[]>([]);
   /** Activity events (station_messages + agent_requests) for the heatmap. */
   const [activity, setActivity] = useState<ActivityEvent[]>([]);
   /** Active comets to animate. */
   const [comets, setComets] = useState<Comet[]>([]);
   /** Re-render trigger for heatmap cell aging. */
   const [, forceTick] = useState(0);
+  /** Pairwise affinity weights from the backend `/affinity-graph` endpoint,
+   *  keyed by `pairKey(a, b)`. Polled every 15s to track ongoing changes. */
+  const [edgeWeights, setEdgeWeights] = useState<EdgeWeightMap>(
+    () => new Map<string, number>(),
+  );
 
   // -------------------------------------------------------------------------
   // Fetch the role list (REST) + enrich with authority_rank / color via supabase
@@ -272,9 +309,31 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
       let baseList: RoleStatusRow[] = [];
 
       try {
-        const res = await fetch(`${apiBase}/quorums/${quorumId}/role-status`);
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        baseList = (await res.json()) as RoleStatusRow[];
+        // Parallel fetch: role-status drives the node roster, affinity-graph
+        // seeds the pairwise weights used by the spring sim. Affinity-graph
+        // failure is non-fatal — nodes fall back to the ring layout.
+        const [rolesRes, affinityRes] = await Promise.all([
+          fetch(`${apiBase}/quorums/${quorumId}/role-status`),
+          fetch(`${apiBase}/quorums/${quorumId}/affinity-graph`).catch(
+            () => null,
+          ),
+        ]);
+        if (!rolesRes.ok) throw new Error(`HTTP ${rolesRes.status}`);
+        baseList = (await rolesRes.json()) as RoleStatusRow[];
+
+        if (affinityRes && affinityRes.ok) {
+          try {
+            const graph: AffinityGraphResponse = await affinityRes.json();
+            const map: EdgeWeightMap = new Map();
+            for (const e of graph.edges ?? []) {
+              if (!e.source || !e.target) continue;
+              map.set(pairKey(e.source, e.target), e.weight);
+            }
+            if (!cancelled) setEdgeWeights(map);
+          } catch {
+            // Malformed payload — leave weights empty.
+          }
+        }
       } catch (err) {
         if (cancelled) return;
         setErrorMsg(err instanceof Error ? err.message : "fetch failed");
@@ -340,7 +399,14 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
             { event: "INSERT", schema: "public", table: "contributions", filter: `quorum_id=eq.${quorumId}` },
             (payload) => {
               const row = payload.new as ContributionRow;
-              setRecentContribs((prev) => [...prev.slice(-(CONTRIB_TAG_WINDOW - 1)), row]);
+              if (!row.role_id) return;
+              // Push to the activity heatmap; pairwise affinity comes from
+              // the backend `/affinity-graph` poll, so we no longer need to
+              // re-derive tags from contribution bodies here.
+              setActivity((prev) => [
+                ...prev,
+                { ts: Date.now(), roleId: row.role_id },
+              ]);
             },
           )
           .subscribe();
@@ -413,45 +479,58 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
   }, []);
 
   // -------------------------------------------------------------------------
-  // Geometry + tag set per role
+  // Periodically refresh the backend affinity weights so the spring sim
+  // keeps reflecting changes as new contributions arrive on the server.
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (!quorumId) return;
+    if (roles.length === 0) return;
+    let cancelled = false;
+    const apiBase =
+      process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    const refresh = async () => {
+      try {
+        const res = await fetch(
+          `${apiBase}/quorums/${quorumId}/affinity-graph`,
+        );
+        if (!res.ok) return;
+        const graph: AffinityGraphResponse = await res.json();
+        if (cancelled) return;
+        const map: EdgeWeightMap = new Map();
+        for (const e of graph.edges ?? []) {
+          if (!e.source || !e.target) continue;
+          map.set(pairKey(e.source, e.target), e.weight);
+        }
+        setEdgeWeights(map);
+      } catch {
+        // Transient failure — keep the previous snapshot.
+      }
+    };
+    const id = setInterval(refresh, AFFINITY_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, [quorumId, roles]);
+
+  // -------------------------------------------------------------------------
+  // Geometry
   // -------------------------------------------------------------------------
   const cx = PANEL_WIDTH / 2;
   const cy = SPRING_PANEL_HEIGHT / 2;
   const radius = Math.min(PANEL_WIDTH, SPRING_PANEL_HEIGHT) / 2 - NODE_RADIUS - 20;
-
-  const tagsByRole = useMemo(() => {
-    // Seed every role with its persistent domain_tags so the spring has a
-    // signal even before any contributions arrive.  Without this, a brand-new
-    // quorum shows roles frozen in the default ring and "Agent Affinity"
-    // reads as broken.  Contribution-derived tags are unioned on top so
-    // affinity sharpens as activity flows.
-    const map = new Map<string, string[]>();
-    for (const r of roles) {
-      if (r.domainTags && r.domainTags.length > 0) {
-        map.set(r.id, [...r.domainTags]);
-      }
-    }
-    for (const c of recentContribs) {
-      const tags = extractTagsFromContent(c.content);
-      if (tags.length === 0) continue;
-      const existing = map.get(c.role_id) ?? [];
-      const merged = Array.from(new Set([...existing, ...tags]));
-      map.set(c.role_id, merged);
-    }
-    return map;
-  }, [roles, recentContribs]);
 
   const [targets, setTargets] = useState<Map<string, Vec2>>(new Map());
 
   useEffect(() => {
     if (roles.length === 0) return;
     const compute = () => {
-      setTargets(computeTargetPositions(roles, tagsByRole, cx, cy, radius));
+      setTargets(computeTargetPositions(roles, edgeWeights, cx, cy, radius));
     };
     compute();
     const id = setInterval(compute, RETARGET_INTERVAL_MS);
     return () => clearInterval(id);
-  }, [roles, tagsByRole, cx, cy, radius]);
+  }, [roles, edgeWeights, cx, cy, radius]);
 
   // -------------------------------------------------------------------------
   // Heatmap bucketization
@@ -532,10 +611,11 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
           className="absolute inset-0 h-full w-full"
           preserveAspectRatio="xMidYMid meet"
         >
-          {/* Faint connector lines for pairs with any tag overlap. */}
+          {/* Faint connector lines for pairs with a backend-computed
+              affinity weight above the noise floor. */}
           {roles.map((a, i) =>
             roles.slice(i + 1).map((b) => {
-              const sim = jaccard(tagsByRole.get(a.id) ?? [], tagsByRole.get(b.id) ?? []);
+              const sim = edgeWeights.get(pairKey(a.id, b.id)) ?? 0;
               if (sim <= 0.05) return null;
               const pa = targets.get(a.id);
               const pb = targets.get(b.id);

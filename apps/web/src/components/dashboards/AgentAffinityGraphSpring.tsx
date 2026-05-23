@@ -4,7 +4,7 @@
  * AgentAffinityGraphSpring — Spring-physics + activity-heatmap variant of the
  * agent affinity dashboard.
  *
- * Top 70%: live spring-simulated graph.  Each role is a circle; positions
+ * Top 70%: live spring-simulated graph. Each role is a circle; positions
  *          re-target every 2 s based on the pairwise affinity weights
  *          returned by the backend `/quorums/{id}/affinity-graph` endpoint
  *          (word-level overlap via `compute_tag_relevance`). Nodes whose
@@ -13,30 +13,37 @@
  *          node "mass" → spring inertia (heavier nodes resist motion).
  *          Animation uses Framer Motion's built-in spring transition.
  *
- *          Previously this used a client-side exact-match Jaccard over
- *          `[tags: ...]` blocks from contributions, which returned ~0 for
- *          every pair because LLM-emitted tags are short generic words
- *          ("policy", "risk") while persona domain_tags are compound
- *          ("policy_compliance"). The nodes stayed isolated in a ring.
+ *          The faint dashed circle is the "equilibrium ring" — the layout
+ *          each node would occupy with zero spring force. Visible deviation
+ *          from the ring is the spring pull.
  *
- * Bottom 30%: 60 s activity heatmap.  Rows = roles (sorted by authority_rank
- *             desc), columns = 12 x 5 s buckets.  Cell intensity = count of
- *             station_messages + agent_requests for that role in that bucket.
- *             Cells age leftward as time advances.
+ *          Node radius is interpolated from contributions_count so the most
+ *          active role visibly dominates. Edge stroke width is proportional
+ *          to the backend weight, with the numeric value labeled at each
+ *          midpoint so the dashboard doubles as a live readout of the
+ *          underlying affinity matrix.
+ *
+ * Bottom 30%: 60 s activity heatmap with a play/scrub control that replays
+ *             the contribution timeline. On resolved quorums the realtime
+ *             channel never fires, so without playback the strip would be
+ *             permanently empty. Rows = roles (sorted by authority_rank
+ *             desc), columns = 12 x 5 s buckets. Cell intensity = combined
+ *             contribution / station_message / agent_request count.
  *
  * When a new agent_request arrives, an SVG comet animates from source → target.
  *
- * Self-contained: takes only { quorumId } as a prop.  Fetches its own data
- * from /api/quorums/{id}/role-status (REST) and subscribes to Supabase
- * realtime channels for `contributions`, `station_messages`, and
- * `agent_requests`.  Renders a "connecting…" state when data is unavailable.
- *
- * Sophie wires this into the carousel and view-toggle in a separate commit.
+ * Self-contained: takes only { quorumId } as a prop. Fetches its own data
+ * from /quorums/{id}/role-status, /quorums/{id}/affinity-graph, and
+ * /quorums/{id}/state (REST) and subscribes to Supabase realtime channels for
+ * `contributions`, `station_messages`, and `agent_requests`. Renders a
+ * "connecting…" state when data is unavailable.
  */
 
 import {
+  useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
 } from "react";
@@ -51,7 +58,13 @@ const PANEL_WIDTH = 560;
 const PANEL_HEIGHT = 420;
 const SPRING_PANEL_HEIGHT = Math.round(PANEL_HEIGHT * 0.7);
 const HEATMAP_PANEL_HEIGHT = PANEL_HEIGHT - SPRING_PANEL_HEIGHT;
+/** Default ring-layout node radius; per-node radius scales from min→max
+ *  based on contributions_count. */
 const NODE_RADIUS = 22;
+const NODE_RADIUS_MIN = 14;
+const NODE_RADIUS_MAX = 34;
+/** contributions_count value at/above which a node renders at NODE_RADIUS_MAX. */
+const NODE_SCALE_CAP = 10;
 const RETARGET_INTERVAL_MS = 2000;
 const HEATMAP_BUCKET_MS = 5000;
 const HEATMAP_BUCKET_COUNT = 12;
@@ -60,11 +73,23 @@ const COMET_DURATION_MS = 1400;
 /** How often to poll the backend `/affinity-graph` endpoint for refreshed
  *  pairwise weights. */
 const AFFINITY_REFRESH_MS = 15_000;
+/** Target effective spring force for the strongest pair, so even small
+ *  raw weights (~0.13–0.42) produce visible node movement. We normalize the
+ *  max edge weight to this value when computing pulls. */
+const MAX_SPRING_FORCE = 0.8;
+/** Backend default placeholder color used when no explicit role color was
+ *  assigned. Treated as "no color" so we apply the fallback palette. */
+const SLATE_DEFAULT_COLOR = "#94a3b8";
+/** Scrubber tick rate while playing back the contribution timeline. */
+const SCRUB_TICK_MS = 200;
+/** Wall-clock duration to replay the full contribution window. */
+const SCRUB_PLAYBACK_DURATION_MS = 30_000;
 
 const AFFINITY_SPRING_BLURB =
-  "**Agent Affinity (Spring + Heatmap).** Each circle is an AI role; nodes drift via a spring simulation toward neighbours whose recent `[tags: ...]` overlap (Jaccard) is highest. Higher-authority roles are heavier and move more slowly. The strip below is a 60 s activity heatmap — cell intensity = combined station messages + agent-to-agent requests in that 5 s bucket. Comets show live A2A traffic.";
+  "**Agent Affinity (Spring + Heatmap).** Each circle is an AI role sized by `contributions_count`; nodes drift via a spring simulation toward neighbours with the highest backend-computed affinity. Edge thickness and the midpoint label show the pairwise weight. The dashed ring is the zero-spring equilibrium layout — visible deviation = spring pull. The activity strip below replays the contribution timeline via the scrub control; cell intensity = combined station messages + agent-to-agent requests in that 5 s bucket. Comets show live A2A traffic.";
 
-// Fallback colour palette used when a role has no explicit colour.
+// Fallback colour palette used when a role has no explicit colour (or the
+// backend returned the slate-grey default).
 const FALLBACK_COLORS = [
   "#60a5fa",
   "#34d399",
@@ -89,7 +114,7 @@ interface RoleStatusRow {
   contributions_count?: number;
   blocked_by_names?: string[];
   authority_rank?: number;
-  /** Persona's persistent domain_tags (from agent_configs).  Used as the
+  /** Persona's persistent domain_tags (from agent_configs). Used as the
    *  baseline tag set so affinity has signal before any contributions arrive. */
   domain_tags?: string[];
 }
@@ -99,8 +124,9 @@ interface RoleNode {
   name: string;
   authorityRank: number;
   color: string;
-  /** Persona's persistent domain_tags — used as the baseline tag set when
-   *  no contributions have arrived yet, so the spring sim has signal at t=0. */
+  /** Number of contributions this role has made. Drives node radius. */
+  contributionsCount: number;
+  /** Persona's persistent domain_tags — used for the hover tooltip. */
   domainTags: string[];
 }
 
@@ -178,8 +204,7 @@ export function extractTagsFromContent(content: string): string[] {
  *
  *  Retained as an exported helper because the unit-test suite covers it
  *  directly. The component itself no longer uses Jaccard for affinity —
- *  pairwise weights come from the backend `/affinity-graph` endpoint, which
- *  uses word-level overlap (`compute_tag_relevance`). */
+ *  pairwise weights come from the backend `/affinity-graph` endpoint. */
 export function jaccard(a: string[], b: string[]): number {
   if (a.length === 0 || b.length === 0) return 0;
   const sa = new Set(a);
@@ -197,6 +222,38 @@ function pairKey(a: string, b: string): string {
   return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
+/**
+ * Resolve the displayable color for a role.
+ *
+ * The backend currently leaves `roles.color` null on auto-promoted personas,
+ * which the `/affinity-graph` endpoint surfaces as the slate placeholder
+ * `#94a3b8`. When all roles share that placeholder the nodes are
+ * indistinguishable, so we fall back to a stable palette indexed by the
+ * role's position so the same role always gets the same color across
+ * re-renders.
+ */
+export function resolveRoleColor(
+  rawColor: string | null | undefined,
+  index: number,
+): string {
+  const trimmed = (rawColor ?? "").trim().toLowerCase();
+  if (!trimmed || trimmed === SLATE_DEFAULT_COLOR.toLowerCase()) {
+    return FALLBACK_COLORS[index % FALLBACK_COLORS.length];
+  }
+  return rawColor as string;
+}
+
+/**
+ * Map a `contributions_count` to a render radius in
+ * [NODE_RADIUS_MIN, NODE_RADIUS_MAX]. Counts above NODE_SCALE_CAP are
+ * clamped to the max so a single noisy role can't dominate the canvas.
+ */
+export function radiusForContributions(count: number): number {
+  const c = Math.max(0, Math.min(NODE_SCALE_CAP, count));
+  const t = c / NODE_SCALE_CAP;
+  return NODE_RADIUS_MIN + (NODE_RADIUS_MAX - NODE_RADIUS_MIN) * t;
+}
+
 /** Even ring layout positions for the given roles. */
 function ringLayout(roleIds: string[], cx: number, cy: number, radius: number): Map<string, Vec2> {
   const out = new Map<string, Vec2>();
@@ -211,12 +268,15 @@ function ringLayout(roleIds: string[], cx: number, cy: number, radius: number): 
 /**
  * Recompute target positions for each role.
  *
- * Algorithm: start from the ring layout, then apply a single relaxation
- * pass where every pair of roles nudges toward each other proportional to
- * the backend-computed affinity weight (word-level overlap via
+ * Start from the ring layout, then apply a single relaxation pass where
+ * every pair of roles nudges toward each other proportional to the
+ * backend-computed affinity weight (word-level overlap via
  * `compute_tag_relevance`, served by `/quorums/{id}/affinity-graph`).
- * Roles without an edge in the response keep their ring position. This is
- * intentionally cheap — Framer's spring transition smooths between frames.
+ *
+ * Pulls are normalized so the strongest edge produces MAX_SPRING_FORCE units
+ * of pull. With realistic backend payloads (max ~0.42) this is roughly a
+ * 6x multiplier on the previous `sim * 0.4` calculation — enough to clearly
+ * visualize the strongest affinity pair without collapsing the graph.
  */
 export function computeTargetPositions(
   roles: RoleNode[],
@@ -228,6 +288,12 @@ export function computeTargetPositions(
   const ids = roles.map((r) => r.id);
   const ring = ringLayout(ids, cx, cy, radius);
   if (roles.length < 2) return ring;
+
+  let maxWeight = 0;
+  weights.forEach((w) => {
+    if (w > maxWeight) maxWeight = w;
+  });
+  const scale = maxWeight > 0 ? MAX_SPRING_FORCE / maxWeight : 0;
 
   const pulls = new Map<string, Vec2>();
   for (const id of ids) pulls.set(id, { x: 0, y: 0 });
@@ -242,9 +308,7 @@ export function computeTargetPositions(
       const pb = ring.get(b.id)!;
       const dx = pb.x - pa.x;
       const dy = pb.y - pa.y;
-      // Pull each toward the other, scaled by similarity.  0.4 keeps the
-      // graph from collapsing to a single point even at sim=1.
-      const k = sim * 0.4;
+      const k = sim * scale;
       pulls.get(a.id)!.x += dx * k;
       pulls.get(a.id)!.y += dy * k;
       pulls.get(b.id)!.x -= dx * k;
@@ -296,6 +360,19 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
   const [edgeWeights, setEdgeWeights] = useState<EdgeWeightMap>(
     () => new Map<string, number>(),
   );
+  /** Historical contributions for the scrubber playback. Loaded once on
+   *  mount from /quorums/{id}/state and sorted by `created_at` asc. The
+   *  realtime channel still drives the live heatmap; scrubber playback is
+   *  layered on top so users can replay activity on resolved quorums where
+   *  no live events fire. */
+  const [historicalActivity, setHistoricalActivity] = useState<ActivityEvent[]>([]);
+  /** Playback controls for the activity scrubber. `progress` is in [0,1]
+   *  over the contribution timeline. Persisted in refs so the play loop can
+   *  read the latest value without retriggering the interval effect. */
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [scrubProgress, setScrubProgress] = useState(0);
+  const scrubProgressRef = useRef(0);
+  scrubProgressRef.current = scrubProgress;
 
   // -------------------------------------------------------------------------
   // Fetch the role list (REST) + enrich with authority_rank / color via supabase
@@ -365,7 +442,8 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
           id: r.role_id,
           name: r.name,
           authorityRank: meta?.authority_rank ?? r.authority_rank ?? 0,
-          color: meta?.color || FALLBACK_COLORS[i % FALLBACK_COLORS.length],
+          color: resolveRoleColor(meta?.color, i),
+          contributionsCount: r.contributions_count ?? 0,
           domainTags: r.domain_tags ?? [],
         };
       });
@@ -400,9 +478,6 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
             (payload) => {
               const row = payload.new as ContributionRow;
               if (!row.role_id) return;
-              // Push to the activity heatmap; pairwise affinity comes from
-              // the backend `/affinity-graph` poll, so we no longer need to
-              // re-derive tags from contribution bodies here.
               setActivity((prev) => [
                 ...prev,
                 { ts: Date.now(), roleId: row.role_id },
@@ -514,6 +589,83 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
   }, [quorumId, roles]);
 
   // -------------------------------------------------------------------------
+  // Load historical contributions once so the scrubber can replay them.
+  // /quorums/{id}/state returns contributions ordered by created_at asc.
+  // On resolved quorums no realtime events ever fire, so without this fetch
+  // the activity strip is permanently empty.
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (!quorumId) return;
+    let cancelled = false;
+    const apiBase =
+      process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    (async () => {
+      try {
+        const res = await fetch(
+          `${apiBase}/quorums/${quorumId}/state?limit=500`,
+        );
+        if (!res.ok) return;
+        const body = (await res.json()) as {
+          contributions?: Array<{ role_id: string; created_at: string }>;
+        };
+        if (cancelled) return;
+        const events: ActivityEvent[] = [];
+        for (const c of body.contributions ?? []) {
+          if (!c.role_id || !c.created_at) continue;
+          const t = Date.parse(c.created_at);
+          if (Number.isNaN(t)) continue;
+          events.push({ ts: t, roleId: c.role_id });
+        }
+        events.sort((a, b) => a.ts - b.ts);
+        setHistoricalActivity(events);
+      } catch {
+        // Non-fatal — scrubber will just be a no-op.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [quorumId]);
+
+  // -------------------------------------------------------------------------
+  // Scrubber play loop. Persists across rerenders via refs so toggling
+  // play/pause doesn't lose position.
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (!isPlaying) return;
+    const stepPerTick = SCRUB_TICK_MS / SCRUB_PLAYBACK_DURATION_MS;
+    const id = setInterval(() => {
+      const next = scrubProgressRef.current + stepPerTick;
+      if (next >= 1) {
+        scrubProgressRef.current = 1;
+        setScrubProgress(1);
+        setIsPlaying(false);
+        return;
+      }
+      scrubProgressRef.current = next;
+      setScrubProgress(next);
+    }, SCRUB_TICK_MS);
+    return () => clearInterval(id);
+  }, [isPlaying]);
+
+  /** Toggle play/pause. If playback already finished, restart from 0. */
+  const onTogglePlay = useCallback(() => {
+    setIsPlaying((prev) => {
+      if (!prev && scrubProgressRef.current >= 1) {
+        scrubProgressRef.current = 0;
+        setScrubProgress(0);
+      }
+      return !prev;
+    });
+  }, []);
+
+  const onScrubChange = useCallback((next: number) => {
+    const v = Math.max(0, Math.min(1, next));
+    scrubProgressRef.current = v;
+    setScrubProgress(v);
+  }, []);
+
+  // -------------------------------------------------------------------------
   // Geometry
   // -------------------------------------------------------------------------
   const cx = PANEL_WIDTH / 2;
@@ -533,29 +685,73 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
   }, [roles, edgeWeights, cx, cy, radius]);
 
   // -------------------------------------------------------------------------
-  // Heatmap bucketization
+  // Heatmap bucketization. Merges live realtime events with the scrubbed
+  // historical timeline. The scrubber maps progress [0,1] over the
+  // contribution time range to a virtual "playhead" time; events on or
+  // before that playhead are rebucketed by their offset from the playhead
+  // so they appear naturally in the 60s window.
   // -------------------------------------------------------------------------
+  const historicalRange = useMemo(() => {
+    if (historicalActivity.length === 0) return null;
+    const start = historicalActivity[0].ts;
+    const end = historicalActivity[historicalActivity.length - 1].ts;
+    return { start, end, span: Math.max(1, end - start) };
+  }, [historicalActivity]);
+
   const heatmap = useMemo(() => {
     const now = Date.now();
     const buckets = new Map<string, number[]>();
     for (const r of roles) buckets.set(r.id, new Array(HEATMAP_BUCKET_COUNT).fill(0));
 
+    // Live activity (real-time wallclock).
     for (const ev of activity) {
       const age = now - ev.ts;
       if (age < 0 || age > HEATMAP_WINDOW_MS) continue;
-      // bucket 0 = oldest (left); bucket N-1 = newest (right).
       const idx = HEATMAP_BUCKET_COUNT - 1 - Math.floor(age / HEATMAP_BUCKET_MS);
       if (idx < 0 || idx >= HEATMAP_BUCKET_COUNT) continue;
       const arr = buckets.get(ev.roleId);
       if (arr) arr[idx] += 1;
     }
+
+    // Scrubbed historical activity. Anything at or before the virtual
+    // playhead appears in the window, aged by its offset from the playhead.
+    if (historicalRange && historicalActivity.length > 0) {
+      const playheadTs =
+        historicalRange.start + scrubProgress * historicalRange.span;
+      for (const ev of historicalActivity) {
+        const age = playheadTs - ev.ts;
+        if (age < 0 || age > HEATMAP_WINDOW_MS) continue;
+        const idx =
+          HEATMAP_BUCKET_COUNT - 1 - Math.floor(age / HEATMAP_BUCKET_MS);
+        if (idx < 0 || idx >= HEATMAP_BUCKET_COUNT) continue;
+        const arr = buckets.get(ev.roleId);
+        if (arr) arr[idx] += 1;
+      }
+    }
+
     return buckets;
-  }, [activity, roles]);
+  }, [activity, roles, historicalActivity, historicalRange, scrubProgress]);
 
   const sortedRoles = useMemo(
     () => [...roles].sort((a, b) => b.authorityRank - a.authorityRank),
     [roles],
   );
+
+  /** Per-role list of (peer, weight) pairs sorted desc, for hover tooltips. */
+  const pairwiseByRole = useMemo(() => {
+    const map = new Map<string, Array<{ peer: RoleNode; weight: number }>>();
+    for (const a of roles) {
+      const others: Array<{ peer: RoleNode; weight: number }> = [];
+      for (const b of roles) {
+        if (a.id === b.id) continue;
+        const w = edgeWeights.get(pairKey(a.id, b.id)) ?? 0;
+        others.push({ peer: b, weight: w });
+      }
+      others.sort((x, y) => y.weight - x.weight);
+      map.set(a.id, others);
+    }
+    return map;
+  }, [roles, edgeWeights]);
 
   // -------------------------------------------------------------------------
   // Render
@@ -605,31 +801,79 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
         style={{ height: SPRING_PANEL_HEIGHT }}
         data-testid="affinity-spring-canvas"
       >
-        {/* SVG layer for comets + faint affinity lines, drawn beneath nodes. */}
+        {/* SVG layer for the equilibrium ring guide, edges + weight labels,
+            and comets — all drawn beneath the node motion divs. */}
         <svg
           viewBox={`0 0 ${PANEL_WIDTH} ${SPRING_PANEL_HEIGHT}`}
           className="absolute inset-0 h-full w-full"
           preserveAspectRatio="xMidYMid meet"
         >
-          {/* Faint connector lines for pairs with a backend-computed
-              affinity weight above the noise floor. */}
+          {/* Equilibrium ring guide — the "zero-spring" layout radius.
+              Visible deviation from this circle indicates a spring pull. */}
+          <circle
+            cx={cx}
+            cy={cy}
+            r={radius}
+            fill="none"
+            stroke="white"
+            strokeOpacity={0.12}
+            strokeDasharray="4 6"
+            strokeWidth={1}
+            data-testid="affinity-spring-equilibrium-ring"
+          />
+
+          {/* All affinity edges, always-on with weight numbers at midpoint.
+              Skip only true zeros so the dashboard doesn't fabricate
+              relationships the backend didn't report. */}
           {roles.map((a, i) =>
             roles.slice(i + 1).map((b) => {
               const sim = edgeWeights.get(pairKey(a.id, b.id)) ?? 0;
-              if (sim <= 0.05) return null;
+              if (sim <= 0) return null;
               const pa = targets.get(a.id);
               const pb = targets.get(b.id);
               if (!pa || !pb) return null;
+              const mx = (pa.x + pb.x) / 2;
+              const my = (pa.y + pb.y) / 2;
+              const label = sim.toFixed(2);
+              const labelWidth = label.length * 6 + 8;
+              const stroke = Math.max(0.6, sim * 8);
+              const opacity = Math.min(0.85, 0.35 + sim * 1.2);
               return (
-                <line
+                <g
                   key={`${a.id}-${b.id}`}
-                  x1={pa.x}
-                  y1={pa.y}
-                  x2={pb.x}
-                  y2={pb.y}
-                  stroke="rgba(255,255,255,0.18)"
-                  strokeWidth={0.4 + sim * 2}
-                />
+                  data-testid={`affinity-spring-edge-${a.id}-${b.id}`}
+                >
+                  <line
+                    x1={pa.x}
+                    y1={pa.y}
+                    x2={pb.x}
+                    y2={pb.y}
+                    stroke="white"
+                    strokeOpacity={opacity}
+                    strokeWidth={stroke}
+                  />
+                  <rect
+                    x={mx - labelWidth / 2}
+                    y={my - 7}
+                    width={labelWidth}
+                    height={14}
+                    rx={3}
+                    fill="rgba(15,23,42,0.78)"
+                    stroke="rgba(255,255,255,0.18)"
+                    strokeWidth={0.5}
+                  />
+                  <text
+                    x={mx}
+                    y={my + 3}
+                    textAnchor="middle"
+                    fontSize={9}
+                    fontFamily="ui-monospace, monospace"
+                    fill="white"
+                    fillOpacity={0.92}
+                  >
+                    {label}
+                  </text>
+                </g>
               );
             }),
           )}
@@ -668,17 +912,36 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
         {roles.map((r) => {
           const target = targets.get(r.id) ?? { x: cx, y: cy };
           const mass = authorityToMass(r.authorityRank);
-          const animate = { x: target.x - NODE_RADIUS, y: target.y - NODE_RADIUS };
+          const nodeRadius = radiusForContributions(r.contributionsCount);
+          const animate = { x: target.x - nodeRadius, y: target.y - nodeRadius };
           const transition = reduceMotion
             ? { duration: 0 }
             : { type: "spring" as const, stiffness: 80, damping: 14, mass };
           const style: CSSProperties = {
-            width: NODE_RADIUS * 2,
-            height: NODE_RADIUS * 2,
+            width: nodeRadius * 2,
+            height: nodeRadius * 2,
             background: `${r.color}33`,
             border: `1.5px solid ${r.color}`,
             color: "white",
           };
+          // Hover tooltip — name, rank, contribs, top tags, pairwise
+          // affinities. Browser-native <title> works with motion.div with no
+          // additional JS or libs.
+          const topTags = r.domainTags.slice(0, 3).join(", ") || "(none)";
+          const topPairs = (pairwiseByRole.get(r.id) ?? [])
+            .slice(0, 3)
+            .map((p) => `${p.peer.name}=${p.weight.toFixed(2)}`)
+            .join(" · ");
+          const tooltip =
+            `${r.name} · rank ${r.authorityRank} · ${r.contributionsCount} contribs\n` +
+            `Tags: ${topTags}\n` +
+            `Affinity: ${topPairs || "(none)"}`;
+          // Truncate to fit smaller nodes — radius ~14 ≈ 4 chars max.
+          const labelMax = Math.max(3, Math.floor(nodeRadius / 3.5));
+          const labelText =
+            r.name.length > labelMax + 1
+              ? r.name.slice(0, labelMax) + "…"
+              : r.name;
           return (
             <motion.div
               key={r.id}
@@ -689,10 +952,10 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
               transition={transition}
               data-testid={`affinity-spring-node-${r.id}`}
               data-role-name={r.name}
+              data-node-radius={nodeRadius}
+              title={tooltip}
             >
-              <span className="px-1 leading-none">
-                {r.name.length > 9 ? r.name.slice(0, 8) + "…" : r.name}
-              </span>
+              <span className="px-1 leading-none">{labelText}</span>
               <span
                 className="mt-0.5 rounded px-1 text-[8px] font-mono text-white/80"
                 style={{ background: r.color }}
@@ -711,10 +974,42 @@ export function AgentAffinityGraphSpring({ quorumId }: AgentAffinityGraphSpringP
         style={{ height: HEATMAP_PANEL_HEIGHT }}
         data-testid="affinity-spring-heatmap"
       >
-        <div className="mb-1 flex items-center justify-between">
+        <div className="mb-1 flex items-center justify-between gap-2">
           <span className="text-[10px] uppercase tracking-wide text-white/40">
             Activity · 60s
           </span>
+          {/* Play/pause + scrubber for replaying the contribution timeline.
+              Disabled when no historical activity has loaded yet. */}
+          <div className="flex flex-1 items-center gap-2">
+            <button
+              type="button"
+              onClick={onTogglePlay}
+              disabled={historicalActivity.length === 0}
+              aria-label={isPlaying ? "Pause activity replay" : "Play activity replay"}
+              data-testid={isPlaying ? "spring-activity-pause" : "spring-activity-play"}
+              className="rounded border border-white/20 px-1.5 py-0.5 text-[10px] text-white/80 transition hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-30"
+            >
+              {isPlaying ? "⏸" : "▶"}
+            </button>
+            <input
+              type="range"
+              min={0}
+              max={1}
+              step={0.005}
+              value={scrubProgress}
+              onChange={(e) => onScrubChange(parseFloat(e.target.value))}
+              disabled={historicalActivity.length === 0}
+              aria-label="Scrub activity timeline"
+              data-testid="spring-activity-scrub-slider"
+              className="h-1 flex-1 cursor-pointer accent-blue-400 disabled:cursor-not-allowed disabled:opacity-30"
+            />
+            <span
+              className="w-8 shrink-0 text-right font-mono text-[9px] text-white/40"
+              data-testid="spring-activity-scrub-label"
+            >
+              {Math.round(scrubProgress * 100)}%
+            </span>
+          </div>
           <span className="text-[9px] text-white/30">5s buckets</span>
         </div>
         <div className="flex h-[calc(100%-1rem)] flex-col gap-0.5 overflow-hidden">

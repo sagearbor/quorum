@@ -208,4 +208,199 @@ describe("DecisionWaterfall", () => {
     );
     expect(screen.getByTestId("decision-waterfall-sparse")).toBeTruthy();
   });
+
+  // ---------------------------------------------------------------------------
+  // Post-2026-05 redesign: x-axis, tier stripes, magnitude chips, empty-lane
+  // stripe, tooltip rationale.
+  // ---------------------------------------------------------------------------
+
+  it("renders an x-axis with at least 2 HH:MM tick marks", () => {
+    const { container } = render(
+      <DecisionWaterfall
+        quorumId="q-1"
+        nowMs={baseTime + 10 * 60_000}
+        staticData={{ roles, contributions, agentRequests, resolvedSectionCount: 0 }}
+      />,
+    );
+    const ticks = container.querySelectorAll(
+      '[data-testid="waterfall-x-axis-tick"]',
+    );
+    expect(ticks.length).toBeGreaterThanOrEqual(2);
+    expect(container.querySelector('[data-testid="waterfall-x-axis"]')).toBeTruthy();
+  });
+
+  it("renders a tier stripe for each lane", () => {
+    const { container } = render(
+      <DecisionWaterfall
+        quorumId="q-1"
+        nowMs={baseTime + 10 * 60_000}
+        staticData={{ roles, contributions, agentRequests, resolvedSectionCount: 0 }}
+      />,
+    );
+    for (const role of roles) {
+      expect(
+        container.querySelector(`[data-testid="waterfall-tier-stripe-${role.id}"]`),
+      ).toBeTruthy();
+    }
+  });
+
+  it("renders an empty-lane stripe overlay for lanes without chips", () => {
+    // Only feed contributions for role-irb so the other two lanes are empty.
+    const onlyIrbContribs: ContributionLike[] = [
+      {
+        id: "x1",
+        role_id: "role-irb",
+        content: "IRB note.",
+        created_at: new Date(baseTime).toISOString(),
+      },
+    ];
+    const { container } = render(
+      <DecisionWaterfall
+        quorumId="q-2"
+        nowMs={baseTime + 10 * 60_000}
+        staticData={{
+          roles,
+          contributions: onlyIrbContribs,
+          agentRequests: [],
+        }}
+      />,
+    );
+    // role-irb has a chip → should NOT have an empty-lane overlay.
+    expect(
+      container.querySelector('[data-testid="waterfall-empty-lane-role-irb"]'),
+    ).toBeNull();
+    // role-pi and role-coord are empty → should have overlays.
+    expect(
+      container.querySelector('[data-testid="waterfall-empty-lane-role-pi"]'),
+    ).toBeTruthy();
+    expect(
+      container.querySelector('[data-testid="waterfall-empty-lane-role-coord"]'),
+    ).toBeTruthy();
+  });
+
+  it("encodes |Δ| magnitude as chip radius — loud chip > quiet chip", () => {
+    const loudContribs: ContributionLike[] = [
+      {
+        id: "quiet",
+        role_id: "role-irb",
+        content: "Tiny update.",
+        created_at: new Date(baseTime).toISOString(),
+        analysis_deltas: {
+          consensus: 1,
+          completion: 0,
+          blockers: 0,
+          critical_path: 0,
+          role_coverage: 0,
+        },
+      },
+      {
+        id: "loud",
+        role_id: "role-pi",
+        content: "Major decision.",
+        created_at: new Date(baseTime + 2 * 60_000).toISOString(),
+        analysis_deltas: {
+          consensus: 18,
+          completion: 15,
+          blockers: 5,
+          critical_path: 6,
+          role_coverage: 4,
+        },
+      },
+    ];
+    const { container } = render(
+      <DecisionWaterfall
+        quorumId="q-mag"
+        nowMs={baseTime + 10 * 60_000}
+        staticData={{ roles, contributions: loudContribs, agentRequests: [] }}
+      />,
+    );
+    const quiet = container
+      .querySelector('[data-testid="waterfall-chip-quiet"] circle')
+      ?.getAttribute("r");
+    const loud = container
+      .querySelector('[data-testid="waterfall-chip-loud"] circle')
+      ?.getAttribute("r");
+    expect(quiet).toBeTruthy();
+    expect(loud).toBeTruthy();
+    expect(parseFloat(loud!)).toBeGreaterThan(parseFloat(quiet!));
+  });
+
+  it("surfaces the LLM rationale snippet in the chip tooltip", () => {
+    const rationale = "Outlines a concrete, auditable requirements catalog and data readiness plan.";
+    const contribsWithRationale: ContributionLike[] = [
+      {
+        id: "c-rat",
+        role_id: "role-irb",
+        content: "Some chip content.",
+        created_at: new Date(baseTime).toISOString(),
+        analysis_rationale: rationale,
+        analysis_deltas: { consensus: 5, completion: 3, blockers: 0, critical_path: 0, role_coverage: 0 },
+      },
+    ];
+    const { container } = render(
+      <DecisionWaterfall
+        quorumId="q-rat"
+        nowMs={baseTime + 10 * 60_000}
+        staticData={{ roles, contributions: contribsWithRationale, agentRequests: [] }}
+      />,
+    );
+    const title = container
+      .querySelector('[data-testid="waterfall-chip-c-rat"] title')
+      ?.textContent;
+    expect(title).toBeTruthy();
+    expect(title).toContain("IRB Officer");
+    expect(title).toContain("|Δ|");
+    expect(title).toContain(rationale);
+  });
+
+  it("jitters within-lane chips that share the same second off the midline", () => {
+    const sameSecondContribs: ContributionLike[] = [
+      {
+        id: "tw-a",
+        role_id: "role-irb",
+        content: "A",
+        created_at: new Date(baseTime).toISOString(),
+      },
+      {
+        id: "tw-b",
+        role_id: "role-irb",
+        content: "B",
+        created_at: new Date(baseTime).toISOString(),
+      },
+      // A third role-irb chip in a *different* second — should stay on the midline.
+      {
+        id: "solo",
+        role_id: "role-irb",
+        content: "C",
+        created_at: new Date(baseTime + 30_000).toISOString(),
+      },
+    ];
+    const { container } = render(
+      <DecisionWaterfall
+        quorumId="q-jitter"
+        nowMs={baseTime + 10 * 60_000}
+        laneHeight={56}
+        staticData={{ roles, contributions: sameSecondContribs, agentRequests: [] }}
+      />,
+    );
+    const cyA = parseFloat(
+      container
+        .querySelector('[data-testid="waterfall-chip-tw-a"] circle')!
+        .getAttribute("cy")!,
+    );
+    const cyB = parseFloat(
+      container
+        .querySelector('[data-testid="waterfall-chip-tw-b"] circle')!
+        .getAttribute("cy")!,
+    );
+    const cySolo = parseFloat(
+      container
+        .querySelector('[data-testid="waterfall-chip-solo"] circle')!
+        .getAttribute("cy")!,
+    );
+    expect(cyA).not.toBe(cyB);
+    // The solo (different-second) chip sits on the lane midline; that midline
+    // should be the midpoint between the two jittered chips.
+    expect(Math.abs((cyA + cyB) / 2 - cySolo)).toBeLessThan(0.01);
+  });
 });

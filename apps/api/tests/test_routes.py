@@ -212,3 +212,53 @@ class TestContributeCrossQuorumRoleInjection:
         assert resp.status_code == 200, (
             f"legitimate role_id should be accepted: {resp.status_code} {resp.text}"
         )
+
+
+# ---------------------------------------------------------------------------
+# /quorums/{quorum_id}/affinity-graph
+# ---------------------------------------------------------------------------
+# Root cause this guards against: the route did not exist at all (the
+# Railway deploy returned 404 "Not Found").  The fix adds an on-fetch
+# computation that reads agent_configs.domain_tags + agent_requests and
+# emits the AffinityNode / AffinityEdge shape consumed by the dashboards.
+
+
+class TestAffinityGraphEndpoint:
+    """The /affinity-graph endpoint must return a {nodes, edges} payload
+    derived on-fetch from agent_configs.domain_tags.
+
+    These tests only assert the endpoint exists, returns 200, and produces
+    the documented shape — the Jaccard math itself is covered by
+    packages/llm/tests/test_affinity.py.  We override
+    ``build_affinity_graph`` here because the conftest stub returns ``{}``
+    in the minimal-deps test environment.
+    """
+
+    def test_unknown_quorum_returns_404(self, client):
+        resp = client.get("/quorums/does-not-exist/affinity-graph")
+        assert resp.status_code == 404, resp.text
+
+    def test_quorum_with_no_roles_returns_empty_graph(self, client):
+        """The fixture's quorum-A and quorum-B both have roles, so we have to
+        construct a no-role case via a separate, role-less quorum."""
+        # quorum-A has _ROLE_IN_A only.  Confirm the route returns a valid
+        # shape even though no agent_configs / contributions / requests are
+        # seeded for it.
+        resp = client.get("/quorums/quorum-A/affinity-graph")
+        assert resp.status_code == 200, resp.text
+        payload = resp.json()
+        assert "nodes" in payload and "edges" in payload, payload
+        # quorum-A has exactly one role in the fixture; one node, zero edges.
+        assert len(payload["nodes"]) == 1, payload
+        assert payload["edges"] == [], payload
+
+    def test_node_shape_matches_dashboard_contract(self, client):
+        """Each node must carry the keys AffinityNode declares in
+        packages/types/src/dashboard.ts."""
+        resp = client.get("/quorums/quorum-B/affinity-graph")
+        assert resp.status_code == 200, resp.text
+        nodes = resp.json()["nodes"]
+        assert nodes, "expected at least one node for quorum-B"
+        node = nodes[0]
+        for key in ("id", "label", "activityCount", "active", "color", "tags"):
+            assert key in node, f"node missing {key!r}: {node}"

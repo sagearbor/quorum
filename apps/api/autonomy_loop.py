@@ -1112,12 +1112,20 @@ def _maybe_auto_contribute(db, quorum_id, role, autonomy_level, round_num, mode=
         finally:
             _loop.close()
 
-        # Persist analysis on the contribution row.
+        # Persist analysis on the contribution row.  Also backfill
+        # structured_fields (the insert above set it to {}; the Tier-2 analyzer
+        # extracts concrete claims that drive the Conflict Topology Map's
+        # shared-key-across-roles signal).
         try:
+            sf_raw = getattr(analysis, "structured_fields", {}) or {}
+            structured_fields = {
+                str(k): str(v) for k, v in sf_raw.items() if k and v
+            }
             db.table("contributions").update({
                 "analysis_tags": list(analysis.tags),
                 "analysis_deltas": dict(analysis.score_deltas),
                 "analysis_rationale": analysis.rationale,
+                "structured_fields": structured_fields,
             }).eq("id", contribution_id).execute()
         except Exception:
             logger.warning(

@@ -84,6 +84,22 @@ class ContributionAnalysis(BaseModel):
             "deltas — used for hover-popover audit trail."
         ),
     )
+    structured_fields: dict[str, str] = Field(
+        default_factory=dict,
+        description=(
+            "Concrete claims, decisions, or parameters extracted from this "
+            "contribution.  Keys are short snake_case names (e.g. 'timeline', "
+            "'owner', 'budget', 'data_source', 'approval_required'); values "
+            "are the corresponding short string the contribution actually "
+            "asserts (e.g. 'Q3 2026', 'Data Governance team', '$50k', "
+            "'Snowflake', 'no').  Used by the Conflict Topology Map to "
+            "surface cases where two roles independently set the same key "
+            "to different values.  Omit a key entirely if the contribution "
+            "makes no concrete claim about it — empty values dilute the "
+            "signal.  Keep total fields ≤ 6 per contribution; pick the most "
+            "load-bearing claims."
+        ),
+    )
 
     @field_validator("tags")
     @classmethod
@@ -139,6 +155,14 @@ _ANALYZER_INSTRUCTIONS = (
     "  2. Per-metric deltas in [-20, +20] for how THIS turn moved each "
     "metric. Omit a metric to mean 'no change'.\n"
     "  3. Why?  One or two sentences, plain English, max 300 chars.\n"
+    "  4. structured_fields: concrete claims as key/value pairs (e.g. "
+    "{'timeline': 'Q3 2026', 'owner': 'Data Governance team', "
+    "'budget': '$50k', 'data_source': 'Snowflake'}).  Use short "
+    "snake_case keys.  Cap at 6 fields.  Omit a field entirely if "
+    "the contribution makes no concrete claim about it — empty values "
+    "dilute conflict-detection downstream.  If the contribution is "
+    "purely affirmation / discussion with no concrete decisions, "
+    "return an empty object.\n"
     "\n"
     "=== DELTA CALIBRATION (READ CAREFULLY) ===\n"
     "Deltas accumulate across the quorum into 0-100 absolute metrics. Be "

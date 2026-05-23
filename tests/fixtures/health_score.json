@@ -38,7 +38,8 @@
         {"id": "c3", "role_id": "r3", "content": "test", "user_token": "u3"}
       ],
       "artifact": null,
-      "expected_score_range": [50, 90]
+      "expected_score_range": [30, 65],
+      "_note": "Every role contributed once but no substantive engagement, no artifact, no closure → composite lands in the moderate band (post #92 tightening). Was [50, 90] pre-tightening."
     }
   ]
 }

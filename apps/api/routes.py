@@ -1279,6 +1279,73 @@ async def get_affinity_graph(quorum_id: str):
 
 
 # ---------------------------------------------------------------------------
+# POST /quorums/{quorum_id}/roles/{role_id}/regenerate-tags
+# ---------------------------------------------------------------------------
+# Admin endpoint to recompute `domain_tags` on a single role's agent_config
+# using the deterministic keyword-extraction fallback.  Useful when the
+# original LLM-driven persona generation returned an empty `domain_tags`
+# array and the role is now invisible to affinity / A2A routing.
+#
+# Body (optional): {"extra_text": "free-form text to mix into keyword extraction"}
+# Returns: {"role_id": ..., "domain_tags": [...]} on success.
+@router.post("/quorums/{quorum_id}/roles/{role_id}/regenerate-tags")
+async def regenerate_role_tags(quorum_id: str, role_id: str, body: dict | None = None):
+    db = get_supabase()
+    # Fetch the role name (we need it for the keyword fallback) and verify it
+    # belongs to the given quorum.
+    role_row = (
+        db.table("roles")
+        .select("id, name, quorum_id, prompt_template")
+        .eq("id", role_id)
+        .maybe_single()
+        .execute()
+    )
+    if not role_row or not role_row.data:
+        raise HTTPException(status_code=404, detail=f"Role {role_id} not found")
+    if role_row.data.get("quorum_id") != quorum_id:
+        raise HTTPException(
+            status_code=404, detail=f"Role {role_id} is not in quorum {quorum_id}"
+        )
+    name = role_row.data.get("name") or ""
+    # Pull free-form text from the role's prompt_template fields (each is
+    # {"field_name": str, "prompt": str}).  Concatenate prompts for keyword
+    # extraction context.
+    prompt_template = role_row.data.get("prompt_template") or []
+    pt_text = " ".join(
+        (f.get("prompt") or "") for f in prompt_template if isinstance(f, dict)
+    )
+    extra = (body or {}).get("extra_text", "") if body else ""
+
+    from architect_agent import _keyword_fallback_tags  # type: ignore
+
+    tags = _keyword_fallback_tags(name, pt_text or "", extra or "")
+
+    # Upsert into agent_configs.domain_tags for this (quorum_id, role_id).
+    existing = (
+        db.table("agent_configs")
+        .select("role_id")
+        .eq("quorum_id", quorum_id)
+        .eq("role_id", role_id)
+        .maybe_single()
+        .execute()
+    )
+    if existing and existing.data:
+        db.table("agent_configs").update({"domain_tags": tags}).eq(
+            "quorum_id", quorum_id
+        ).eq("role_id", role_id).execute()
+    else:
+        db.table("agent_configs").insert(
+            {
+                "quorum_id": quorum_id,
+                "role_id": role_id,
+                "domain_tags": tags,
+            }
+        ).execute()
+
+    return {"role_id": role_id, "domain_tags": tags}
+
+
+# ---------------------------------------------------------------------------
 # GET /quorums/{quorum_id}/a2a-debug
 # ---------------------------------------------------------------------------
 # Debug-only endpoint to count agent_requests rows for a quorum.  Helps

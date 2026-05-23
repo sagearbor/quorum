@@ -1549,13 +1549,21 @@ async def _maybe_auto_promote_contribution(
     contribution_id = str(uuid.uuid4())
     analysis_tags = list(getattr(analysis, "tags", []) or [])
     analysis_rationale = getattr(analysis, "rationale", "") or ""
+    # Pipe the Tier-2 analyzer's structured_fields through to the contribution
+    # row.  Without this, AI auto-promoted contributions had structured_fields={}
+    # hardcoded, which killed one of two signals the Conflict Topology Map uses
+    # (shared keys across roles → conflict).  See PR #89 follow-up note.
+    structured_fields_raw = getattr(analysis, "structured_fields", {}) or {}
+    structured_fields = {
+        str(k): str(v) for k, v in structured_fields_raw.items() if k and v
+    }
     row = {
         "id": contribution_id,
         "quorum_id": quorum_id,
         "role_id": role_id,
         "user_token": "ai-agent",
         "content": body,
-        "structured_fields": {},
+        "structured_fields": structured_fields,
         "tier_processed": 1,
         # Persist analyzer output on the same columns the /contribute route
         # uses (added in 20260519000001) so the chart popover audit trail

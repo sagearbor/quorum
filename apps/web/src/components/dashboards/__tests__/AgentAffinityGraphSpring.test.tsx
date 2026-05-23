@@ -33,11 +33,31 @@ vi.mock("@/lib/supabase", () => {
 });
 
 beforeEach(() => {
-  // Mock fetch so the role-status request resolves deterministically.
+  // Mock fetch so both /role-status and /affinity-graph resolve
+  // deterministically. The component issues these in parallel via Promise.all.
   vi.stubGlobal(
     "fetch",
-    vi.fn(async () =>
-      new Response(
+    vi.fn(async (url: string) => {
+      if (typeof url === "string" && url.includes("/affinity-graph")) {
+        return new Response(
+          JSON.stringify({
+            nodes: [
+              { id: "role-a", label: "Sponsor", tags: ["budget", "site_ops"] },
+              { id: "role-b", label: "IRB", tags: ["budget", "ethics"] },
+            ],
+            edges: [
+              {
+                source: "role-a",
+                target: "role-b",
+                weight: 0.5,
+                interactionType: "collaborative",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(
         JSON.stringify([
           {
             role_id: "role-a",
@@ -55,8 +75,8 @@ beforeEach(() => {
           },
         ]),
         { status: 200, headers: { "Content-Type": "application/json" } },
-      ),
-    ),
+      );
+    }),
   );
 });
 

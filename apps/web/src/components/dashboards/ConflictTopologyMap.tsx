@@ -377,7 +377,7 @@ export function ConflictTopologyMap({ quorumId }: ConflictTopologyMapProps) {
         <div className="flex flex-1 items-center justify-center px-6 text-center text-xs text-white/40">
           {connState === "connecting"
             ? "Connecting…"
-            : "No conflicts detected yet. Tier-2 conflict detection runs when two or more roles contribute to the same structured field."}
+            : "No conflicts detected yet — waiting for roles. Edges appear when two roles disagree on a shared structured field or push the same metric in opposite directions."}
         </div>
       ) : (
         <div className="relative flex-1 min-h-0">
@@ -486,11 +486,16 @@ export function ConflictTopologyMap({ quorumId }: ConflictTopologyMapProps) {
             })}
           </svg>
 
-          {/* Empty-conflicts hint overlay (nodes present, no edges) */}
+          {/* Empty-conflicts hint overlay (nodes present, no edges).
+              Copy varies by signal-richness of the data we DID see, so the
+              audience can tell "no inputs yet" apart from "agents legitimately
+              agreed".  Heuristic: any role with >=2 contributions means there
+              was enough material to surface tension if it existed. */}
           {edges.length === 0 && roles.length > 0 && (
             <div className="pointer-events-none absolute inset-x-4 bottom-4 rounded border border-white/10 bg-black/60 px-3 py-2 text-center text-[11px] text-white/55">
-              No conflicts detected yet. Tier-2 conflict detection runs when two
-              or more roles contribute to the same structured field.
+              {contributions.length >= roles.length * 2
+                ? "Agents reached consensus — no opposing positions or shared-field disagreements detected across roles."
+                : "No conflicts detected yet. Edges appear when two roles disagree on a shared structured field or push the same metric in opposite directions."}
             </div>
           )}
 

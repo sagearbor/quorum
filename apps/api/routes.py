@@ -671,6 +671,51 @@ async def contribute(quorum_id: str, body: ContributeRequest):
                     "Tier 2: detected %d conflicts in quorum %s",
                     len(conflicts), quorum_id,
                 )
+                # Persist the LLM-detected conflicts as a synthesis_snapshot row
+                # so downstream debugging / dashboards can audit the outcome.
+                # Previously the result was logged-and-dropped, which made it
+                # impossible to tell "detector never ran" from "detector ran,
+                # found nothing" after the fact.  We write tier='conflict' to
+                # match the schema check constraint.
+                try:
+                    backend = get_coordination_backend()
+                    store = getattr(backend, "store_synthesis", None)
+                    if store is not None:
+                        contribution_ids: list[str] = []
+                        for c in conflicts:
+                            ids = getattr(c, "contribution_ids", None) or []
+                            for cid in ids:
+                                if cid and cid not in contribution_ids:
+                                    contribution_ids.append(str(cid))
+                        snapshot_payload = {
+                            "conflicts": [
+                                {
+                                    "contribution_ids": list(
+                                        getattr(c, "contribution_ids", []) or []
+                                    ),
+                                    "field_name": getattr(c, "field_name", None),
+                                    "description": getattr(c, "description", "") or "",
+                                    "severity": getattr(c, "severity", "medium"),
+                                }
+                                for c in conflicts
+                            ],
+                            "overlap_fields": sorted(overlaps.keys()),
+                            "detected_at": datetime.now(timezone.utc).isoformat(),
+                        }
+                        await store(
+                            quorum_id,
+                            {
+                                "tier": "conflict",
+                                "content": snapshot_payload,
+                                "contribution_ids": contribution_ids,
+                            },
+                        )
+                except Exception:
+                    logger.warning(
+                        "Tier 2: failed to persist conflict snapshot for quorum %s",
+                        quorum_id,
+                        exc_info=True,
+                    )
         except Exception:
             logger.warning("Tier 2 conflict detection failed for quorum %s", quorum_id, exc_info=True)
 
